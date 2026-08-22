@@ -78,3 +78,15 @@ end
 ## 安全说明
 
 XTerm 是本地桌面应用：连接配置和偏好设置保存在本地数据库，密码、私钥和私钥密码由 OS keyring 加密保存，SSH 主机公钥需用户确认后才会被信任。Tauri 权限能力保持最小化。
+
+## 问题反馈
+
+如遇 Bug 或有功能建议，欢迎在 [GitHub Issues](https://github.com/Rockytkg/XTerm/issues) 反馈。请尽量提供以下信息，以便快速定位：
+
+- 复现步骤与预期/实际行为
+- 操作系统版本与应用版本（`设置 → 关于`）
+- 相关日志：打开 `设置 → 通用` → 日志查看器，或直接查看应用日志目录
+
+## 许可证
+
+XTerm 以 [MIT License](LICENSE) 开源，Copyright © 2026 Rockytkg。使用者可自由使用、修改、分发与商用，仅需保留版权声明，详见 [LICENSE](LICENSE) 文件。

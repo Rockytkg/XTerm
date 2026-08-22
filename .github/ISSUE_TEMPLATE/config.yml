@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 文档中心
+    url: https://github.com/Rockytkg/XTerm/blob/main/README.md
+    about: 提交前请先查看 README 与 docs/ 下的文档，确认是否已有相关说明
