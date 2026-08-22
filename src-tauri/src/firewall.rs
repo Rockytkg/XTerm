@@ -20,6 +20,9 @@ pub(crate) enum FirewallProtocol {
 }
 
 impl FirewallProtocol {
+    // Only the Windows rule description uses the wire protocol name; the
+    // Linux path formats its own iptables rules and macOS uses pfctl protos.
+    #[cfg(windows)]
     fn as_str(self) -> &'static str {
         match self {
             Self::Tcp => "TCP",
@@ -28,6 +31,9 @@ impl FirewallProtocol {
     }
 }
 
+// Windows and macOS name their rules "{prefix} {port}"; Linux derives chain
+// names from the prefix instead and never calls this.
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn rule_name(prefix: &str, port: u16) -> String {
     format!("{prefix} {port}")
 }
@@ -1017,14 +1023,14 @@ fn ensure_linux_chain(
     }
 
     let jump_rule = linux_jump_rule(chain, protocol);
-    let jump_exists = ipt.exists("filter", "INPUT", jump_rule).map_err(|error| {
+    let jump_exists = ipt.exists("filter", "INPUT", &jump_rule).map_err(|error| {
         FirewallCommandError::new(
             "Unable to inspect the Linux firewall hook.",
             error.to_string(),
         )
     })?;
     if !jump_exists {
-        ipt.append("filter", "INPUT", jump_rule).map_err(|error| {
+        ipt.append("filter", "INPUT", &jump_rule).map_err(|error| {
             FirewallCommandError::new(
                 "Unable to hook the Linux firewall chain into INPUT.",
                 error.to_string(),
@@ -1042,8 +1048,8 @@ fn cleanup_linux_chain(
     protocol: FirewallProtocol,
 ) -> Result<(), FirewallCommandError> {
     let jump_rule = linux_jump_rule(chain, protocol);
-    if matches!(ipt.exists("filter", "INPUT", jump_rule), Ok(true)) {
-        ipt.delete("filter", "INPUT", jump_rule).map_err(|error| {
+    if matches!(ipt.exists("filter", "INPUT", &jump_rule), Ok(true)) {
+        ipt.delete("filter", "INPUT", &jump_rule).map_err(|error| {
             FirewallCommandError::new(
                 "Unable to detach the Linux firewall chain from INPUT.",
                 error.to_string(),

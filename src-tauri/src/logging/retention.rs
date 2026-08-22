@@ -38,7 +38,7 @@ fn daily_log_files(dir: &Path) -> Result<Vec<(NaiveDate, PathBuf)>, String> {
             Some((date, entry.path()))
         })
         .collect::<Vec<_>>();
-    logs.sort_by(|a, b| b.0.cmp(&a.0));
+    logs.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     Ok(logs)
 }
 

@@ -365,6 +365,14 @@ pub fn run() {
         }
     }
 
+    // Force the Tauri async runtime to exist before the log plugin installs
+    // the global logger. The plugin's Webview target forwards every record by
+    // spawning onto this runtime; creating the runtime lazily from inside the
+    // logging path emits Trace records (mio's poll registry) that re-enter the
+    // runtime OnceLock and deadlock. If that happens, plugin initialization
+    // never finishes and the main window is never created or shown.
+    tauri::async_runtime::spawn(async {});
+
     let paths = match AppPaths::initialize() {
         Ok(paths) => paths,
         Err(error) => startup_fatal(
@@ -377,6 +385,17 @@ pub fn run() {
 
     let store = match Store::open(paths.data_dir()) {
         Ok(store) => store,
+        // The redb file lock is released when a process exits, so this error
+        // means another instance is alive and owns the window. The single-
+        // instance plugin would only detect it after the store opens, so exit
+        // quietly here instead of showing a fatal startup dialog.
+        Err(error) if error.contains("Cannot acquire lock") => {
+            log::info!(
+                target: "app.lifecycle",
+                "another XTerm instance is already running; exiting"
+            );
+            std::process::exit(0);
+        }
         Err(error) => startup_fatal(
             Some(&log_dir),
             &format!("failed to initialize application store: {error}"),
