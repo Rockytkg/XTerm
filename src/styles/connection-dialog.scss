@@ -69,6 +69,7 @@
   }
 
   .ui-input-port {
+    inline-size: -webkit-fill-available;
     inline-size: stretch;
     text-align: center;
     appearance: textfield;

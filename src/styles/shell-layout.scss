@@ -5,7 +5,9 @@
     display: grid;
     grid-template-rows: var(--shell-titlebar-height) 1fr var(--shell-statusbar-height);
     grid-template-columns: minmax(0, 1fr);
+    inline-size: -webkit-fill-available;
     inline-size: stretch;
+    block-size: -webkit-fill-available;
     block-size: stretch;
     min-block-size: var(--viewport-min-block);
     overflow: hidden;
@@ -120,6 +122,7 @@
     display: flex;
     align-items: center;
     gap: 2px;
+    block-size: -webkit-fill-available;
     block-size: stretch;
     padding: 0;
   }
@@ -154,9 +157,11 @@
   .app-right-sidebar-shell {
     display: flex;
     flex: 1 1 auto;
+    inline-size: -webkit-fill-available;
     inline-size: stretch;
     min-width: 0;
     min-height: 0;
+    block-size: -webkit-fill-available;
     block-size: stretch;
     overflow: hidden;
     background: var(--bg-secondary);

@@ -2,6 +2,7 @@
 
 @layer components {
   .font-picker {
+    inline-size: -webkit-fill-available;
     inline-size: stretch;
   }
 
@@ -12,6 +13,7 @@
 
     align-items: center;
     gap: 10px;
+    inline-size: -webkit-fill-available;
     inline-size: stretch;
     height: 42px;
     padding: 0 12px;
@@ -91,6 +93,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    inline-size: -webkit-fill-available;
     inline-size: stretch;
     min-height: 34px;
     padding: 5px 9px;

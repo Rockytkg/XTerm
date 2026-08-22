@@ -2,6 +2,7 @@
   .sessions-root {
     display: flex;
     flex-direction: column;
+    block-size: -webkit-fill-available;
     block-size: stretch;
     overflow: hidden;
     background: var(--bg-primary);

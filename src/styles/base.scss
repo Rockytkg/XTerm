@@ -2,7 +2,9 @@
   html,
   body,
   #app {
+    inline-size: -webkit-fill-available;
     inline-size: stretch;
+    block-size: -webkit-fill-available;
     block-size: stretch;
     min-inline-size: var(--viewport-min-inline);
     min-block-size: var(--viewport-min-block);

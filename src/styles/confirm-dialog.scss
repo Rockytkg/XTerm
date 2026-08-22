@@ -292,6 +292,7 @@
     }
 
     .confirm-dialog-action {
+      inline-size: -webkit-fill-available;
       inline-size: stretch;
     }
 

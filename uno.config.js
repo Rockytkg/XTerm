@@ -89,8 +89,8 @@ export default defineConfig({
       "ui-button border-0 bg-[var(--accent)] text-white shadow-[0_2px_8px_var(--accent-shadow)] hover:bg-[var(--accent-hover)] hover:-translate-y-[1px] active:bg-[var(--accent-active)] active:translate-y-0",
     "ui-button-secondary":
       "ui-button border border-[var(--border)] bg-[var(--bg-tertiary)] text-[var(--text-primary)] hover:bg-[var(--bg-secondary)] active:bg-[var(--bg-tertiary)]",
-    "ui-fill-inline": "[inline-size:stretch]",
-    "ui-fill-block": "[block-size:stretch]",
+    "ui-fill-inline": "[inline-size:-webkit-fill-available] [inline-size:stretch]",
+    "ui-fill-block": "[block-size:-webkit-fill-available] [block-size:stretch]",
     "ui-input":
       "h-[40px] rounded-[8px] border-[1.5px] border-transparent bg-[var(--bg-tertiary)] px-[14px] text-[0.9286em] text-[var(--text-primary)] outline-none transition-[background-color,border-color,box-shadow,opacity] duration-200 ease-[var(--ease-default)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--accent)] focus:bg-[var(--bg-secondary)] focus:shadow-[var(--focus-ring)] disabled:opacity-50",
     "ui-input-inline":

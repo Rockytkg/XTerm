@@ -19,6 +19,7 @@
 
     box-sizing: border-box;
     inline-size: var(--context-menu-panel-width);
+    block-size: -webkit-fill-available;
     block-size: stretch;
     max-block-size: min(
       var(--context-menu-max-height),

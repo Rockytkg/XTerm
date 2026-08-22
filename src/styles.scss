@@ -281,6 +281,7 @@
     }
 
     .host-key-dialog-actions > button {
+      inline-size: -webkit-fill-available;
       inline-size: stretch;
     }
   }
@@ -602,6 +603,7 @@
     container: relationship-view / inline-size;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
+    block-size: -webkit-fill-available;
     block-size: stretch;
     min-block-size: 0;
     overflow: hidden;
@@ -951,6 +953,7 @@
     }
 
     .sftp-toolbar-actions {
+      inline-size: -webkit-fill-available;
       inline-size: stretch;
       margin-inline-start: 0;
     }
@@ -993,6 +996,7 @@
 
     .conn-browse-btn {
       justify-content: center;
+      inline-size: -webkit-fill-available;
       inline-size: stretch;
     }
   }
