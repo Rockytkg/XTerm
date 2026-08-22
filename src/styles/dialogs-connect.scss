@@ -1,0 +1,238 @@
+@use "mixins" as *;
+
+@layer components {
+  .connect-dialog-overlay {
+    z-index: 30;
+    background: color-mix(in oklch, var(--overlay-bg) 94%, transparent);
+  }
+
+  .connect-dialog-content {
+    container: connect-dialog / inline-size;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    max-block-size: min(680px, calc(var(--viewport-min-block) - var(--space-6)));
+  }
+
+  .connect-dialog-header {
+    display: grid;
+
+    @include grid-icon-label-action;
+
+    align-items: start;
+    gap: 14px;
+    padding: 18px 18px 16px;
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-secondary);
+  }
+
+  .connect-dialog-header-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-lg);
+    background: var(--accent-light);
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .connect-dialog-heading {
+    min-width: 0;
+  }
+
+  .connect-dialog-title {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 1.0714em;
+    font-weight: 650;
+    line-height: 1.35;
+  }
+
+  .connect-dialog-desc {
+    margin: 4px 0 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
+    line-height: 1.5;
+  }
+
+  .connect-dialog-close {
+    margin-top: -2px;
+  }
+
+  .connect-dialog-body {
+    display: grid;
+    align-content: start;
+    gap: var(--space-3);
+    min-height: 0;
+    padding: 12px;
+    overflow-y: auto;
+    background: color-mix(in oklch, var(--bg-primary) 70%, var(--bg-secondary));
+  }
+
+  .connect-dialog-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 184px;
+    gap: var(--space-4);
+    padding: 34px 18px;
+    border: 1px dashed color-mix(in oklch, var(--border) 88%, transparent);
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    color: var(--text-tertiary);
+    text-align: center;
+  }
+
+  .connect-dialog-empty p {
+    max-inline-size: 280px;
+    margin: 0;
+    font-size: var(--font-size-base);
+    line-height: 1.6;
+  }
+
+  .connect-dialog-empty-icon.session-card-status {
+    width: 44px;
+    height: 44px;
+  }
+
+  .connect-dialog-option {
+    display: grid;
+
+    @include grid-icon-label-action;
+
+    align-items: center;
+    gap: var(--space-4);
+    inline-size: stretch;
+    min-height: 64px;
+    padding: 11px 12px;
+    border: 1px solid color-mix(in oklch, var(--border-light) 92%, transparent);
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color var(--motion-duration-base) var(--ease-default),
+      box-shadow var(--motion-duration-base) var(--ease-default),
+      background-color var(--motion-duration-base) var(--ease-default),
+      transform var(--motion-duration-base) var(--ease-default);
+  }
+
+  .connect-dialog-option:hover,
+  .connect-dialog-option:focus-visible {
+    border-color: color-mix(in oklch, var(--accent) 58%, var(--border));
+    background: var(--bg-secondary);
+    box-shadow: var(--focus-ring);
+    outline: none;
+    transform: translateY(-1px);
+  }
+
+  .connect-dialog-option-main {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .connect-dialog-option-name {
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+    font-weight: 550;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .connect-dialog-option-endpoint {
+    overflow: hidden;
+    color: var(--text-tertiary);
+    font-size: var(--font-size-sm);
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .connect-dialog-option-side {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    min-inline-size: max-content;
+  }
+
+  .connect-dialog-protocol {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
+    padding: 0 7px;
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .connect-dialog-action {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--accent);
+    font-size: var(--font-size-sm);
+    font-weight: 650;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .connect-dialog-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 18px;
+    border-top: 1px solid var(--border-light);
+    background: var(--bg-secondary);
+  }
+
+  .connect-dialog-new {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  @container connect-dialog (max-width: 420px) {
+    .connect-dialog-header {
+      padding: 16px;
+    }
+
+    .connect-dialog-body {
+      padding: 10px;
+    }
+
+    .connect-dialog-option {
+      @include grid-icon-label;
+
+      align-items: start;
+    }
+
+    .connect-dialog-option-side {
+      grid-column: 2;
+      justify-content: flex-start;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+
+    .connect-dialog-footer {
+      align-items: stretch;
+      flex-direction: column-reverse;
+    }
+
+    .connect-dialog-footer > button {
+      justify-content: center;
+      inline-size: stretch;
+    }
+  }
+}

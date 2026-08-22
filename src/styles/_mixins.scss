@@ -1,0 +1,19 @@
+// Shared SCSS mixins — included globally via styles.scss
+
+@mixin flex-center($display: flex) {
+  display: $display;
+  align-items: center;
+  justify-content: center;
+}
+
+@mixin grid-icon-label-action {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+@mixin grid-icon-label {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+@mixin grid-label-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+}

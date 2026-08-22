@@ -1,0 +1,304 @@
+@use "mixins" as *;
+
+@layer components {
+  .confirm-dialog-content {
+    --dialog-content-z: 71;
+
+    container: confirm-dialog / inline-size;
+    inline-size: min(480px, calc(var(--viewport-min-inline) - var(--space-6)));
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--border) 84%, transparent);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    box-shadow: 0 18px 48px oklch(0% 0 0deg / 18%);
+    outline: none;
+  }
+
+  .confirm-dialog-overlay[data-state="open"] {
+    /* backdrop-filter removed to prevent scroll jank */
+  }
+
+  .confirm-dialog-tone-danger {
+    --confirm-tone: var(--danger);
+    --confirm-tone-bg: var(--danger-bg);
+    --confirm-tone-text: oklch(100% 0 0deg);
+  }
+
+  .confirm-dialog-tone-warning {
+    --confirm-tone: var(--warning);
+    --confirm-tone-bg: var(--warning-bg);
+    --confirm-tone-text: oklch(23.5% 0.018 260deg);
+  }
+
+  .confirm-dialog-tone-info {
+    --confirm-tone: var(--info);
+    --confirm-tone-bg: var(--info-bg);
+    --confirm-tone-text: oklch(100% 0 0deg);
+  }
+
+  .confirm-dialog-tone-success {
+    --confirm-tone: var(--success);
+    --confirm-tone-bg: var(--success-bg);
+    --confirm-tone-text: oklch(23.5% 0.018 260deg);
+  }
+
+  .confirm-dialog-header,
+  .confirm-dialog-footer {
+    position: relative;
+    z-index: 1;
+  }
+
+  .confirm-dialog-header {
+    display: grid;
+
+    @include grid-icon-label;
+
+    align-items: start;
+    gap: 14px;
+    padding: 22px 24px 16px;
+  }
+
+  .confirm-dialog-tone-icon {
+    @include flex-center(inline-flex);
+
+    inline-size: 42px;
+    block-size: 42px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-lg);
+    border-color: color-mix(in oklch, var(--confirm-tone) 23%, transparent);
+    background: color-mix(in oklch, var(--confirm-tone-bg) 84%, var(--bg-primary));
+    color: var(--confirm-tone);
+  }
+
+  .confirm-dialog-copy {
+    min-inline-size: 0;
+    padding-block-start: 1px;
+  }
+
+  .confirm-dialog-title {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 1.1071em;
+    font-weight: 680;
+    line-height: 1.35;
+  }
+
+  .confirm-dialog-description {
+    max-inline-size: 36em;
+    margin: 6px 0 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
+    line-height: 1.58;
+  }
+
+  .confirm-dialog-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    background: var(--bg-secondary);
+    padding: 2px 24px 20px 80px;
+  }
+
+  .confirm-dialog-action {
+    @include flex-center(inline-flex);
+
+    min-inline-size: 84px;
+    block-size: 34px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 0.8214em;
+    font-weight: 650;
+    line-height: 1;
+    padding-inline: 14px;
+    transition:
+      background-color var(--motion-duration-base) var(--ease-default),
+      border-color var(--motion-duration-base) var(--ease-default),
+      box-shadow var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default),
+      opacity var(--motion-duration-base) var(--ease-default);
+  }
+
+  .confirm-dialog-action:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .confirm-dialog-action:disabled {
+    cursor: default;
+    opacity: 0.58;
+  }
+
+  .confirm-dialog-action-secondary {
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+  }
+
+  .confirm-dialog-action-secondary:not(:disabled):hover {
+    border-color: color-mix(in oklch, var(--border) 70%, var(--text-tertiary));
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  .confirm-dialog-action-primary {
+    min-inline-size: 96px;
+    gap: var(--space-2);
+    border: 1px solid transparent;
+    color: var(--confirm-tone-text);
+  }
+
+  .confirm-dialog-action-primary:not(:disabled):hover {
+    opacity: 0.92;
+  }
+
+  .confirm-dialog-confirm-danger {
+    background: var(--danger);
+  }
+
+  .confirm-dialog-confirm-warning {
+    background: var(--warning);
+  }
+
+  .confirm-dialog-confirm-info {
+    background: var(--info);
+  }
+
+  .confirm-dialog-confirm-success {
+    background: var(--success);
+  }
+
+  .confirm-dialog-spinner {
+    animation: confirm-dialog-spin 0.7s linear infinite;
+  }
+
+  .sftp-delete-summary,
+  .sftp-delete-list {
+    position: relative;
+    z-index: 1;
+    margin-inline: 80px 24px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    background: color-mix(in oklch, var(--bg-primary) 94%, var(--confirm-tone-bg));
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
+  }
+
+  .sftp-delete-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-block: 0 8px;
+    padding: 10px 12px;
+  }
+
+  .sftp-delete-summary-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-inline-size: 0;
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-weight: 650;
+    line-height: 1.35;
+  }
+
+  .sftp-delete-summary-file {
+    color: color-mix(in oklch, var(--info) 76%, var(--text-primary));
+  }
+
+  .sftp-delete-summary-folder {
+    color: color-mix(in oklch, var(--warning) 70%, var(--text-primary));
+  }
+
+  .sftp-delete-list {
+    display: grid;
+    gap: var(--space-2);
+    max-block-size: 230px;
+    max-block-size: min(230px, 34dvb);
+    margin-block: 0 16px;
+    overflow: auto;
+    padding: 8px;
+  }
+
+  .sftp-delete-item {
+    display: grid;
+
+    @include grid-icon-label;
+
+    align-items: center;
+    gap: 9px;
+    min-inline-size: 0;
+    border: 1px solid color-mix(in oklch, var(--border-light) 86%, transparent);
+    border-radius: var(--radius-md);
+    background: color-mix(in oklch, var(--bg-secondary) 86%, transparent);
+    padding: 6px 8px;
+  }
+
+  .sftp-delete-kind {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-inline-size: 66px;
+    border-radius: 5px;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .sftp-delete-item.is-file .sftp-delete-kind {
+    color: color-mix(in oklch, var(--info) 76%, var(--text-primary));
+  }
+
+  .sftp-delete-item.is-folder .sftp-delete-kind {
+    color: color-mix(in oklch, var(--warning) 70%, var(--text-primary));
+  }
+
+  .sftp-delete-name,
+  .sftp-delete-more {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sftp-delete-name {
+    color: var(--text-primary);
+    font-weight: 560;
+  }
+
+  .sftp-delete-more {
+    padding: 4px 8px;
+    color: var(--text-tertiary);
+    font-size: var(--font-size-md);
+  }
+
+  @keyframes confirm-dialog-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @container confirm-dialog (max-width: 360px) {
+    .confirm-dialog-header {
+      gap: 11px;
+      padding-inline: 18px;
+    }
+
+    .confirm-dialog-footer {
+      flex-direction: column-reverse;
+      padding-inline: 18px;
+    }
+
+    .confirm-dialog-action {
+      inline-size: stretch;
+    }
+
+    .sftp-delete-summary,
+    .sftp-delete-list,
+    .relationship-delete-usage-list {
+      margin-inline: 18px;
+    }
+  }
+}

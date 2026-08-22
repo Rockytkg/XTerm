@@ -1,0 +1,78 @@
+@layer components {
+  .settings-root {
+    container: settings-layout / inline-size;
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    block-size: stretch;
+    overflow: hidden;
+  }
+
+  .settings-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 16px 12px;
+    border-right: 1px solid var(--border-light);
+    background: var(--bg-secondary);
+    overflow-y: auto;
+  }
+
+  .settings-nav-brand {
+    padding: 4px 8px 14px;
+    border-bottom: 1px solid var(--border-light);
+    margin-bottom: 6px;
+  }
+
+  .settings-nav-title {
+    margin: 4px 0 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+  }
+
+  .settings-nav-links {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+  }
+
+  .settings-reset-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    inline-size: stretch;
+    height: 32px;
+    margin-top: 8px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default),
+      border-color var(--motion-duration-base) var(--ease-default);
+  }
+
+  .settings-reset-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--border);
+  }
+
+  .settings-detail {
+    container: settings-detail / inline-size;
+    position: relative;
+    overflow: hidden;
+    background: var(--bg-primary);
+  }
+
+  .settings-detail-panel {
+    min-block-size: 100%;
+    block-size: 100%;
+    overflow-y: auto;
+    background: var(--bg-primary);
+  }
+}

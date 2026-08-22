@@ -1,0 +1,305 @@
+@layer components {
+  /* =============================================
+     Credential Card — Extended
+     ============================================= */
+  .badge-pw {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+
+  .badge-used {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+
+  .badge-unused {
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+  }
+
+  .cred-card-compact-meta {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+    block-size: 21px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .cred-card-meta-label {
+    color: var(--text-tertiary);
+    font-size: 0.75em;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .cred-card-empty-value {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-tertiary);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cred-card-usage-list {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    block-size: 21px;
+    flex-wrap: nowrap;
+    gap: 5px;
+    overflow: hidden;
+  }
+
+  .cred-card-usage-list::after {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: 0;
+    width: 22px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in oklch, var(--bg-secondary) 0%, transparent),
+      var(--bg-secondary)
+    );
+    content: "";
+    pointer-events: none;
+  }
+
+  .cred-card-usage-item {
+    display: inline-flex;
+    min-inline-size: 0;
+    max-inline-size: min(100%, 128px);
+    flex: 0 1 auto;
+    align-items: center;
+    overflow: hidden;
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    line-height: 1.35;
+    padding: 2px 5px;
+  }
+
+  .cred-card-usage-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cred-card-comment-line {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-tertiary);
+    font-size: var(--font-size-sm);
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cred-card-actions {
+    display: grid;
+    grid-auto-columns: 28px;
+    grid-auto-flow: column;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    inline-size: max-content;
+    border: 1px solid color-mix(in oklch, var(--border-light) 78%, transparent);
+    border-radius: 9px;
+    background: color-mix(in oklch, var(--bg-primary) 62%, transparent);
+    padding: 2px;
+  }
+
+  /* =============================================
+     Relationship Delete-Usage Dialog
+     ============================================= */
+  .relationship-delete-usage-list {
+    display: grid;
+    position: relative;
+    z-index: 1;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 112px), max-content));
+    justify-content: space-between;
+    align-items: start;
+    gap: 6px;
+    max-block-size: 168px;
+    max-block-size: min(28dvb, 168px);
+    margin: 0 24px 16px 80px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 1px solid color-mix(in oklch, var(--danger) 16%, var(--border-light));
+    border-radius: 8px;
+    background: color-mix(in oklch, var(--bg-primary) 94%, var(--danger-bg));
+    color: var(--text-secondary);
+    padding: 8px;
+  }
+
+  .relationship-delete-usage-item {
+    display: grid;
+    grid-template-columns: minmax(0, auto) auto;
+    inline-size: max-content;
+    max-inline-size: min(100%, 260px);
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--border-light) 76%, transparent);
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--bg-secondary) 88%, var(--danger-bg));
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: 1;
+    padding: 5px 7px 5px 9px;
+  }
+
+  .relationship-delete-usage-name {
+    min-inline-size: 0;
+    max-inline-size: min(32ch, 100%);
+    overflow: hidden;
+    color: var(--text-primary);
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .relationship-delete-usage-relation {
+    border-radius: 5px;
+    background: color-mix(in oklch, var(--danger-bg) 68%, var(--bg-secondary));
+    color: color-mix(in oklch, var(--danger) 78%, var(--text-primary));
+    font-size: 0.8182em;
+    font-weight: 650;
+    line-height: 1;
+    padding: 3px 5px;
+    white-space: nowrap;
+  }
+
+  /* =============================================
+     Relationship Graph View
+     ============================================= */
+  .relationship-error {
+    position: absolute;
+    inset-block-start: 72px;
+    inset-inline: 72px 24px;
+    z-index: 2;
+    border: 1px solid var(--danger-bg);
+    border-radius: 8px;
+    background: var(--danger-bg);
+    color: var(--danger);
+    padding: 10px 12px;
+    font-size: 0.8214em;
+  }
+
+  .relationship-surface {
+    position: relative;
+    min-block-size: 0;
+    overflow: hidden;
+    border-block-start: 1px solid color-mix(in oklch, var(--border-light) 72%, transparent);
+  }
+
+  .relationship-graph-tools {
+    position: absolute;
+    inset-block-start: 14px;
+    inset-inline-end: 14px;
+    z-index: 2;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+    border: 1px solid color-mix(in oklch, var(--border) 76%, transparent);
+    border-radius: 8px;
+    background: color-mix(in oklch, var(--bg-secondary) 88%, transparent);
+    box-shadow:
+      0 16px 42px oklch(0% 0 0deg / 14%),
+      inset 0 1px 0 color-mix(in oklch, var(--bg-secondary) 82%, white);
+    padding: 5px;
+  }
+
+  :root[data-theme="dark"] .relationship-graph-tools {
+    border-color: color-mix(in oklch, var(--border) 88%, transparent);
+    background: color-mix(in oklch, var(--bg-secondary) 82%, transparent);
+    box-shadow:
+      0 18px 46px oklch(0% 0 0deg / 32%),
+      inset 0 1px 0 color-mix(in oklch, var(--text-primary) 8%, transparent);
+  }
+
+  .relationship-tool-button {
+    display: inline-flex;
+    inline-size: 30px;
+    block-size: 30px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    padding: 0;
+    transition:
+      background-color var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default),
+      opacity var(--motion-duration-base) var(--ease-default),
+      box-shadow var(--motion-duration-base) var(--ease-default);
+    white-space: nowrap;
+  }
+
+  .relationship-tool-button:disabled {
+    pointer-events: none;
+    opacity: 0.45;
+  }
+
+  .relationship-tool-button:hover {
+    background: color-mix(in oklch, var(--bg-tertiary) 86%, var(--accent-light));
+    color: var(--text-primary);
+  }
+
+  .relationship-tool-button.is-active {
+    background: var(--accent-light);
+    color: var(--accent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--accent) 22%, transparent);
+  }
+
+  .relationship-canvas-shell {
+    position: relative;
+    block-size: 100%;
+    min-block-size: 0;
+    inline-size: 100%;
+    background-image: radial-gradient(
+      circle,
+      color-mix(in oklch, var(--text-tertiary) 24%, transparent) 0.95px,
+      transparent 1.25px
+    );
+    background-position: 0 0;
+    background-size: 20px 20px;
+  }
+
+  .relationship-canvas {
+    position: relative;
+    z-index: 1;
+    block-size: 100%;
+    inline-size: 100%;
+  }
+
+  .relationship-canvas canvas {
+    outline: none;
+  }
+
+  .relationship-empty {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    gap: 10px;
+    color: var(--text-tertiary);
+    text-align: center;
+    pointer-events: none;
+    z-index: 2;
+  }
+}

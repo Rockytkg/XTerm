@@ -1,0 +1,47 @@
+@layer components {
+  /* 截断文本：默认省略号，悬浮且溢出时双副本无缝滚动（与工作区标签页同款）。 */
+  .marquee-text {
+    display: block;
+    overflow: hidden;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .marquee-text-track {
+    display: inline-flex;
+    max-width: 100%;
+    white-space: nowrap;
+  }
+
+  .marquee-text-copy {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 隐藏尾随副本，仅在滚动时显示 */
+  .marquee-text-copy + .marquee-text-copy {
+    display: none;
+  }
+
+  .marquee-text-track.is-overflow {
+    max-width: none;
+    animation: marquee-text-scroll var(--marquee-duration, 4s) linear infinite;
+  }
+
+  .marquee-text-track.is-overflow .marquee-text-copy {
+    overflow: visible;
+    padding-right: 24px;
+    text-overflow: clip;
+  }
+
+  .marquee-text-track.is-overflow .marquee-text-copy + .marquee-text-copy {
+    display: inline-block;
+  }
+
+  @keyframes marquee-text-scroll {
+    to {
+      transform: translateX(-50%);
+    }
+  }
+}

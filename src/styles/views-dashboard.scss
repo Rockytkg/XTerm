@@ -1,0 +1,29 @@
+@layer components {
+  .dashboard-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+    padding: 40px;
+    text-align: center;
+  }
+
+  .dashboard-empty-icon {
+    margin-bottom: 4px;
+  }
+
+  .dashboard-empty-title {
+    font-size: 1.0714em;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .dashboard-empty-desc {
+    font-size: var(--font-size-md);
+    color: var(--text-secondary);
+    max-inline-size: 320px;
+    line-height: 1.7;
+  }
+}

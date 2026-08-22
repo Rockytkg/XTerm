@@ -1,0 +1,96 @@
+[package]
+name = "xterm"
+version = "0.1.1"
+description = "A desktop terminal workspace for SSH, Telnet, serial sessions, SFTP, credentials, and session tooling."
+authors = ["Rockytkg"]
+edition = "2021"
+license = "MIT"
+homepage = "https://github.com/Rockytkg/xterm"
+repository = "https://github.com/Rockytkg/xterm"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "xterm_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+cc = "1"
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tokio = { version = "1", features = ["fs", "io-util", "net", "rt-multi-thread", "sync", "time"] }
+tauri-plugin-log = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-deep-link = "2"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+memchr = "2"
+dirs = "6"
+bytes = "1"
+parking_lot = "0.12"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", "tokio"] }
+if-addrs = "0.15.0"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+russh = { version = "0.61.2", default-features = false, features = ["ring", "rsa"] }
+russh-sftp = "2.3"
+libunftp = { version = "0.23", default-features = false, features = ["ring"] }
+unftp-sbe-fs = "0.4"
+unftp-core = "0.1"
+async-trait = "0.1"
+rand = "0.10"
+anyhow = "1"
+redb = "4.1"
+semver = "1"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+ring = "0.17"
+md5 = "0.8.0"
+base64 = "0.22"
+chardetng = "1"
+encoding_rs = "0.8"
+font-kit = "0.14"
+sanitise-file-name = "1.0.0"
+tokio-serial = "5.4"
+socket2 = { version = "0.6", features = ["all"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-mcp-bridge = { version = "0.11.2", optional = true }
+tauri-plugin-window-state = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-notification = "2"
+chrono = "0.4.45"
+elevated-command = "1.1.2"
+
+[features]
+default = []
+mcp-bridge = ["dep:tauri-plugin-mcp-bridge"]
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"
+windows-core = "0.61.2"
+windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell"] }
+windows-sys = { version = "0.60.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows_firewall = "0.7.0"
+
+[target.'cfg(not(windows))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+iptables = "0.6.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+pfctl = "0.7.0"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "z"
+panic = "unwind"
+strip = true

@@ -1,0 +1,162 @@
+@use "mixins" as *;
+
+@layer components {
+  .workspace-tabbar {
+    display: flex;
+    align-items: center;
+    height: 38px;
+    padding-left: 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+    min-width: 0;
+  }
+
+  .workspace-tabbar-scroll {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+    overflow: auto hidden;
+    scrollbar-width: none;
+    user-select: none;
+  }
+
+  .workspace-tabbar-scroll-dragging {
+    cursor: grabbing;
+  }
+
+  .workspace-tabbar-scroll-dragging .ui-session-tab {
+    cursor: grabbing;
+    will-change: transform;
+  }
+
+  .workspace-tabbar-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* ── 3-zone session tab  │ status │ label (flex:1) │ close ── */
+  .workspace-tabbar .ui-session-tab {
+    display: flex;
+    inline-size: 120px;
+    padding-left: 12px; /* pl−pr=5 → dot & close symmetric around tab center */
+  }
+
+  .workspace-session-tab-item:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+
+  /* Zone 2: label fills all space between status dot and close button.
+     safe center → short text centered; long text left-aligned (shows beginning). */
+  .session-tab-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    justify-content: safe center;
+  }
+
+  /* Track wraps the twin copies for seamless marquee */
+  .session-tab-label-track {
+    display: inline-flex;
+  }
+
+  .session-tab-label-track.is-overflow {
+    animation: tab-label-marquee var(--marquee-duration, 3s) linear infinite;
+  }
+
+  /* Suppress marquee during drag (avoids compositor conflict with SortableJS) */
+  .workspace-tabbar-scroll-dragging .session-tab-label-track.is-overflow {
+    animation: none;
+  }
+
+  .session-tab-label-text {
+    white-space: nowrap;
+  }
+
+  /* Gap between copies — only during marquee */
+  .session-tab-label-track.is-overflow .session-tab-label-text {
+    padding-right: 20px;
+  }
+
+  /* Hide trailing copy by default; reveal only when marquee is active */
+  .session-tab-label-text + .session-tab-label-text {
+    display: none;
+  }
+
+  .session-tab-label-track.is-overflow .session-tab-label-text + .session-tab-label-text {
+    display: inline-block;
+  }
+
+  @keyframes tab-label-marquee {
+    from {
+      transform: translateX(0);
+    }
+
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  .workspace-tabbar-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin-left: 2px;
+    padding-left: 4px;
+    border-left: 1px solid var(--border-light);
+    flex-shrink: 0;
+  }
+
+  .workspace-tabbar-tool-button {
+    @include flex-center;
+
+    width: 28px;
+    height: 28px;
+    margin: auto 0;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+    transition:
+      background-color var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default),
+      border-color var(--motion-duration-base) var(--ease-default);
+  }
+
+  .workspace-tabbar-tool-button:hover:not(:disabled),
+  .workspace-tabbar-tool-button:focus-visible {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--border);
+    outline: none;
+  }
+
+  .workspace-tabbar-tool-button:disabled {
+    opacity: 0.45;
+  }
+
+  .workspace-tabbar-tools .workspace-tabbar-tool-button > svg {
+    width: 15px;
+    height: 15px;
+    stroke-width: 1.8;
+  }
+
+  .workspace-tabbar-tool-button-active {
+    background: var(--accent-light);
+    color: var(--accent);
+    border-color: color-mix(in oklch, var(--accent) 24%, var(--border));
+  }
+
+  .workspace-empty-tabs {
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    font-size: var(--font-size-base);
+    color: var(--text-tertiary);
+    white-space: nowrap;
+  }
+}

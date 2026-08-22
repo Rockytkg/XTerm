@@ -1,0 +1,1031 @@
+@use "./styles/tokens";
+@use "./styles/reset";
+@use "./styles/base";
+@use "./styles/mixins" as *;
+@layer reset, tokens, base, utilities, components, overlays;
+@import "@unocss/reset/tailwind.css" layer(reset);
+
+@layer base {
+  *::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+    background: transparent;
+    appearance: none;
+  }
+
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-track-piece {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-button,
+  *::-webkit-scrollbar-button:single-button,
+  *::-webkit-scrollbar-button:double-button,
+  *::-webkit-scrollbar-button:vertical,
+  *::-webkit-scrollbar-button:vertical:start:decrement,
+  *::-webkit-scrollbar-button:vertical:start:increment,
+  *::-webkit-scrollbar-button:vertical:end:increment,
+  *::-webkit-scrollbar-button:vertical:end:decrement,
+  *::-webkit-scrollbar-button:horizontal,
+  *::-webkit-scrollbar-button:horizontal:start:decrement,
+  *::-webkit-scrollbar-button:horizontal:start:increment,
+  *::-webkit-scrollbar-button:horizontal:end:increment,
+  *::-webkit-scrollbar-button:horizontal:end:decrement,
+  *::-webkit-scrollbar-corner {
+    display: none;
+    width: 0;
+    height: 0;
+    background: transparent;
+    appearance: none;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--border) 82%, var(--text-tertiary));
+  }
+}
+
+@layer components {
+  .host-key-dialog-overlay,
+  .dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--overlay-bg);
+  }
+
+  .host-key-dialog-overlay {
+    z-index: 80;
+    background: color-mix(in oklch, var(--overlay-bg) 92%, transparent);
+  }
+
+  .host-key-dialog,
+  .connect-dialog-content {
+    inline-size: min(480px, calc(var(--viewport-min-inline) - var(--space-6)));
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--border) 88%, transparent);
+    border-radius: var(--radius-2xl);
+    background: var(--bg-secondary);
+    box-shadow: var(--shadow-xl);
+  }
+
+  .host-key-dialog {
+    --dialog-content-z: 81;
+
+    container: host-key-dialog / inline-size;
+  }
+
+  .host-key-dialog-header {
+    display: grid;
+
+    @include grid-icon-label;
+
+    gap: 14px;
+    padding: 20px;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .host-key-dialog-icon {
+    @include flex-center(inline-flex);
+
+    width: 40px;
+    height: 40px;
+    border: 1px solid color-mix(in oklch, var(--warning) 24%, transparent);
+    border-radius: 10px;
+    background: color-mix(in oklch, var(--warning-bg) 86%, var(--bg-primary));
+    color: var(--warning);
+  }
+
+  .host-key-dialog-title {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 1.0714em;
+    font-weight: 650;
+    line-height: 1.35;
+  }
+
+  .host-key-dialog-desc {
+    margin: 5px 0 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
+    line-height: 1.55;
+  }
+
+  .host-key-details {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 16px 20px 0;
+  }
+
+  .host-key-details > div {
+    display: grid;
+    gap: 5px;
+  }
+
+  .host-key-details dt {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: 650;
+  }
+
+  .host-key-details dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: var(--text-primary);
+    font-size: var(--font-size-base);
+  }
+
+  .host-key-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: 18px 20px 20px;
+  }
+
+  .host-key-save {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .ssh-credential-dialog {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    inline-size: min(500px, calc(var(--viewport-min-inline) - var(--space-6)));
+    max-block-size: calc(100vb - 40px);
+    max-block-size: min(720px, calc(100dvb - 40px));
+  }
+
+  .ssh-credential-dialog-icon {
+    border-color: color-mix(in oklch, var(--accent) 24%, transparent);
+    background: color-mix(in oklch, var(--accent-light) 82%, var(--bg-primary));
+    color: var(--accent);
+  }
+
+  .ssh-credential-dialog .host-key-dialog-header {
+    padding: 16px 18px;
+  }
+
+  .ssh-credential-scroll {
+    min-block-size: 0;
+    overflow-y: auto;
+    padding: 14px 18px 12px;
+  }
+
+  .ssh-credential-form {
+    display: grid;
+    gap: 10px;
+    padding-block-end: 4px;
+  }
+
+  .ssh-credential-form label {
+    display: grid;
+    gap: 5px;
+  }
+
+  .ssh-credential-inline-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .ssh-credential-inline-row-two {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .ssh-credential-form input:not([type="checkbox"]),
+  .ssh-credential-form textarea {
+    min-inline-size: 0;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    padding: 7px 9px;
+    font-size: var(--font-size-base);
+    outline: none;
+  }
+
+  .ssh-credential-form textarea {
+    resize: vertical;
+    min-block-size: 92px;
+    font-family: var(--font-mono);
+  }
+
+  .ssh-credential-form input:focus,
+  .ssh-credential-form textarea:focus {
+    border-color: color-mix(in oklch, var(--accent) 54%, var(--border));
+    box-shadow: var(--focus-ring);
+  }
+
+  .ssh-credential-methods {
+    inline-size: 100%;
+  }
+
+  .ssh-credential-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    justify-content: center;
+    min-block-size: 30px;
+    font-size: 0.8214em;
+  }
+
+  .ssh-credential-persistence {
+    display: grid;
+    gap: var(--space-2);
+    margin-block-start: 2px;
+  }
+
+  .settings-tab-switcher.ssh-credential-persistence-switch {
+    display: flex;
+    inline-size: 100%;
+    gap: 3px;
+    padding: 3px;
+  }
+
+  .settings-tab-option.ssh-credential-persistence-option {
+    flex: 1 1 0;
+    justify-content: center;
+    min-inline-size: 0;
+    height: 30px;
+    padding-inline: 8px;
+    font-size: 0.8071em;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .ssh-credential-error {
+    margin: -2px 0 0;
+    color: var(--danger);
+    font-size: var(--font-size-sm);
+  }
+
+  .ssh-credential-dialog .host-key-dialog-actions {
+    border-top: 1px solid var(--border-light);
+    padding: 12px 18px 16px;
+  }
+
+  @container host-key-dialog (max-width: 420px) {
+    .ssh-credential-inline-row-two {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .host-key-dialog-actions {
+      flex-direction: column-reverse;
+    }
+
+    .host-key-dialog-actions > button {
+      inline-size: stretch;
+    }
+  }
+
+  ::selection {
+    background: var(--accent-light);
+    color: var(--text-primary);
+  }
+
+  @keyframes panel-fade-in {
+    from {
+      opacity: 0;
+      transform: translate3d(0, var(--motion-distance-md), 0);
+    }
+
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes panel-fade-out {
+    from {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+
+    to {
+      opacity: 0;
+      transform: translate3d(0, calc(var(--motion-distance-sm) * -1), 0);
+    }
+  }
+
+  @keyframes route-view-enter {
+    from {
+      opacity: 0;
+      transform: translate3d(0, var(--motion-distance-sm), 0);
+    }
+
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes route-view-exit {
+    from {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+
+    to {
+      opacity: 0;
+      transform: translate3d(0, calc(var(--motion-distance-sm) * -0.5), 0);
+    }
+  }
+
+  @keyframes sidebar-slide-in {
+    from {
+      opacity: 0;
+      transform: translate3d(var(--motion-distance-md), 0, 0);
+    }
+
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes sidebar-slide-out {
+    from {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+
+    to {
+      opacity: 0;
+      transform: translate3d(var(--motion-distance-md), 0, 0);
+    }
+  }
+
+  @keyframes theme-radial-reveal {
+    from {
+      clip-path: circle(0 at var(--theme-transition-x) var(--theme-transition-y));
+    }
+
+    to {
+      clip-path: circle(
+        var(--theme-transition-radius) at var(--theme-transition-x) var(--theme-transition-y)
+      );
+    }
+  }
+
+  @keyframes motion-overlay-in {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes motion-overlay-out {
+    from {
+      opacity: 1;
+    }
+
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes motion-surface-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, -50%) translateY(3px) scale(0.992);
+    }
+
+    to {
+      opacity: 1;
+      transform: translate(-50%, -50%) translateY(0) scale(1);
+    }
+  }
+
+  @keyframes motion-surface-out {
+    from {
+      opacity: 1;
+      transform: translate(-50%, -50%) translateY(0) scale(1);
+    }
+
+    to {
+      opacity: 0;
+      transform: translate(-50%, -50%) translateY(2px) scale(0.992);
+    }
+  }
+
+  @keyframes motion-tooltip-in {
+    from {
+      opacity: 0;
+      transform: translate(var(--tooltip-motion-x), var(--tooltip-motion-y)) scale(0.985);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes motion-tooltip-out {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    to {
+      opacity: 0;
+      transform: translate(var(--tooltip-motion-x), var(--tooltip-motion-y)) scale(0.985);
+    }
+  }
+
+  @keyframes motion-toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.995);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes motion-toast-out {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    to {
+      opacity: 0;
+      transform: translateY(-2px) scale(0.995);
+    }
+  }
+
+  .dialog-content {
+    --motion-y: 0px;
+    --motion-scale: 1;
+
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: var(--dialog-content-z, 31);
+    max-inline-size: calc(100vi - 40px);
+    max-inline-size: calc(100dvi - 40px);
+    max-block-size: calc(100vb - 40px);
+    max-block-size: calc(100dvb - 40px);
+    pointer-events: auto;
+    transform: translate(-50%, -50%) translateY(var(--motion-y)) scale(var(--motion-scale));
+  }
+
+  .dialog-overlay[data-state="open"],
+  .host-key-dialog-overlay[data-state="open"] {
+    animation: motion-overlay-in var(--motion-duration-base) var(--motion-ease) both;
+  }
+
+  .dialog-overlay[data-state="closed"],
+  .host-key-dialog-overlay[data-state="closed"] {
+    animation: motion-overlay-out var(--motion-duration-quick) var(--motion-ease-exit) both;
+  }
+
+  .dialog-content[data-state="open"] {
+    animation: motion-surface-in var(--motion-duration-base) var(--motion-ease) both;
+  }
+
+  .dialog-content[data-state="closed"] {
+    animation: motion-surface-out var(--motion-duration-quick) var(--motion-ease-exit) both;
+  }
+
+  :root[data-motion="off"] .dialog-overlay,
+  :root[data-motion="off"] .host-key-dialog-overlay,
+  :root[data-motion="off"] .dialog-content,
+  :root[data-motion="off"] .tooltip-content,
+  :root[data-motion="off"] .toast-root {
+    animation: none !important;
+  }
+
+  @supports (view-transition-name: none) {
+    :root.theme-transition-running .shell-root,
+    :root.theme-transition-running .app-main-panel,
+    :root.theme-transition-running .app-right-sidebar-shell {
+      view-transition-name: none;
+    }
+
+    :root.theme-transition-running::view-transition-group(root) {
+      animation: none;
+    }
+
+    :root.theme-transition-running::view-transition-old(root),
+    :root.theme-transition-running::view-transition-new(root) {
+      mix-blend-mode: normal;
+    }
+
+    :root.theme-transition-running::view-transition-old(root) {
+      z-index: 0;
+      animation: none;
+    }
+
+    :root.theme-transition-running::view-transition-new(root) {
+      z-index: 1;
+      animation: theme-radial-reveal var(--theme-transition-duration) var(--ease-default) both;
+    }
+
+    :root.workspace-sidebar-transition-running .app-main-panel {
+      view-transition-name: none;
+    }
+
+    :root.workspace-sidebar-transition-running::view-transition-old(app-main-panel),
+    :root.workspace-sidebar-transition-running::view-transition-new(app-main-panel) {
+      animation: none;
+    }
+
+    :root.route-transition-running::view-transition-old(root),
+    :root.route-transition-running::view-transition-new(root) {
+      animation-duration: var(--route-transition-duration);
+      animation-timing-function: var(--ease-default);
+      mix-blend-mode: normal;
+    }
+
+    :root.route-transition-running::view-transition-group(root) {
+      animation-duration: var(--route-transition-duration);
+      animation-timing-function: var(--ease-default);
+    }
+
+    :root.route-transition-running::view-transition-old(root) {
+      animation-name: route-view-exit;
+    }
+
+    :root.route-transition-running::view-transition-new(root) {
+      animation-name: route-view-enter;
+    }
+
+    ::view-transition-old(app-main-panel),
+    ::view-transition-new(app-main-panel),
+    ::view-transition-old(app-right-sidebar),
+    ::view-transition-new(app-right-sidebar) {
+      animation-duration: var(--panel-transition-duration);
+      animation-timing-function: var(--ease-default);
+    }
+
+    ::view-transition-group(app-main-panel),
+    ::view-transition-group(app-right-sidebar) {
+      animation-duration: var(--panel-transition-duration);
+      animation-timing-function: var(--ease-default);
+    }
+
+    ::view-transition-old(app-main-panel) {
+      animation-name: panel-fade-out;
+    }
+
+    ::view-transition-new(app-main-panel) {
+      animation-name: panel-fade-in;
+    }
+
+    ::view-transition-old(app-right-sidebar) {
+      animation-name: sidebar-slide-out;
+    }
+
+    ::view-transition-new(app-right-sidebar) {
+      animation-name: sidebar-slide-in;
+    }
+  }
+
+  .cred-root {
+    container: credentials-view / inline-size;
+  }
+
+  .relationship-root {
+    container: relationship-view / inline-size;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    block-size: stretch;
+    min-block-size: 0;
+    overflow: hidden;
+    background: var(--bg-primary);
+  }
+
+  .relationship-root-embedded {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .relationship-toolbar {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) auto auto;
+    align-items: center;
+    gap: 14px;
+    border-block-end: 1px solid var(--border-light);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--bg-secondary) 96%, var(--accent-light)),
+      var(--bg-secondary)
+    );
+    padding: 14px 18px;
+  }
+
+  .relationship-title-group {
+    display: flex;
+    min-inline-size: 0;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  .relationship-stats {
+    display: flex;
+    min-inline-size: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: 0.7714em;
+  }
+
+  .relationship-stats span {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-pill);
+    background: color-mix(in oklch, var(--bg-primary) 88%, var(--bg-secondary));
+    padding: 3px 8px;
+    white-space: nowrap;
+  }
+
+  .relationship-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  .relationship-actions .ui-row-action.is-active {
+    background: var(--accent-light);
+    color: var(--accent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--accent) 22%, transparent);
+  }
+
+  .credential-management-toolbar {
+    grid-template-columns: minmax(220px, 1fr) auto auto;
+  }
+
+  .credential-management-actions {
+    min-inline-size: 0;
+    flex-wrap: wrap;
+  }
+
+  .credential-layout-switch {
+    block-size: 30px;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 2px;
+    border-radius: 9px;
+  }
+
+  .credential-layout-switch .credential-layout-option {
+    inline-size: 34px;
+    min-inline-size: 34px;
+    height: 26px;
+    justify-content: center;
+    padding: 0;
+    font-size: 0.8214em;
+    border-radius: 7px;
+  }
+
+  .credential-layout-option .settings-tab-icon {
+    inline-size: 12px;
+    block-size: 12px;
+  }
+
+  .credential-layout-option[aria-pressed="true"] {
+    background: var(--bg-secondary);
+    color: var(--accent);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .credential-toolbar-button {
+    display: inline-flex;
+    block-size: 30px;
+    min-inline-size: max-content;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    border: 1px solid var(--border-light);
+    border-radius: 7px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 0.8214em;
+    font-weight: 600;
+    padding-inline: 10px;
+    transition:
+      background-color var(--motion-duration-base) var(--ease-default),
+      border-color var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default),
+      opacity var(--motion-duration-base) var(--ease-default);
+    white-space: nowrap;
+  }
+
+  .credential-toolbar-button:disabled {
+    pointer-events: none;
+    opacity: 0.45;
+  }
+
+  .credential-toolbar-primary {
+    border-color: color-mix(in oklch, var(--accent) 38%, var(--border));
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+
+  .credential-toolbar-primary:hover {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: white;
+  }
+
+  .credential-toolbar-danger:hover {
+    border-color: var(--danger);
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+
+  .cred-content,
+  .cred-list-pane {
+    min-block-size: 0;
+  }
+
+  .cred-content {
+    display: flex;
+    flex-direction: column;
+    block-size: calc(100vb - 72px);
+    block-size: calc(100dvb - 72px);
+    overflow: hidden;
+  }
+
+  .cred-list-pane {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .cred-list {
+    display: grid;
+    flex: 1;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    align-content: start;
+    gap: 10px;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .cred-list-error {
+    margin: 12px 16px 0;
+    border: 1px solid var(--danger-bg);
+    border-radius: var(--radius-lg);
+    background: var(--danger-bg);
+    color: var(--danger);
+    font-size: 0.8214em;
+    padding: 10px 12px;
+  }
+
+  .cred-list-dragging {
+    cursor: grabbing;
+    user-select: none;
+  }
+
+  .cred-list-dragging .cred-card {
+    will-change: transform;
+  }
+
+  .cred-card {
+    min-inline-size: 0;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-xl);
+    background: var(--bg-secondary);
+    cursor: grab;
+    padding: 14px 16px;
+    transition:
+      border-color var(--motion-duration-quick) var(--ease-default),
+      box-shadow var(--motion-duration-quick) var(--ease-default),
+      background-color var(--motion-duration-quick) var(--ease-default);
+  }
+
+  .cred-card:hover {
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+    background: var(--bg-secondary);
+  }
+
+  .cred-card-header {
+    display: grid;
+
+    @include grid-label-action;
+
+    align-items: start;
+    gap: 10px;
+  }
+
+  .cred-card-main {
+    display: flex;
+    min-inline-size: 0;
+    align-items: flex-start;
+    gap: var(--space-4);
+  }
+
+  .cred-card-icon {
+    display: flex;
+    flex: 0 0 38px;
+    inline-size: 38px;
+    block-size: 38px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-lg);
+  }
+
+  .cred-icon-key {
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+
+  .cred-icon-pw {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+
+  .cred-card-heading {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .cred-card-badges {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .cred-card-name {
+    min-inline-size: 0;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+    font-weight: 500;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cred-card-badge {
+    display: inline-flex;
+    align-items: center;
+    min-inline-size: 0;
+    border-radius: var(--radius-pill);
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    line-height: 1;
+    padding: 4px 7px;
+    white-space: nowrap;
+  }
+
+  .badge-key {
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+
+  /* =============================================
+     Responsive — Container Query Overrides
+     ============================================= */
+
+  @container credentials-view (max-width: 860px) {
+    .credential-management-toolbar {
+      grid-template-columns: minmax(0, 1fr);
+      align-items: stretch;
+    }
+
+    .credential-management-toolbar .relationship-stats,
+    .credential-management-actions {
+      justify-content: flex-start;
+    }
+
+    .credential-management-actions {
+      inline-size: 100%;
+    }
+  }
+
+  @container relationship-view (max-width: 920px) {
+    .relationship-toolbar {
+      grid-template-columns: minmax(0, 1fr);
+      align-items: stretch;
+    }
+
+    .relationship-stats,
+    .relationship-actions {
+      justify-content: flex-start;
+    }
+  }
+
+  @container relationship-view (max-width: 560px) {
+    .relationship-toolbar {
+      padding: 14px;
+    }
+  }
+
+  @container credentials-view (max-width: 520px) {
+    .cred-list {
+      grid-template-columns: minmax(0, 1fr);
+      padding: 12px;
+    }
+
+    .cred-card-actions {
+      justify-content: flex-end;
+      justify-self: end;
+    }
+  }
+
+  @container sftp-panel (max-width: 760px) {
+    .sftp-toolbar {
+      align-items: stretch;
+      flex-direction: column;
+      padding: 10px 12px;
+    }
+
+    .sftp-toolbar-actions {
+      inline-size: stretch;
+      margin-inline-start: 0;
+    }
+
+    .sftp-button {
+      flex: 1;
+    }
+
+    .sftp-pathbar {
+      grid-template-columns: 1fr;
+    }
+
+    .sftp-compact-hidden {
+      display: none;
+    }
+  }
+
+  @container connection-dialog (max-width: 460px) {
+    .conn-dialog-header,
+    .conn-dialog-footer {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+
+    .conn-dialog-body {
+      max-block-size: 68cqb;
+      padding: 16px;
+    }
+
+    .conn-field-heading {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .conn-auth-line-grid,
+    .conn-serial-line-grid,
+    .conn-host-row {
+      grid-template-columns: 1fr;
+    }
+
+    .conn-browse-btn {
+      justify-content: center;
+      inline-size: stretch;
+    }
+  }
+
+  @container jump-host-editor (max-width: 720px) {
+    .conn-jump-dialog-body {
+      grid-template-columns: 1fr;
+    }
+
+    .conn-jump-chain-pane {
+      max-block-size: 240px;
+      border-right: 0;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .conn-jump-dialog-header,
+    .conn-jump-dialog-footer {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-group(root),
+    ::view-transition-old(root),
+    ::view-transition-new(root),
+    ::view-transition-group(app-main-panel),
+    ::view-transition-old(app-main-panel),
+    ::view-transition-new(app-main-panel),
+    ::view-transition-group(app-right-sidebar),
+    ::view-transition-old(app-right-sidebar),
+    ::view-transition-new(app-right-sidebar) {
+      animation: none !important;
+    }
+  }
+}

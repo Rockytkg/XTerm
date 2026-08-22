@@ -1,0 +1,177 @@
+@layer components {
+  .sessions-root {
+    display: flex;
+    flex-direction: column;
+    block-size: stretch;
+    overflow: hidden;
+    background: var(--bg-primary);
+  }
+
+  .sessions-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 10px;
+    align-content: start;
+  }
+
+  .sessions-list-dragging {
+    cursor: grabbing;
+    user-select: none;
+  }
+
+  .sessions-list-dragging .session-card {
+    will-change: transform;
+  }
+
+  .session-card {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: 14px 16px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-xl);
+    background: var(--bg-secondary);
+    cursor: pointer;
+    transition:
+      border-color var(--motion-duration-quick) var(--ease-default),
+      box-shadow var(--motion-duration-quick) var(--ease-default),
+      background-color var(--motion-duration-quick) var(--ease-default);
+  }
+
+  .session-card:hover {
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+    background: var(--bg-secondary);
+  }
+
+  .session-card-sortable-chosen,
+  .ui-session-tab-sortable-chosen {
+    position: relative;
+    z-index: 3;
+    opacity: 0.96;
+    cursor: grabbing;
+    box-shadow: 0 12px 28px oklch(0% 0 0deg / 16%);
+  }
+
+  .ui-session-tab-sortable-chosen {
+    z-index: 4;
+  }
+
+  .session-card-sortable-ghost,
+  .ui-session-tab-sortable-ghost {
+    background: var(--accent-light) !important;
+    opacity: 0.3;
+    border-color: color-mix(in oklch, var(--accent) 40%, var(--border)) !important;
+  }
+
+  .session-card-sortable-drag,
+  .ui-session-tab-sortable-drag {
+    cursor: grabbing;
+    opacity: 0.98;
+    box-shadow: 0 16px 32px oklch(0% 0 0deg / 22%);
+  }
+
+  .session-card-sortable-fallback,
+  .ui-session-tab-sortable-fallback {
+    cursor: grabbing;
+    opacity: 0.96 !important;
+    pointer-events: none;
+    transform-origin: 0 0 !important;
+    transition: none !important;
+    will-change: transform;
+    box-shadow: 0 16px 32px oklch(0% 0 0deg / 24%);
+  }
+
+  .session-card-status {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: var(--radius-lg);
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+
+  .session-card-protocol-icon {
+    position: relative;
+    z-index: 1;
+    display: block;
+    color: currentcolor;
+    stroke: currentcolor;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: none;
+  }
+
+  .session-card-status-ssh {
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+
+  .session-card-status-telnet {
+    background: oklch(95% 0.03 55deg);
+    color: oklch(64% 0.12 48deg);
+  }
+
+  .session-card-status-serial {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+
+  .session-card-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .session-card-name {
+    font-size: var(--font-size-md);
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .session-card-meta {
+    font-size: var(--font-size-sm);
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+
+  .session-card-actions {
+    display: grid;
+    grid-auto-columns: 28px;
+    grid-auto-flow: column;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid color-mix(in oklch, var(--border-light) 78%, transparent);
+    border-radius: 9px;
+    background: color-mix(in oklch, var(--bg-primary) 62%, transparent);
+    flex-shrink: 0;
+    inline-size: max-content;
+  }
+
+  /* Dark values for the telnet badge: explicit dark theme and auto mode
+     following a dark OS. Specificity stays above the base class selector. */
+  :root[data-theme="dark"] .session-card-status-telnet {
+    background: oklch(31% 0.038 48deg);
+    color: oklch(79% 0.1 55deg);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .session-card-status-telnet {
+      background: oklch(31% 0.038 48deg);
+      color: oklch(79% 0.1 55deg);
+    }
+  }
+}

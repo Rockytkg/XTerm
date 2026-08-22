@@ -1,0 +1,69 @@
+@layer base {
+  html,
+  body,
+  #app {
+    inline-size: stretch;
+    block-size: stretch;
+    min-inline-size: var(--viewport-min-inline);
+    min-block-size: var(--viewport-min-block);
+    margin: 0;
+    background: var(--bg-primary);
+  }
+
+  :root[data-window="context-menu"],
+  :root[data-window="context-menu"] body,
+  :root[data-window="context-menu"] #app {
+    inline-size: 100%;
+    block-size: 100%;
+    min-inline-size: 0;
+    min-block-size: 0;
+    overflow: hidden;
+    background: transparent;
+  }
+
+  body {
+    overflow: hidden;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  :root:not([data-theme]) body,
+  :root:not([data-theme]) #app {
+    color-scheme: light dark;
+  }
+
+  :root[data-theme="light"] body,
+  :root[data-theme="light"] #app {
+    color-scheme: light;
+  }
+
+  :root[data-theme="dark"] body,
+  :root[data-theme="dark"] #app {
+    color-scheme: dark;
+  }
+
+  button,
+  input,
+  textarea,
+  select,
+  option {
+    font: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  :root[data-motion="off"] *,
+  :root[data-motion="off"] *::before,
+  :root[data-motion="off"] *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

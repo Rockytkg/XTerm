@@ -1,0 +1,58 @@
+@layer components {
+  /* =============================================
+     Primitives — Settings Tab Switcher
+     ============================================= */
+  .settings-tab-switcher {
+    display: flex;
+    gap: var(--space-1);
+    padding: 3px;
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+    inline-size: fit-content;
+  }
+
+  .settings-tab-option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 32px;
+    padding: 0 14px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.8929em;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default),
+      box-shadow var(--motion-duration-base) var(--ease-default);
+    white-space: nowrap;
+  }
+
+  .settings-tab-option:hover {
+    color: var(--text-primary);
+  }
+
+  .settings-tab-option[data-state="on"] {
+    background: var(--bg-secondary);
+    color: var(--accent);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .settings-tab-icon {
+    font-size: var(--font-size-md);
+    line-height: 1;
+  }
+
+  .ui-input-inline[type="number"] {
+    appearance: textfield;
+  }
+
+  .ui-input-inline[type="number"]::-webkit-inner-spin-button,
+  .ui-input-inline[type="number"]::-webkit-outer-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+}

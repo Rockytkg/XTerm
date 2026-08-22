@@ -1,0 +1,20 @@
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="RemoveRuntimeDataDirectory" Guid="*">
+        <RegistryValue Root="HKCU" Key="Software\liushicong\XTerm" Name="RemoveRuntimeDataDirectory" Type="integer" Value="1" KeyPath="yes" />
+        <util:RemoveFolderEx On="uninstall" Property="INSTALLDIR_DATA" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+
+  <Fragment>
+    <Property Id="INSTALLDIR_DATA" Value="[INSTALLDIR]data" />
+  </Fragment>
+
+  <Fragment>
+    <FeatureRef Id="MainProgram">
+      <ComponentRef Id="RemoveRuntimeDataDirectory" />
+    </FeatureRef>
+  </Fragment>
+</Wix>

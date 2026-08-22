@@ -1,0 +1,189 @@
+[
+  {
+    "name": "网络与 Linux 运维高信噪比高亮",
+    "rules": [
+      {
+        "matchType": "regex",
+        "pattern": "%{1,2}[A-Z0-9_]+[-/][0-2][-/][A-Z0-9_/:-]+",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#ff5555"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "%{1,2}[A-Z0-9_]+[-/][3-4][-/][A-Z0-9_/:-]+",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#ffae42"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "%{1,2}[A-Z0-9_]+[-/][5-7][-/][A-Z0-9_/:-]+",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#8a959e"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:EMERGENCY|ALERT|CRITICAL|FATAL|PANIC|ERROR|ERR|FAILED|FAILURE|FAIL|DENIED|REJECTED|REFUSED|UNREACHABLE|TIMEOUT|LOST|DOWN|ERR-DISABLED|SHUTDOWN|DISABLED|NOTCONNECT|NO-CARRIER|OOPS|TRACEBACK|SEGFAULT|OOM-KILLER|OOM|DUMPED|KILLED|ABORTED|CORRUPT|CORRUPTED|EXCEPTION|UNAVAILABLE|no|deny|drop|reject|blackhole|disable|undo)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#ff5555"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:CRC|FCS|ERRORS?|DROPS?|DROPPED|DISCARDS?|OVERRUNS?|UNDERRUNS?|RUNTS|GIANTS|COLLISIONS?|THROTTLES?)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#ff8888"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:WARNING|WARN|NOTICE|DEGRADED|FLAP|FLAPPING|MISMATCH|DUPLICATE|SUPPRESSED|RETRY|RETRANSMIT|PARTIAL|STALE|EXPIRED|THROTTLED|SLOW|LATENCY|JITTER)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#ffae42"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:UP|LOWER_UP|RUNNING|FULL|ESTABLISHED|FORWARDING|CONNECTED|SYNCHRONIZED|MASTER|BACKUP|ACTIVE|LISTEN|LISTENING|READY|HEALTHY|SUCCEEDED|SUCCESS|PASSED|OK)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#4caf50"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:INIT|IDLE|EXSTART|EXCHANGE|LOADING|BLOCKING|LEARNING|INACTIVE|DORMANT|INCOMPLETE|UNKNOWN|PENDING|TERMINATING|EVICTED|CRASHLOOPBACKOFF|IMAGEPULLBACKOFF|NOTREADY|UNHEALTHY)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#8a959e"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9.])(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}(?:(?:/(?:3[0-2]|[12]?\\d))|(?::(?:6553[0-5]|655[0-2]\\d|65[0-4]\\d{2}|6[0-4]\\d{3}|[1-5]?\\d{1,4})))?(?![A-Za-z0-9.:])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#40c4e8"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9:.])(?:(?:[A-F0-9]{1,4}:){7}[A-F0-9]{1,4}|(?:[A-F0-9]{1,4}:){1,7}:|(?:[A-F0-9]{1,4}:){1,6}:[A-F0-9]{1,4}|(?:[A-F0-9]{1,4}:){1,5}(?::[A-F0-9]{1,4}){1,2}|(?:[A-F0-9]{1,4}:){1,4}(?::[A-F0-9]{1,4}){1,3}|(?:[A-F0-9]{1,4}:){1,3}(?::[A-F0-9]{1,4}){1,4}|(?:[A-F0-9]{1,4}:){1,2}(?::[A-F0-9]{1,4}){1,5}|[A-F0-9]{1,4}:(?:(?::[A-F0-9]{1,4}){1,6})|:(?:(?::[A-F0-9]{1,4}){1,7}|:))(?:/(?:12[0-8]|1[01]\\d|\\d{1,2}))?(?![A-Za-z0-9:.])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#40c4e8"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9])(?:(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}|[0-9A-F]{4}\\.[0-9A-F]{4}\\.[0-9A-F]{4})(?![A-Za-z0-9])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#40c4e8"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:Eth|Gi|Fa|Te|Twe|Fo|Hu|XGE|GE|XE|25GE|40GE|50GE|100GE|Ethernet|GigabitEthernet|FastEthernet|TenGigabitEthernet|TwentyFiveGigE|FortyGigabitEthernet|HundredGigE|Eth-Trunk|Port-channel|Port-Channel|Bundle-Ether|Bridge-Aggregation|Vlan|Loopback|Tunnel|Null|MgmtEth|Management|Lo|Tu|Vl|Po|BE|ae|et|xe|ge|irb|vlan|lo|reth|fxp|ens|eno|enp|eth|wlan|bond|br|docker|veth)\\d+(?:[/:.-]\\d+)*(?:\\.\\d+)?(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#40c4e8"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?:(?<![A-Za-z0-9_-])(?:tcp|udp|icmp|icmp6|sctp)/(?:\\d{1,5}|[A-Za-z0-9_.-]+)(?![A-Za-z0-9_.-])|(?<![A-Za-z0-9_-])(?:LISTEN|ESTAB|SYN-SENT|SYN-RECV|FIN-WAIT-1|FIN-WAIT-2|TIME-WAIT|CLOSE-WAIT|LAST-ACK|CLOSING)(?![A-Za-z0-9_-])|(?<![\\w.:-]):\\d{1,5}(?!\\d))",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#5c9ef7"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:BGP4\\+|BGP|OSPFV3|OSPF|ISIS|IS-IS|EIGRP|RIP|LDP|MPLS|RSVP|SR-MPLS|SRV6|BFD|PIM-SM|PIM-DM|PIM|IGMP|MSDP|VRRP|HSRP|GLBP|STP|RSTP|MSTP|LACP|LLDP|CDP|CWMP|VPDN|L2TP|PPPOE|PPP|SLIP|HDLC|GVRP|DLDP|RRPP|ERPS|SEP|EFM|CFM|MLD|DOT1X|MACA|PORTAL|UDLD|VPLS|VPWS|SFLOW|NETSTREAM|NETFLOW|IRF|CSS|DHCP|NTP|SNMP|NETCONF|RESTCONF|IPSEC|IKE|GRE|VXLAN|EVPN|QINQ|ARP|ND|DNS|TLS|SSH|TELNET|NFS|SMB|ISCSI|REDUNDANCY|HOLDTIME|KEEPALIVE|MIRROR|SPAN|RSPAN|ERSPAN|ISOLATE|OAM|EOAM|DTP|PAGP|VTP)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#5c9ef7"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:VLAN|VID|VNI)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#4dd0b0"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:VRF|VPN-INSTANCE|ROUTE-DISTINGUISHER|ROUTE-TARGET|LOCAL-PREFERENCE|LOCALPREF|AS-PATH|COMMUNITY|MED|METRIC|COST|PREFERENCE|DISTANCE|PRIORITY)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#b39ce6"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])dns-server(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#ffd43b"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?:(?<!\\S)\\[\\d{1,3}/\\d{1,12}\\](?!\\S)|(?<!\\S)\\(\\d{1,12}/\\d{1,12}\\)(?!\\S)|(?<![A-Za-z0-9.])\\d+(?:\\.\\d+)?\\s*(?:ms|msec|sec|s)(?![A-Za-z0-9])|(?<![A-Za-z0-9_:])(?:2[0-3]|[01]?\\d)(?::[0-5]?\\d){1,2}(?:\\.\\d{3})?(?![A-Za-z0-9_:]))",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#8a959e"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9.])(?:[89]\\d|100)(?:\\.\\d+)?%(?![A-Za-z0-9])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#ffae42"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:pid|ppid|uid|gid|inode|fd)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#8a959e"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_.@-])[A-Za-z0-9_.@-]+\\.(?:service|socket|timer|target|mount|path|slice|scope)(?![A-Za-z0-9_.@-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#8a959e"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "\\b(?:\\*>i?|>|IA|E[12]|N[12]|OE[12]|ON[12]|OIA|EX|S\\*|S|C|L|D|B|R|O|I)(?=\\s+(?:\\d|[A-F0-9:]{2,}|via|is directly|\\[))",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#b39ce6"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:neighbor|next-hop|prefix-list|access-list|route-map|policy-map|class-map|port-security|storm-control|hostname|interface|console|vty|logging|login|username|password|version|sysmac|webmaster|switchport|channel-group|spanning-tree|mac-address-table|snmp-server|tacacs|radius|banner|motd|enable|secret|certificate|encryption|password-encryption|domain-name|name-server|end|display|reset|save|sysname|system-view|local-user|user-interface|authentication-mode|service-type|privilege-level|user-group|password-control|authorization-attribute|ip-pool|gateway-list|dns-list|excluded-ip-address|link-type|traffic-filter|packet-filter|nat-outbound|nat-server|edged-port|bpdu-protection|root-protection|loop-protection|eth-trunk|import-route|default-route-advertise|router-id|description|ntp-service|ntp-source|snmp-agent|info-center|stelnet|sftp|traffic-policy|traffic-classifier|traffic-behavior|qos|transceiver|logbuffer|startup|observe-port|monitor-port|trunk|hybrid|tagged|untagged|pvid|vlanif|vlan-interface|loopback|acl|current-configuration|saved-configuration|irf-port|lacp-static|history-command|show|copy|erase|configure|reload|write|debug|clear|boot|terminal|running-config|startup-config|archive|dot1q|nonegotiate|subinterface|encapsulation|access-group|portfast|bpduguard|rootguard|loopguard|uplinkfast|backbonefast|etherchannel|channel-protocol|redistribute|passive-interface|default-information|summary-address|service-policy|priority-queue|bandwidth|dscp|cos|precedence|authentication|authorization|accounting|tacacs-server|radius-server|mab|dhcp-snooping|arp-inspection|ip-source-guard|control-plane|key-chain|aaa)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#ffd43b"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:permit|accept|allow)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#4caf50"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:systemctl|journalctl|dmesg|netstat|ethtool|tcpdump|iptables|nft|firewalld|ufw|conntrack|traceroute|tracepath|mtr|ping|dig|nslookup|curl|wget|top|htop|iotop|iostat|vmstat|lsblk|mount|lsof|strace)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#ffd43b"
+      },
+      {
+        "matchType": "regex",
+        "pattern": "(?<![A-Za-z0-9_-])(?:docker|containerd|podman|kubectl|kubelet|kube-proxy|coredns|calico|flannel|container|pod|deployment|daemonset|statefulset|serviceaccount|namespace|nodeport|clusterip|ingress)(?![A-Za-z0-9_-])",
+        "caseSensitive": false,
+        "effect": "foreground",
+        "color": "#4dd0b0"
+      }
+    ]
+  }
+]

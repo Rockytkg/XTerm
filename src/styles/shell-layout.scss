@@ -1,0 +1,257 @@
+@use "mixins" as *;
+
+@layer components {
+  .shell-root {
+    display: grid;
+    grid-template-rows: var(--shell-titlebar-height) 1fr var(--shell-statusbar-height);
+    grid-template-columns: minmax(0, 1fr);
+    inline-size: stretch;
+    block-size: stretch;
+    min-block-size: var(--viewport-min-block);
+    overflow: hidden;
+    background: var(--bg-primary);
+    view-transition-name: app-shell;
+  }
+
+  .shell-content-row {
+    grid-row: 2;
+    display: flex;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+
+  .shell-right-edge {
+    flex: 0 0 12px;
+    background: var(--bg-secondary);
+    border-inline-start: 1px solid var(--border-light);
+  }
+
+  /* --- Title Bar --- */
+  .shell-titlebar {
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    block-size: var(--shell-titlebar-height);
+    border-block-end: 1px solid var(--border);
+    background: var(--bg-secondary);
+    user-select: none;
+  }
+
+  .titlebar-brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: 0 12px 0 14px;
+    flex-shrink: 0;
+  }
+
+  .titlebar-logo {
+    flex-shrink: 0;
+    display: block;
+  }
+
+  .titlebar-appname {
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.2px;
+  }
+
+  .ui-session-tab:hover .tab-close-btn,
+  .ui-session-tab-active .tab-close-btn {
+    opacity: 1;
+  }
+
+  .tab-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 16px;
+    block-size: 16px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+    opacity: 0;
+    transition:
+      opacity var(--motion-duration-quick),
+      background-color var(--motion-duration-quick),
+      color var(--motion-duration-quick);
+  }
+
+  .tab-close-btn:hover {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+
+  .titlebar-right {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    align-self: stretch;
+    padding: 0 var(--space-3) 0 0;
+    flex-shrink: 0;
+    margin-inline-start: auto;
+  }
+
+  .titlebar-tool-button,
+  .titlebar-window-control {
+    @include flex-center;
+
+    inline-size: 32px;
+    block-size: 32px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    transition:
+      background-color var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default);
+  }
+
+  .titlebar-tool-button:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  .titlebar-window-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    block-size: stretch;
+    padding: 0;
+  }
+
+  .titlebar-window-control:hover,
+  .titlebar-window-close:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  .theme-icon {
+    flex-shrink: 0;
+  }
+
+  .app-workspace-split {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app-main-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    view-transition-name: app-main-panel;
+  }
+
+  .app-right-sidebar-shell {
+    display: flex;
+    flex: 1 1 auto;
+    inline-size: stretch;
+    min-width: 0;
+    min-height: 0;
+    block-size: stretch;
+    overflow: hidden;
+    background: var(--bg-secondary);
+    view-transition-name: app-right-sidebar;
+  }
+
+  .app-right-resize-handle {
+    position: relative;
+    flex: 0 0 10px;
+    inline-size: 10px;
+    min-width: 10px;
+    margin-left: -1px;
+    border-left: 1px solid var(--border-light);
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklch, var(--accent) 5%, transparent),
+        transparent 28%,
+        transparent 72%,
+        color-mix(in oklch, var(--accent) 6%, transparent)
+      ),
+      var(--bg-secondary);
+    cursor: col-resize;
+    transition: background-color var(--motion-duration-base) var(--ease-default);
+  }
+
+  .app-right-resize-handle:hover,
+  .app-right-resize-handle[data-state="drag"],
+  .app-right-resize-handle[data-resize-handle-state="drag"] {
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklch, var(--accent) 12%, transparent),
+        color-mix(in oklch, var(--accent) 4%, transparent)
+      ),
+      var(--bg-secondary);
+  }
+
+  .app-right-resize-handle-hidden {
+    flex-basis: 0;
+    inline-size: 0;
+    min-width: 0;
+    margin-left: 0;
+    border-left: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .app-right-resize-handle-inert {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .app-right-resize-handle-grip {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    inline-size: 4px;
+    block-size: 44px;
+    border-radius: var(--radius-pill);
+    background: radial-gradient(
+        circle at center,
+        color-mix(in oklch, var(--text-tertiary) 82%, transparent) 0 1px,
+        transparent 1.5px
+      )
+      center / 4px 10px repeat-y;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  .app-right-gutter {
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg-secondary);
+    transform: translateX(0);
+    opacity: 1;
+    will-change: transform, opacity;
+    transition:
+      transform var(--motion-duration-slow) var(--ease-default),
+      opacity var(--motion-duration-base) var(--ease-default),
+      border-color var(--motion-duration-base) var(--ease-default);
+  }
+
+  .app-right-gutter-open {
+    border-inline-start: 1px solid var(--border-light);
+  }
+
+  .app-right-gutter-collapsed {
+    border-inline-start: 0;
+  }
+
+  .app-right-gutter-hidden {
+    transform: translateX(18px);
+    opacity: 0;
+    pointer-events: none;
+  }
+}

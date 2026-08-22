@@ -1,0 +1,40 @@
+@layer components {
+  .ui-toggle {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 10px;
+    background: var(--border);
+    padding: 0;
+    cursor: pointer;
+    transition: background-color var(--motion-duration-slow) var(--ease-default);
+  }
+
+  .ui-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .ui-toggle[data-state="checked"] {
+    background: var(--accent);
+  }
+
+  .ui-toggle-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: 0 1px 3px oklch(0% 0 0deg / 20%);
+    transition: transform var(--motion-duration-slow) var(--ease-default);
+  }
+
+  .ui-toggle-thumb[data-state="checked"] {
+    transform: translateX(16px);
+  }
+}

@@ -1,0 +1,353 @@
+@layer tokens {
+  /* ===============================================
+     Design Tokens — single source of truth
+     =============================================== */
+
+  :root {
+    /* --- Color Scheme --- */
+    color-scheme: light dark;
+
+    /* --- Typography --- */
+    --font-sans:
+      "Ubuntu", "Cantarell", "Noto Sans", -apple-system, blinkmacsystemfont, "Segoe UI",
+      "Microsoft YaHei", "PingFang SC", sans-serif;
+    --font-mono:
+      "Cascadia Code", "JetBrains Mono", "Fira Code", consolas, menlo, "DejaVu Sans Mono",
+      "Liberation Mono", monospace;
+    --font-size-xs: 0.7143em;
+    --font-size-sm: 0.7857em;
+    --font-size-base: 0.8571em;
+    --font-size-md: 0.9286em;
+    --font-weight-normal: 400;
+
+    /* --- Spacing ---
+       Each cqi clamp keeps a fixed px fallback first: old webviews without
+       container query units drop the clamp and keep the fallback. */
+    --space-1: 4px;
+    --space-2: 6px;
+    --space-3: 10px;
+    /* stylelint-disable-next-line declaration-block-no-duplicate-custom-properties */
+    --space-3: clamp(8px, 5px + 0.38cqi, 12px);
+    --space-4: 14px;
+    /* stylelint-disable-next-line declaration-block-no-duplicate-custom-properties */
+    --space-4: clamp(12px, 8px + 0.52cqi, 16px);
+    --space-6: 24px;
+    /* stylelint-disable-next-line declaration-block-no-duplicate-custom-properties */
+    --space-6: clamp(20px, 14px + 0.78cqi, 28px);
+
+    /* --- Layout --- */
+    --viewport-min-inline: 960px;
+    /* stylelint-disable-next-line declaration-block-no-duplicate-custom-properties */
+    --viewport-min-inline: min(960px, 100dvi);
+    --viewport-min-block: 600px;
+    /* stylelint-disable-next-line declaration-block-no-duplicate-custom-properties */
+    --viewport-min-block: min(600px, 100dvb);
+    --shell-titlebar-height: 48px;
+    --shell-statusbar-height: 28px;
+
+    /* --- Radii --- */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-xl: 12px;
+    --radius-2xl: 14px;
+    --radius-pill: 999px;
+
+    /* --- Shadows --- */
+    --shadow-sm: 0 1px 3px oklch(0% 0 0deg / 8%);
+    --shadow-md: 0 4px 12px oklch(0% 0 0deg / 10%);
+    --shadow-lg: 0 12px 32px oklch(0% 0 0deg / 14%);
+    --shadow-xl: 0 24px 70px oklch(0% 0 0deg / 20%), 0 6px 18px oklch(0% 0 0deg / 12%);
+    --focus-ring: 0 0 0 3px var(--accent-glow);
+
+    /* --- Semantic Colors: Surface --- */
+    --bg-primary: oklch(98.2% 0.005 255deg);
+    --bg-secondary: oklch(100% 0 0deg);
+    --bg-tertiary: oklch(95.3% 0.006 255deg);
+    --overlay-bg: oklch(20% 0.01 260deg / 34%);
+
+    /* --- Semantic Colors: Text --- */
+    --text-primary: oklch(23.5% 0.018 260deg);
+    --text-secondary: oklch(54% 0.025 260deg);
+    --text-tertiary: oklch(69% 0.02 260deg);
+
+    /* --- Semantic Colors: Accent --- */
+    --accent: oklch(62% 0.18 258deg);
+    --accent-hover: oklch(57% 0.19 258deg);
+    --accent-active: oklch(51% 0.2 258deg);
+    --accent-light: oklch(94% 0.035 258deg);
+    --accent-glow: oklch(62% 0.18 258deg / 16%);
+    --accent-shadow: oklch(62% 0.18 258deg / 30%);
+
+    /* --- Semantic Colors: Semantic --- */
+    --success: oklch(72% 0.16 160deg);
+    --success-bg: oklch(92% 0.045 160deg);
+    --success-glow: oklch(72% 0.16 160deg / 46%);
+    --warning: oklch(78% 0.15 82deg);
+    --warning-bg: oklch(95% 0.052 82deg);
+    --warning-glow: oklch(78% 0.15 82deg / 40%);
+    --danger: oklch(68% 0.19 25deg);
+    --danger-bg: oklch(94% 0.035 25deg);
+    --info: oklch(70% 0.14 245deg);
+    --info-bg: oklch(94% 0.034 245deg);
+
+    /* --- Semantic Colors: Border --- */
+    --border: oklch(90% 0.007 260deg);
+    --border-light: oklch(95% 0.004 260deg);
+
+    /* --- Semantic Colors: Terminal --- */
+    --bg-terminal: oklch(97% 0.004 260deg);
+    --terminal-border: oklch(20% 0.01 260deg / 8%);
+    --terminal-chip-bg: oklch(20% 0.01 260deg / 5%);
+    --text-terminal: oklch(24% 0.018 260deg);
+    --text-terminal-dim: oklch(54% 0.025 260deg);
+
+    /* --- Motion --- */
+    --motion-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+    --motion-ease-exit: cubic-bezier(0.42, 0, 1, 1);
+    --motion-duration-quick: 70ms;
+    --motion-duration-base: 110ms;
+    --motion-duration-slow: 180ms;
+    --motion-distance-sm: 2px;
+    --motion-distance-md: 5px;
+
+    /* --- Motion Aliases --- */
+    --ease-default: var(--motion-ease);
+    --route-transition-duration: var(--motion-duration-base);
+    --panel-transition-duration: var(--motion-duration-base);
+    --theme-transition-duration: var(--motion-duration-slow);
+
+    /* --- Root Defaults --- */
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    font-family: var(--font-sans);
+    font-size: var(--ui-font-size, 14px);
+    font-weight: var(--font-weight-normal);
+    line-height: 1.6;
+  }
+
+  /* --- Dark Theme via System Preference (auto mode) ---
+     Old webviews don't support `light-dark()`, so the base :root block above
+     only carries the light values. When the app theme is "auto" (no
+     data-theme attribute) and the OS is dark, mirror the dark overrides here.
+     Keep this block in sync with `:root[data-theme="dark"]` below; the
+     attribute block stays after it so explicit dark wins on equal
+     specificity. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+
+      --bg-primary: oklch(16% 0.012 260deg);
+      --bg-secondary: oklch(20.5% 0.014 260deg);
+      --bg-tertiary: oklch(25.5% 0.017 260deg);
+      --overlay-bg: oklch(8% 0.01 260deg / 62%);
+      --text-primary: oklch(93% 0.008 260deg);
+      --text-secondary: oklch(73% 0.018 260deg);
+      --text-tertiary: oklch(53% 0.018 260deg);
+      --accent: oklch(72% 0.145 254deg);
+      --accent-hover: oklch(78% 0.13 254deg);
+      --accent-active: oklch(65% 0.15 254deg);
+      --accent-light: oklch(28% 0.055 254deg);
+      --accent-glow: oklch(72% 0.145 254deg / 22%);
+      --accent-shadow: oklch(72% 0.145 254deg / 24%);
+      --success: oklch(82% 0.135 160deg);
+      --success-bg: oklch(27% 0.045 160deg);
+      --success-glow: oklch(82% 0.135 160deg / 40%);
+      --warning: oklch(86% 0.14 82deg);
+      --warning-bg: oklch(29% 0.048 82deg);
+      --warning-glow: oklch(86% 0.14 82deg / 34%);
+      --danger: oklch(82% 0.12 25deg);
+      --danger-bg: oklch(29% 0.04 25deg);
+      --info: oklch(82% 0.11 245deg);
+      --info-bg: oklch(29% 0.04 245deg);
+      --border: oklch(34% 0.014 260deg);
+      --border-light: oklch(29% 0.012 260deg);
+      --bg-terminal: oklch(25% 0.017 260deg);
+      --terminal-border: oklch(96% 0.005 260deg / 8%);
+      --terminal-chip-bg: oklch(96% 0.005 260deg / 6%);
+      --text-terminal: oklch(86% 0.01 260deg);
+      --text-terminal-dim: oklch(68% 0.018 260deg);
+    }
+  }
+
+  /* --- Dark Theme Overrides --- */
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --bg-primary: oklch(16% 0.012 260deg);
+    --bg-secondary: oklch(20.5% 0.014 260deg);
+    --bg-tertiary: oklch(25.5% 0.017 260deg);
+    --overlay-bg: oklch(8% 0.01 260deg / 62%);
+    --text-primary: oklch(93% 0.008 260deg);
+    --text-secondary: oklch(73% 0.018 260deg);
+    --text-tertiary: oklch(53% 0.018 260deg);
+    --accent: oklch(72% 0.145 254deg);
+    --accent-hover: oklch(78% 0.13 254deg);
+    --accent-active: oklch(65% 0.15 254deg);
+    --accent-light: oklch(28% 0.055 254deg);
+    --accent-glow: oklch(72% 0.145 254deg / 22%);
+    --accent-shadow: oklch(72% 0.145 254deg / 24%);
+    --success: oklch(82% 0.135 160deg);
+    --success-bg: oklch(27% 0.045 160deg);
+    --success-glow: oklch(82% 0.135 160deg / 40%);
+    --warning: oklch(86% 0.14 82deg);
+    --warning-bg: oklch(29% 0.048 82deg);
+    --warning-glow: oklch(86% 0.14 82deg / 34%);
+    --danger: oklch(82% 0.12 25deg);
+    --danger-bg: oklch(29% 0.04 25deg);
+    --info: oklch(82% 0.11 245deg);
+    --info-bg: oklch(29% 0.04 245deg);
+    --border: oklch(34% 0.014 260deg);
+    --border-light: oklch(29% 0.012 260deg);
+    --bg-terminal: oklch(25% 0.017 260deg);
+    --terminal-border: oklch(96% 0.005 260deg / 8%);
+    --terminal-chip-bg: oklch(96% 0.005 260deg / 6%);
+    --text-terminal: oklch(86% 0.01 260deg);
+    --text-terminal-dim: oklch(68% 0.018 260deg);
+  }
+
+  /* --- UI Theme Presets ---
+     Selected per light/dark mode in appearance settings; applied as
+     `data-ui-theme="<preset>-<mode>"` on :root. Must stay after the base
+     `:root` / `[data-theme="dark"]` blocks so attribute selectors win.
+     Each preset overrides the full semantic surface/text/accent/status set
+     plus the terminal pane tokens, so every panel reads as one palette. */
+  :root[data-ui-theme="solarized-light"] {
+    --bg-primary: #fdf6e3;
+    --bg-secondary: #eee8d5;
+    --bg-tertiary: #e4ddc8;
+    --overlay-bg: rgb(88 110 117 / 34%);
+    --text-primary: #586e75;
+    --text-secondary: #657b83;
+    --text-tertiary: #93a1a1;
+    --accent: #268bd2;
+    --accent-hover: #2179b6;
+    --accent-active: #1c689c;
+    --accent-light: color-mix(in oklch, #268bd2 12%, #fdf6e3);
+    --accent-glow: rgb(38 139 210 / 18%);
+    --accent-shadow: rgb(38 139 210 / 30%);
+    --success: #859900;
+    --success-bg: color-mix(in oklch, #859900 12%, #fdf6e3);
+    --success-glow: rgb(133 153 0 / 42%);
+    --warning: #b58900;
+    --warning-bg: color-mix(in oklch, #b58900 14%, #fdf6e3);
+    --warning-glow: rgb(181 137 0 / 38%);
+    --danger: #dc322f;
+    --danger-bg: color-mix(in oklch, #dc322f 9%, #fdf6e3);
+    --info: #2aa198;
+    --info-bg: color-mix(in oklch, #2aa198 12%, #fdf6e3);
+    --border: #d9d1b8;
+    --border-light: #e7e0ca;
+    --bg-terminal: #fdf6e3;
+    --terminal-border: rgb(88 110 117 / 16%);
+    --terminal-chip-bg: rgb(88 110 117 / 10%);
+    --text-terminal: #657b83;
+    --text-terminal-dim: #93a1a1;
+  }
+
+  :root[data-ui-theme="solarized-dark"] {
+    --bg-primary: #002b36;
+    --bg-secondary: #073642;
+    --bg-tertiary: #0e4553;
+    --overlay-bg: rgb(0 20 26 / 62%);
+    --text-primary: #93a1a1;
+    --text-secondary: #839496;
+    --text-tertiary: #657b83;
+    --accent: #268bd2;
+    --accent-hover: #4da3e0;
+    --accent-active: #1f77b7;
+    --accent-light: color-mix(in oklch, #268bd2 22%, #002b36);
+    --accent-glow: rgb(38 139 210 / 26%);
+    --accent-shadow: rgb(38 139 210 / 30%);
+    --success: #859900;
+    --success-bg: color-mix(in oklch, #859900 18%, #002b36);
+    --success-glow: rgb(133 153 0 / 40%);
+    --warning: #b58900;
+    --warning-bg: color-mix(in oklch, #b58900 18%, #002b36);
+    --warning-glow: rgb(181 137 0 / 36%);
+    --danger: #dc322f;
+    --danger-bg: color-mix(in oklch, #dc322f 16%, #002b36);
+    --info: #2aa198;
+    --info-bg: color-mix(in oklch, #2aa198 18%, #002b36);
+    --border: #17505f;
+    --border-light: #0f414e;
+    --bg-terminal: #002b36;
+    --terminal-border: rgb(147 161 161 / 14%);
+    --terminal-chip-bg: rgb(147 161 161 / 9%);
+    --text-terminal: #839496;
+    --text-terminal-dim: #657b83;
+  }
+
+  :root[data-ui-theme="github-light"] {
+    --bg-primary: #fff;
+    --bg-secondary: #f6f8fa;
+    --bg-tertiary: #eaeef2;
+    --overlay-bg: rgb(31 35 40 / 34%);
+    --text-primary: #1f2328;
+    --text-secondary: #59636e;
+    --text-tertiary: #8c959f;
+    --accent: #0969da;
+    --accent-hover: #0550ae;
+    --accent-active: #044289;
+    --accent-light: #ddf4ff;
+    --accent-glow: rgb(9 105 218 / 16%);
+    --accent-shadow: rgb(9 105 218 / 30%);
+    --success: #1a7f37;
+    --success-bg: #dafbe1;
+    --success-glow: rgb(26 127 55 / 40%);
+    --warning: #9a6700;
+    --warning-bg: #fff8c5;
+    --warning-glow: rgb(154 103 0 / 36%);
+    --danger: #d1242f;
+    --danger-bg: #ffebe9;
+    --info: #0969da;
+    --info-bg: #ddf4ff;
+    --border: #d1d9e0;
+    --border-light: #e6eaef;
+    --bg-terminal: #fff;
+    --terminal-border: rgb(31 35 40 / 10%);
+    --terminal-chip-bg: rgb(31 35 40 / 5%);
+    --text-terminal: #1f2328;
+    --text-terminal-dim: #59636e;
+  }
+
+  :root[data-ui-theme="github-dark"] {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #21262d;
+    --overlay-bg: rgb(1 4 9 / 64%);
+    --text-primary: #e6edf3;
+    --text-secondary: #9198a1;
+    --text-tertiary: #6e7681;
+    --accent: #4493f8;
+    --accent-hover: #58a6ff;
+    --accent-active: #1f6feb;
+    --accent-light: color-mix(in oklch, #4493f8 18%, #0d1117);
+    --accent-glow: rgb(68 147 248 / 22%);
+    --accent-shadow: rgb(68 147 248 / 26%);
+    --success: #3fb950;
+    --success-bg: rgb(46 160 67 / 15%);
+    --success-glow: rgb(63 185 80 / 40%);
+    --warning: #d29922;
+    --warning-bg: rgb(187 128 9 / 15%);
+    --warning-glow: rgb(210 153 34 / 36%);
+    --danger: #f85149;
+    --danger-bg: rgb(248 81 73 / 12%);
+    --info: #79c0ff;
+    --info-bg: rgb(56 139 253 / 15%);
+    --border: #30363d;
+    --border-light: #21262d;
+    --bg-terminal: #0d1117;
+    --terminal-border: rgb(230 237 243 / 10%);
+    --terminal-chip-bg: rgb(230 237 243 / 7%);
+    --text-terminal: #e6edf3;
+    --text-terminal-dim: #9198a1;
+  }
+
+  /* --- Reduced Motion --- */
+  :root[data-motion="off"] {
+    --route-transition-duration: 0ms;
+    --panel-transition-duration: 0ms;
+    --theme-transition-duration: 0ms;
+  }
+}

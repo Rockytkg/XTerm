@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>XTerm</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <script>
+      if (new URLSearchParams(window.location.search).get("window") === "context-menu") {
+        document.documentElement.dataset.window = "context-menu";
+      }
+    </script>
+    <style>
+      @layer reset, tokens, base, utilities, components, overlays;
+
+      @layer base {
+        html,
+        body,
+        #app {
+          inline-size: stretch;
+          block-size: stretch;
+          min-block-size: 100vb;
+          min-block-size: 100dvb;
+          margin: 0;
+        }
+
+        body {
+          overflow: hidden;
+          color-scheme: light dark;
+        }
+      }
+
+      @layer overlays {
+        html[data-window="context-menu"] .startup-splash {
+          display: none !important;
+        }
+
+        .startup-splash {
+          position: fixed;
+          inset: 0;
+          z-index: 9999;
+          display: grid;
+          place-items: center;
+          background: oklch(0.982 0.005 255);
+          opacity: 1;
+          transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1);
+          pointer-events: none;
+        }
+
+        /* light-dark() fallback for old webviews: explicit dark theme and
+           auto mode following a dark OS. */
+        html[data-theme="dark"] .startup-splash {
+          background: oklch(0.16 0.012 260);
+        }
+
+        @media (prefers-color-scheme: dark) {
+          html:not([data-theme="light"]) .startup-splash {
+            background: oklch(0.16 0.012 260);
+          }
+        }
+
+        .startup-splash.is-fading {
+          opacity: 0;
+        }
+
+        .startup-splash-logo {
+          width: 92px;
+          height: 92px;
+          filter: drop-shadow(0 10px 26px oklch(0 0 0 / 0.14));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="startup-splash" class="startup-splash" aria-hidden="true">
+      <svg
+        class="startup-splash-logo"
+        viewBox="0 0 64 64"
+        fill="none"
+        role="img"
+        aria-label="XTerm"
+      >
+        <rect width="64" height="64" rx="14" fill="oklch(0 0 0)" />
+        <path
+          d="M16 20l10 10-10 10"
+          stroke="oklch(1 0 0)"
+          stroke-width="5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+        <path d="M31 42h17" stroke="oklch(0.63 0.21 255)" stroke-width="5" stroke-linecap="round" />
+      </svg>
+    </div>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,627 @@
+@use "mixins" as *;
+
+@layer components {
+  .sftp-root {
+    container: sftp-panel / inline-size;
+
+    --sftp-root-rows: auto auto minmax(220px, 1fr) minmax(150px, 220px);
+    /* stylelint-disable-next-line declaration-block-no-duplicate-custom-properties */
+    --sftp-root-rows: auto auto minmax(220px, 1fr) minmax(150px, clamp(150px, 28cqb, 260px));
+  }
+
+  .sftp-root.sftp-root-queue-collapsed {
+    --sftp-root-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  .sftp-root.sftp-root-editor-mode {
+    --sftp-root-rows: minmax(0, 1fr);
+  }
+
+  .sftp-path-shell.is-editing {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+
+  .sftp-path-input {
+    inline-size: stretch;
+    block-size: 100%;
+    border: 0;
+    border-radius: 5px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.8214em;
+    line-height: 1;
+    outline: none;
+    padding: 0 7px;
+  }
+
+  .sftp-browser {
+    position: relative;
+    container: sftp-browser / inline-size;
+  }
+
+  .sftp-browser::after {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border: 1px solid color-mix(in oklch, var(--accent) 42%, transparent);
+    border-radius: inherit;
+    background:
+      radial-gradient(
+        circle at 50% 50%,
+        color-mix(in oklch, var(--accent-light) 34%, transparent),
+        transparent 72%
+      ),
+      color-mix(in oklch, var(--accent-light) 18%, transparent);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in oklch, white 18%, transparent),
+      inset 0 0 0 var(--sftp-drop-ring, 0) color-mix(in oklch, var(--accent-glow) 76%, transparent);
+    content: "";
+    opacity: var(--sftp-drop-opacity, 0);
+    pointer-events: none;
+    will-change: opacity, transform, box-shadow;
+  }
+
+  .sftp-table {
+    --sftp-table-inline-size: max(590px, 100%);
+    /* stylelint-disable-next-line declaration-block-no-duplicate-custom-properties */
+    --sftp-table-inline-size: max(590px, 100cqi);
+
+    min-inline-size: 590px;
+  }
+
+  .sftp-table-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: block;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .sftp-header-row,
+  .sftp-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) 90px 110px 170px;
+    align-items: center;
+  }
+
+  .sftp-table-body {
+    display: block;
+  }
+
+  .sftp-header-row > div {
+    display: flex;
+    align-items: center;
+    height: 34px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-secondary);
+    color: var(--text-tertiary);
+    font-size: 1em;
+    font-weight: 400;
+    text-align: center;
+    cursor: default;
+    user-select: none;
+  }
+
+  .sftp-row {
+    width: auto;
+    min-height: 0;
+    gap: 0;
+    contain: layout paint;
+  }
+
+  .sftp-row:focus {
+    outline: none;
+  }
+
+  .sftp-row > div {
+    min-width: 0;
+    height: 34px;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    vertical-align: middle;
+    cursor: default;
+    user-select: none;
+  }
+
+  .sftp-name-cell > span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sftp-row > div:first-child,
+  .sftp-header-row > div:first-child {
+    min-width: 220px;
+  }
+
+  .sftp-move-dragging,
+  .sftp-move-dragging * {
+    cursor: grabbing !important;
+  }
+
+  .sftp-move-drag-ghost {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 2147483000;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    height: 32px;
+    max-inline-size: calc(var(--viewport-min-inline) - 24px);
+    padding: 0 10px;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    box-shadow: 0 12px 28px oklch(0% 0 0deg / 24%);
+    color: var(--text-primary);
+    font-size: 0.8214em;
+    line-height: 1;
+    pointer-events: none;
+    user-select: none;
+    will-change: transform;
+  }
+
+  .sftp-move-drag-ghost-kind {
+    flex: 0 0 auto;
+    color: var(--accent);
+    font-size: var(--font-size-base);
+  }
+
+  .sftp-move-drag-ghost-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sftp-skeleton-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    border: 0;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .sftp-skeleton-row,
+  .sftp-skeleton-row:hover {
+    background: transparent;
+    color: transparent;
+    pointer-events: none;
+  }
+
+  .sftp-skeleton-icon,
+  .sftp-skeleton-bar {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    background:
+      linear-gradient(
+        100deg,
+        transparent 0%,
+        color-mix(in oklch, white 24%, transparent) 46%,
+        transparent 78%
+      ),
+      color-mix(in oklch, var(--bg-tertiary) 86%, var(--text-tertiary));
+    background-position:
+      var(--sftp-skeleton-shimmer, -160px) 0,
+      0 0;
+    background-size:
+      96px 100%,
+      100% 100%;
+  }
+
+  .sftp-skeleton-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    border-radius: 5px;
+  }
+
+  .sftp-skeleton-bar {
+    height: 10px;
+    border-radius: var(--radius-pill);
+  }
+
+  .sftp-skeleton-name {
+    inline-size: 260px;
+    inline-size: clamp(180px, 34cqi, 340px);
+  }
+
+  .sftp-skeleton-type {
+    width: 54px;
+  }
+
+  .sftp-skeleton-size {
+    width: 68px;
+  }
+
+  .sftp-skeleton-modified {
+    width: 128px;
+  }
+
+  .sftp-skeleton-row:nth-child(4n + 1) .sftp-skeleton-name {
+    inline-size: 320px;
+    inline-size: clamp(210px, 42cqi, 420px);
+  }
+
+  .sftp-skeleton-row:nth-child(4n + 2) .sftp-skeleton-name {
+    inline-size: 195px;
+    inline-size: clamp(130px, 26cqi, 260px);
+  }
+
+  .sftp-skeleton-row:nth-child(4n + 3) .sftp-skeleton-name {
+    inline-size: 230px;
+    inline-size: clamp(160px, 31cqi, 300px);
+  }
+
+  .sftp-skeleton-row:nth-child(3n + 2) .sftp-skeleton-type {
+    width: 42px;
+  }
+
+  .sftp-skeleton-row:nth-child(3n) .sftp-skeleton-size {
+    width: 52px;
+  }
+
+  .sftp-state-row {
+    min-height: 190px;
+  }
+
+  .sftp-state-cell {
+    min-height: 190px;
+    padding: 0;
+  }
+
+  .sftp-virtual-spacer {
+    block-size: var(--sftp-virtual-spacer-block, 0);
+    pointer-events: none;
+  }
+
+  .sftp-queue.sftp-queue-collapsed {
+    grid-template-rows: auto !important;
+  }
+
+  .sftp-queue-toggle-icon {
+    transition: transform var(--motion-duration-base) var(--ease-default);
+  }
+
+  .sftp-queue-toggle[data-state="open"] .sftp-queue-toggle-icon {
+    transform: rotate(180deg);
+  }
+
+  .sftp-queue-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid color-mix(in oklch, var(--border-light) 82%, transparent);
+    border-radius: var(--radius-md);
+    background: color-mix(in oklch, var(--bg-secondary) 88%, var(--bg-tertiary));
+    color: var(--text-secondary);
+    line-height: 1;
+    transition:
+      background var(--motion-duration-base) var(--ease-default),
+      border-color var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default);
+  }
+
+  .sftp-queue-action:hover {
+    border-color: color-mix(in oklch, var(--accent) 36%, transparent);
+    background: color-mix(in oklch, var(--accent-light) 72%, var(--bg-secondary));
+    color: var(--accent);
+  }
+
+  .sftp-queue-action-danger:hover {
+    border-color: color-mix(in oklch, var(--danger) 36%, transparent);
+    background: color-mix(in oklch, var(--danger-bg) 76%, var(--bg-secondary));
+    color: var(--danger);
+  }
+
+  .sftp-progress-bar {
+    position: relative;
+    inline-size: 100%;
+    block-size: 100%;
+    overflow: hidden;
+    transform: scaleX(var(--sftp-progress-scale, 0));
+    transform-origin: left center;
+    transition: transform var(--motion-duration-slow) var(--ease-default);
+    will-change: transform;
+  }
+
+  .sftp-progress-bar-active::after {
+    position: absolute;
+    inset: 0;
+    display: block;
+    content: "";
+    background: linear-gradient(
+      100deg,
+      transparent 0%,
+      color-mix(in oklch, white 34%, transparent) 42%,
+      transparent 78%
+    );
+    animation: sftp-progress-sheen 0.9s linear infinite;
+    transform: translateX(-100%);
+  }
+
+  @keyframes sftp-progress-sheen {
+    to {
+      transform: translateX(100%);
+    }
+  }
+
+  .sftp-editor-panel {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-block-size: 0;
+    block-size: 100%;
+    overflow: hidden;
+    border: 1px solid var(--border-light);
+    background: var(--bg-secondary);
+  }
+
+  .sftp-editor-tabs {
+    display: flex;
+    min-block-size: 34px;
+    overflow: auto hidden;
+    border-bottom: 1px solid var(--border-light);
+    background: color-mix(in oklch, var(--bg-primary) 72%, var(--bg-secondary));
+  }
+
+  .sftp-editor-tab {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    min-inline-size: 108px;
+    max-inline-size: 220px;
+    border-right: 1px solid var(--border-light);
+    color: var(--text-secondary);
+  }
+
+  .sftp-editor-tab:has(.sftp-editor-tab-activate[data-state="active"]) {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+  }
+
+  .sftp-editor-tab-activate,
+  .sftp-editor-tab-close {
+    border: 0;
+    background: transparent;
+    color: inherit;
+  }
+
+  .sftp-editor-tab-activate {
+    min-width: 0;
+    height: 33px;
+    padding: 0 8px 0 10px;
+    text-align: left;
+  }
+
+  .sftp-editor-tab-activate:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--accent-glow);
+  }
+
+  .sftp-editor-tab-name {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 0.8214em;
+    font-weight: 550;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sftp-editor-tab-dirty {
+    inline-size: 6px;
+    block-size: 6px;
+    border-radius: 50%;
+    background: var(--warning);
+  }
+
+  .sftp-editor-tab-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 26px;
+    block-size: 26px;
+    margin-inline-end: 4px;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+  }
+
+  .sftp-editor-tab-close:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  .sftp-editor {
+    display: grid;
+
+    /* 行轨固定为 工具栏 / 提示条 / 编辑区 / 状态栏，子元素用 grid-row 显式归位：
+       error、loading 缺省时第 2 行 auto 轨道塌缩为 0，编辑区仍占满 1fr。 */
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    block-size: 100%;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+
+  .sftp-editor-toolbar {
+    grid-row: 1;
+    display: grid;
+
+    @include grid-icon-label-action;
+
+    align-items: center;
+    gap: 10px;
+    min-block-size: 42px;
+    padding: 6px 8px 6px 10px;
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-secondary);
+  }
+
+  .sftp-editor-back {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-inline-size: 0;
+    block-size: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--border-light);
+    border-radius: 7px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 0.8214em;
+    transition:
+      background-color var(--motion-duration-base) var(--ease-default),
+      border-color var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default);
+  }
+
+  .sftp-editor-back:hover {
+    border-color: var(--border);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  .sftp-editor-title {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .sftp-editor-title-text,
+  .sftp-editor-path {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sftp-editor-title-text {
+    color: var(--text-primary);
+    font-size: var(--font-size-base);
+    font-weight: 650;
+  }
+
+  .sftp-editor-path {
+    color: var(--text-tertiary);
+    font-family: var(--sftp-editor-font-family);
+    font-size: var(--font-size-xs);
+  }
+
+  .sftp-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .sftp-editor-error,
+  .sftp-editor-loading {
+    grid-row: 2;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-light);
+    font-size: var(--font-size-sm);
+  }
+
+  .sftp-editor-error {
+    background: color-mix(in oklch, var(--danger-bg) 76%, var(--bg-secondary));
+    color: var(--danger);
+  }
+
+  .sftp-editor-loading {
+    background: color-mix(in oklch, var(--accent-light) 62%, var(--bg-secondary));
+    color: var(--text-secondary);
+  }
+
+  .sftp-editor-root {
+    display: grid;
+    grid-row: 3;
+    block-size: 100%;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+
+  /* 颜色类样式由 utils/editorTheme.js 的 chrome/syntax 主题注入（项目 @layer 内的
+     规则赢不过 CodeMirror 注入的无层样式），这里只保留布局与字体变量挂钩。 */
+  .sftp-editor-root .cm-editor {
+    block-size: 100%;
+    min-block-size: 100%;
+    font-family: var(--sftp-editor-font-family);
+    font-size: var(--sftp-editor-font-size);
+  }
+
+  .sftp-editor-root .cm-scroller {
+    block-size: 100%;
+    min-block-size: 100%;
+    font-family: inherit;
+  }
+
+  .sftp-editor-root .cm-content {
+    min-block-size: 100%;
+  }
+
+  .sftp-editor-root .cm-gutters,
+  .sftp-editor-root .cm-gutter {
+    min-block-size: 100%;
+  }
+
+  .sftp-editor-statusbar {
+    display: flex;
+    grid-row: 4;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-block-size: 26px;
+    padding: 0 10px;
+    border-top: 1px solid var(--border-light);
+    background: color-mix(in oklch, var(--bg-secondary) 86%, var(--bg-terminal));
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+    line-height: 1;
+    user-select: none;
+  }
+
+  .sftp-editor-status-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .sftp-editor-status-meta {
+    overflow: hidden;
+  }
+
+  .sftp-editor-status-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .sftp-editor-status-item.is-dirty {
+    color: var(--warning);
+    font-weight: 600;
+  }
+
+  .sftp-editor-status-dot {
+    inline-size: 6px;
+    block-size: 6px;
+    border-radius: 50%;
+    background: var(--warning);
+  }
+}

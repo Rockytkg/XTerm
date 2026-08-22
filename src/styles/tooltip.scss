@@ -1,0 +1,42 @@
+@layer components {
+  .tooltip-content {
+    --tooltip-motion-x: 0px;
+    --tooltip-motion-y: 2px;
+
+    transform-origin: center;
+    will-change: transform, opacity;
+  }
+
+  .tooltip-content[data-side="top"] {
+    transform-origin: center bottom;
+  }
+
+  .tooltip-content[data-side="right"] {
+    --tooltip-motion-x: -2px;
+    --tooltip-motion-y: 0px;
+
+    transform-origin: left center;
+  }
+
+  .tooltip-content[data-side="bottom"] {
+    --tooltip-motion-y: -2px;
+
+    transform-origin: center top;
+  }
+
+  .tooltip-content[data-side="left"] {
+    --tooltip-motion-x: 2px;
+    --tooltip-motion-y: 0px;
+
+    transform-origin: right center;
+  }
+
+  .tooltip-content[data-state="delayed-open"],
+  .tooltip-content[data-state="instant-open"] {
+    animation: motion-tooltip-in var(--motion-duration-quick) var(--motion-ease) both;
+  }
+
+  .tooltip-content[data-state="closed"] {
+    animation: motion-tooltip-out var(--motion-duration-quick) var(--motion-ease-exit) both;
+  }
+}
