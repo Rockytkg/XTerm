@@ -10,6 +10,7 @@ import SshCredentialPromptDialog from "../components/SshCredentialPromptDialog.v
 import { useI18n } from "vue-i18n";
 import { useWorkspacePerformanceHistory } from "../composables/useWorkspacePerformanceHistory";
 import { useWorkspaceShellController } from "../composables/useWorkspaceShellController";
+import { dismissContextMenu } from "../services/contextMenu";
 import { invokeIpc } from "../services/ipc/core";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { createAsyncListenerRegistry } from "../utils/asyncListeners";
@@ -109,9 +110,10 @@ globalShortcuts.register({
 const asyncListeners = createAsyncListenerRegistry();
 
 function dismissTransientFocus() {
+  // 失焦时菜单不能继续覆盖其他窗口；先关闭菜单，再清理普通焦点。
+  dismissContextMenu();
   blurActiveElement({
-    exclude: (element) =>
-      element.closest?.(".dialog-content") || element.closest?.(".context-menu-surface"),
+    exclude: (element) => element.closest?.(".dialog-content"),
   });
 }
 
