@@ -9,12 +9,9 @@
 use std::net::SocketAddr;
 
 use crate::{
-    firewall::{self, FirewallProtocol},
+    firewall::{self, FirewallCommandError, FirewallProtocol},
     logging,
 };
-
-#[cfg(target_os = "linux")]
-use crate::firewall::FirewallCommandError;
 
 /// 一个服务的防火墙放行描述：`prefix` 同时用作 iptables 链名来源与规则注释。
 pub(crate) struct ServiceRule {
