@@ -65,7 +65,9 @@ impl FirewallCommandError {
     }
 
     /// 该错误是否意味着「需要管理员权限」——用于让调用方决定是否改走提权
-    /// helper，而不是把这个原始错误直接抛给用户。
+    /// helper，而不是把这个原始错误直接抛给用户。仅 Linux 的 bind helper
+    /// 需要据此判断是否改走 `--bind-elevated`。
+    #[cfg(target_os = "linux")]
     pub(crate) fn requires_elevation(&self) -> bool {
         firewall_error_requires_elevation(&self.detail)
     }
