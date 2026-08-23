@@ -513,6 +513,10 @@ jobs:
               su builder -c "makepkg -f -d --noconfirm"
               # 移除 makepkg 生成的 -debug 符号包,只保留正式安装包
               rm -f /build/*-debug-*.pkg.tar.zst
+              # 主包重命名为 XTerm 前缀,与 Release 中其他平台资产命名一致
+              # (Arch pkgname 规范要求小写,故包内名保持 xterm-workspace,仅文件重命名)
+              MAIN_PKG=$(ls /build/xterm-workspace-*.pkg.tar.zst)
+              mv "$MAIN_PKG" "/build/XTerm-$(basename "$MAIN_PKG" | sed 's/^xterm-workspace-//')"
             '
 
       - name: Upload artifacts
