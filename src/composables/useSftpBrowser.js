@@ -539,7 +539,8 @@ export function useSftpBrowser({
 
   function closeDeleteDialog() {
     if (deleteDialog.value.deleting) return;
-    deleteDialog.value = { open: false, entries: [], deleting: false };
+    // 保留 entries：退出动画仍在渲染删除列表，清空会导致内容先于弹壳消失
+    deleteDialog.value = { ...deleteDialog.value, open: false };
   }
 
   async function confirmDeleteEntries() {
@@ -559,7 +560,8 @@ export function useSftpBrowser({
         entries.map((entry) => entry.path),
       );
       if (isStaleSession(session)) return;
-      deleteDialog.value = { open: false, entries: [], deleting: false };
+      // 同 closeDeleteDialog：保留 entries 直至退出动画结束
+      deleteDialog.value = { ...deleteDialog.value, open: false, deleting: false };
       await refreshCurrentDirectoryIncremental();
     } catch (error) {
       if (isStaleSession(session)) return;

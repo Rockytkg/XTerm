@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   CirclePlus,
@@ -49,6 +49,13 @@ const schemeDialog = ref(null);
 const schemeFormName = ref("");
 const schemeFormThemes = ref([]);
 const schemeNameInput = ref(null);
+
+// 关闭时 schemeDialog 立即置空，而退出动画仍在播放；锁存 mode 让标题、
+// 图标与按钮文案在动画期间保持关闭前的取值，不闪回“新建”。
+const schemeDialogMode = ref("create");
+watch(schemeDialog, (dialog) => {
+  if (dialog) schemeDialogMode.value = dialog.mode;
+});
 
 const deleteTarget = ref(null);
 const deleteDialogOpen = computed({
@@ -273,7 +280,7 @@ function getSchemeMeta(scheme) {
               aria-hidden="true"
             >
               <component
-                :is="schemeDialog?.mode === 'edit' ? SquarePen : CirclePlus"
+                :is="schemeDialogMode === 'edit' ? SquarePen : CirclePlus"
                 :size="16"
                 stroke-width="1.8"
               />
@@ -282,7 +289,7 @@ function getSchemeMeta(scheme) {
               <DialogTitle class="conn-dialog-title">
                 {{
                   t(
-                    schemeDialog?.mode === "edit"
+                    schemeDialogMode === "edit"
                       ? "settings.terminal.highlightSchemeDialogEditTitle"
                       : "settings.terminal.highlightSchemeDialogCreateTitle",
                   )
@@ -348,7 +355,7 @@ function getSchemeMeta(scheme) {
               @click="confirmSchemeDialog"
             >
               {{
-                schemeDialog?.mode === "edit"
+                schemeDialogMode === "edit"
                   ? t("actions.save")
                   : t("settings.terminal.highlightAddScheme")
               }}

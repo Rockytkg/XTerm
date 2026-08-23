@@ -1,6 +1,6 @@
 <script setup>
 import "../styles/confirm-dialog.scss";
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   AlertDialogCancel,
@@ -43,16 +43,96 @@ const fallbackIcons = {
   success: CheckCircle2,
 };
 
-const dialogIcon = computed(() => props.icon || fallbackIcons[props.tone] || Info);
-const cancelLabel = computed(() => props.cancelText || t("actions.cancel"));
-const confirmLabel = computed(() => props.confirmText || t("actions.save"));
-const toneClass = computed(() => `confirm-dialog-tone-${props.tone}`);
-const toneButtonClass = computed(() => `confirm-dialog-confirm-${props.tone}`);
+// 关闭动画期间冻结渲染内容。典型调用方在关闭的同时就清空触发数据
+// （pendingDelete = null 之类），若模板直接响应 props，标题/描述会先于
+// 弹壳消失，留下一个空框完成退出动画。因此打开期间把内容 props 快照到
+// latchedContent，关闭后直到下次打开前都沿用这份快照。
+const latchedContent = ref(null);
+
+function snapshotContent() {
+  return {
+    title: props.title,
+    description: props.description,
+    confirmText: props.confirmText,
+    cancelText: props.cancelText,
+    secondaryText: props.secondaryText,
+    showCancel: props.showCancel,
+    tone: props.tone,
+    icon: props.icon,
+    confirmIcon: props.confirmIcon,
+  };
+}
+
+watch(
+  () => [
+    props.open,
+    props.title,
+    props.description,
+    props.confirmText,
+    props.cancelText,
+    props.secondaryText,
+    props.showCancel,
+    props.tone,
+    props.icon,
+    props.confirmIcon,
+  ],
+  () => {
+    if (props.open) latchedContent.value = snapshotContent();
+  },
+  { immediate: true },
+);
+
+const dialogIcon = computed(() => {
+  const content = latchedContent.value;
+  return content?.icon || fallbackIcons[content?.tone] || Info;
+});
+const cancelLabel = computed(() => latchedContent.value?.cancelText || t("actions.cancel"));
+const confirmLabel = computed(() => latchedContent.value?.confirmText || t("actions.save"));
+const toneClass = computed(() => `confirm-dialog-tone-${latchedContent.value?.tone || "danger"}`);
+const toneButtonClass = computed(
+  () => `confirm-dialog-confirm-${latchedContent.value?.tone || "danger"}`,
+);
+
+// 取消/ESC/遮罩路径延迟向父组件传播关闭：先让根组件进入 closed 状态播放
+// 退出动画，动画结束后才 emit update:open。这样父组件的触发数据（含 slot
+// 内容）在动画期间保持原样。时长需覆盖 --motion-duration-quick（70ms）。
+const CLOSE_PROPAGATION_DELAY = 120;
+const closing = ref(false);
+let closeTimer = null;
+const renderedOpen = computed(() => props.open && !closing.value);
+
+function clearCloseTimer() {
+  if (closeTimer) {
+    clearTimeout(closeTimer);
+    closeTimer = null;
+  }
+}
+
+watch(
+  () => props.open,
+  (open) => {
+    // 父组件主动重开时丢弃挂起的关闭传播
+    if (open) clearCloseTimer();
+    closing.value = false;
+  },
+);
 
 function setOpen(value) {
-  if (props.loading && !value) return;
-  emit("update:open", value);
-  if (!value) emit("cancel");
+  if (value) {
+    clearCloseTimer();
+    closing.value = false;
+    emit("update:open", true);
+    return;
+  }
+  if (props.loading || closing.value || !props.open) return;
+  closing.value = true;
+  closeTimer = setTimeout(() => {
+    closeTimer = null;
+    emit("update:open", false);
+    emit("cancel");
+    // 父组件未响应关闭（未把 open 置 false）时恢复显示，避免弹窗卡在隐藏态
+    closing.value = false;
+  }, CLOSE_PROPAGATION_DELAY);
 }
 
 function confirm() {
@@ -72,16 +152,19 @@ function preventCloseWhileLoading(event) {
 function focusInitialAction(event) {
   event.preventDefault();
   nextTick(() => {
+    const content = latchedContent.value;
     const target =
-      props.tone === "danger" && props.showCancel ? cancelButton.value : confirmButton.value;
+      content?.tone === "danger" && content?.showCancel ? cancelButton.value : confirmButton.value;
     target?.focus?.();
   });
 }
+
+onBeforeUnmount(clearCloseTimer);
 </script>
 
 <template>
   <AlertDialogRoot
-    :open="open"
+    :open="renderedOpen"
     @update:open="setOpen"
   >
     <AlertDialogPortal>
@@ -107,13 +190,13 @@ function focusInitialAction(event) {
           </div>
           <div class="confirm-dialog-copy">
             <AlertDialogTitle class="confirm-dialog-title">
-              {{ title }}
+              {{ latchedContent?.title }}
             </AlertDialogTitle>
             <AlertDialogDescription
-              v-if="description"
+              v-if="latchedContent?.description"
               class="confirm-dialog-description"
             >
-              {{ description }}
+              {{ latchedContent.description }}
             </AlertDialogDescription>
           </div>
         </header>
@@ -122,7 +205,7 @@ function focusInitialAction(event) {
 
         <footer class="confirm-dialog-footer">
           <AlertDialogCancel
-            v-if="showCancel"
+            v-if="latchedContent?.showCancel ?? true"
             as-child
           >
             <button
@@ -135,13 +218,13 @@ function focusInitialAction(event) {
             </button>
           </AlertDialogCancel>
           <button
-            v-if="secondaryText"
+            v-if="latchedContent?.secondaryText"
             type="button"
             class="confirm-dialog-action confirm-dialog-action-secondary"
             :disabled="loading"
             @click="secondary"
           >
-            {{ secondaryText }}
+            {{ latchedContent.secondaryText }}
           </button>
           <button
             ref="confirmButton"
@@ -158,8 +241,8 @@ function focusInitialAction(event) {
               stroke-width="2"
             />
             <component
-              :is="confirmIcon"
-              v-else-if="confirmIcon"
+              :is="latchedContent?.confirmIcon"
+              v-else-if="latchedContent?.confirmIcon"
               :size="13"
               stroke-width="1.9"
             />

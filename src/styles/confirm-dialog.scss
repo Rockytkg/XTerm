@@ -14,10 +14,6 @@
     outline: none;
   }
 
-  .confirm-dialog-overlay[data-state="open"] {
-    /* backdrop-filter removed to prevent scroll jank */
-  }
-
   .confirm-dialog-tone-danger {
     --confirm-tone: var(--danger);
     --confirm-tone-bg: var(--danger-bg);

@@ -32,9 +32,29 @@ if (isWebKitGtkUserAgent(navigator.userAgent)) {
 
 const FONT_LOAD_TIMEOUT_MS = 3000;
 const STARTUP_SPLASH_FADE_MS = 320;
+const STYLE_READY_TIMEOUT_MS = 2500;
+const STYLE_PROBE_INTERVAL_MS = 32;
 
 function nextAnimationFrame() {
   return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+/**
+ * 启动样式门控。dev 模式下 CSS 由 JS 模块在运行期注入，Linux 的
+ * WebKitGTK 注入与样式解析明显更慢：Vue 挂载完成 ≠ 全局样式已生效，
+ * 直接显示窗口会看到约 1s 的无样式内容（FOUC）。以 styles.scss 经
+ * :root 继承到 body 的字体族计算值作为“全局样式已应用”的哨兵——
+ * 哨兵与 --font-sans 栈耦合，改字体栈时需同步这里的探针。
+ */
+function globalStylesApplied() {
+  return getComputedStyle(document.body).fontFamily.includes("Ubuntu");
+}
+
+async function waitForGlobalStyles() {
+  const deadline = performance.now() + STYLE_READY_TIMEOUT_MS;
+  while (!globalStylesApplied() && performance.now() < deadline) {
+    await new Promise((resolve) => window.setTimeout(resolve, STYLE_PROBE_INTERVAL_MS));
+  }
 }
 
 function describeFatalError(error) {
@@ -111,6 +131,7 @@ async function mountMainWindow() {
   await router.isReady();
   await nextTick();
   await waitForDocumentFonts();
+  await waitForGlobalStyles();
   await nextAnimationFrame();
   await showMainWindow();
 }
