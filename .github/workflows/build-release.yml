@@ -373,12 +373,10 @@ jobs:
             fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
           '
 
-      - name: Build frontend
-        run: pnpm build
       - name: Build aarch64 app / dmg
         run: |
           pnpm exec tauri build --target aarch64-apple-darwin \
-            --bundles app,dmg --no-before-build \
+            --bundles app,dmg \
             --config "{\"version\":\"${VERSION}\"}"
 
       - name: Archive .app bundle
@@ -441,12 +439,10 @@ jobs:
             fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
           '
 
-      - name: Build frontend
-        run: pnpm build
       - name: Build x86_64 app / dmg
         run: |
           pnpm exec tauri build --target x86_64-apple-darwin \
-            --bundles app,dmg --no-before-build \
+            --bundles app,dmg \
             --config "{\"version\":\"${VERSION}\"}"
 
       - name: Archive .app bundle
