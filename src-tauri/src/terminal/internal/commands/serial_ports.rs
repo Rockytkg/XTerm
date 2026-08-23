@@ -1,4 +1,7 @@
-use crate::{logging, terminal::internal::core::SerialPortOption};
+use crate::{
+    logging,
+    terminal::internal::core::{compare_serial_port_names, SerialPortOption},
+};
 
 #[tauri::command]
 pub(crate) async fn serial_list_ports() -> Result<Vec<SerialPortOption>, String> {
@@ -10,7 +13,7 @@ pub(crate) async fn serial_list_ports() -> Result<Vec<SerialPortOption>, String>
         .field("count", ports.len())
         .debug();
 
-    Ok(ports
+    let mut options: Vec<SerialPortOption> = ports
         .into_iter()
         .map(|port| {
             let (kind, detail) = match port.port_type {
@@ -40,5 +43,23 @@ pub(crate) async fn serial_list_ports() -> Result<Vec<SerialPortOption>, String>
                 kind,
             }
         })
-        .collect())
+        .collect();
+
+    // USB 转串口排在最前(优先展示),其次按端口名自然序。
+    options.sort_by(|a, b| {
+        serial_kind_priority(&a.kind)
+            .cmp(&serial_kind_priority(&b.kind))
+            .then_with(|| compare_serial_port_names(&a.name, &b.name))
+    });
+
+    Ok(options)
+}
+
+fn serial_kind_priority(kind: &str) -> u8 {
+    match kind {
+        "usb" => 0,
+        "bluetooth" => 1,
+        "pci" => 2,
+        _ => 3,
+    }
 }

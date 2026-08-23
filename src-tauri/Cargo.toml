@@ -58,7 +58,7 @@ chardetng = "1"
 encoding_rs = "0.8"
 font-kit = "0.14"
 sanitise-file-name = "1.0.0"
-tokio-serial = "5.4"
+tokio-serial = { version = "5.4", features = ["libudev"] }
 socket2 = { version = "0.6", features = ["all"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-mcp-bridge = { version = "0.11.2", optional = true }

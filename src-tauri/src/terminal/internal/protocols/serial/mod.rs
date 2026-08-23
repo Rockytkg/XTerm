@@ -11,7 +11,8 @@ use crate::{
     terminal::internal::{
         codec::analyze_serial_sample,
         core::{
-            open_serial_port, ConnectionError, ConnectionOpenResult, ConnectionResult,
+            open_serial_port, compare_serial_port_names, ConnectionError,
+            ConnectionOpenResult, ConnectionResult,
             ResolvedConnection, SerialLineSettings, SerialProbeResult, SerialRedetectResult,
             SessionCommand, SessionTransportRuntime, SessionWorkerEvent, TerminalSession,
             TerminalSessionResources, TerminalSize, TransportCommand, BAUD_CANDIDATES,
@@ -386,12 +387,19 @@ async fn close_serial_sessions(
         return Ok(());
     }
 
+    let port_names: Vec<String> = conflicting_sessions
+        .iter()
+        .filter_map(|(_, session)| session.resources.serial_port().map(str::to_string))
+        .collect();
+
     for (session_id, session) in &conflicting_sessions {
         log::info!(target: "terminal.serial", "closing serial session '{session_id}' before {reason}");
         let _ = session.tx.send(SessionCommand::Close);
     }
 
-    let deadline = Instant::now() + Duration::from_millis(1_500);
+    // 关闭是异步的:worker 需要先排空缓冲输出/重放,再退出并移除会话。给足
+    // 余量避免在重连时偶发超时;3 秒对正常关闭绰绰有余,仅在 worker 卡死时触发。
+    let deadline = Instant::now() + Duration::from_millis(3_000);
     loop {
         let remaining: Vec<String> = {
             let sessions = state.sessions();
@@ -405,12 +413,20 @@ async fn close_serial_sessions(
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(ConnectionError::new(
+            log::warn!(
+                target: "terminal.serial",
+                "serial sessions still open after close timeout before {reason}: {remaining:?}"
+            );
+            // 用户可见的错误用端口名而非内部会话 ID,并提供可重试的错误码。
+            let port_label = if port_names.is_empty() {
+                "the serial port".to_string()
+            } else {
+                port_names.join(", ")
+            };
+            return Err(ConnectionError::with_args(
                 "serial_session_close_timeout",
-                format!(
-                    "timed out waiting for serial sessions to close before {reason}: {}",
-                    remaining.join(", ")
-                ),
+                format!("port={port_label}; timed out waiting for the previous serial session to close"),
+                serde_json::json!({ "portName": port_label }),
                 true,
             ));
         }
@@ -982,25 +998,6 @@ fn sorted_serial_port_candidates(mut ports: Vec<SerialPortCandidate>) -> Vec<Ser
             .then_with(|| compare_serial_port_names(&a.name, &b.name))
     });
     ports
-}
-
-fn compare_serial_port_names(a: &str, b: &str) -> std::cmp::Ordering {
-    serial_port_sort_key(a)
-        .cmp(&serial_port_sort_key(b))
-        .then_with(|| a.cmp(b))
-}
-
-fn serial_port_sort_key(port: &str) -> (String, u32) {
-    let trimmed = port.trim();
-    let split_at = trimmed
-        .char_indices()
-        .rev()
-        .find(|(_, ch)| !ch.is_ascii_digit())
-        .map(|(index, ch)| index + ch.len_utf8())
-        .unwrap_or(0);
-    let (prefix, digits) = trimmed.split_at(split_at);
-    let number = digits.parse::<u32>().unwrap_or(u32::MAX);
-    (prefix.to_ascii_lowercase(), number)
 }
 
 pub(super) fn classify_serial_open_error(

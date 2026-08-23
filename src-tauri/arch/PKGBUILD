@@ -11,7 +11,7 @@ url="https://github.com/Rockytkg/xterm"
 license=('MIT')
 # 运行时依赖:WebKitGTK 栈 + keyring(secret-service)+ 防火墙(iptables 命令)+ 字体(font-kit)
 # 注意:Arch 无独立 javascriptcoregtk-4.1 包(与 Debian 不同),libjavascriptcoregtk-4.1.so 由 webkit2gtk-4.1 提供
-depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'libsecret' 'fontconfig' 'iptables')
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'libsecret' 'fontconfig' 'iptables' 'systemd-libs')
 source=('xterm-workspace' 'xterm-workspace.desktop' 'icon-128.png')
 sha256sums=('__SHA256_BIN__' '__SHA256_DESKTOP__' '__SHA256_ICON__')
 

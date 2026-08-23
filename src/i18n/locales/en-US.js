@@ -986,6 +986,8 @@ export default {
     serial_port_required: "Select a serial port before connecting.",
     serial_port_scan_failed: "Failed to scan serial ports.",
     serial_port_unavailable: "Serial port {portName} is unavailable.",
+    serial_session_close_timeout:
+      "The previous connection on serial port {portName} is still closing. Wait a moment and try again.",
     serial_startup_auth_failed: "Serial startup authentication failed.",
     ssh_auth_rejected:
       "The SSH server rejected the credential. Check the auth method and account permissions.",

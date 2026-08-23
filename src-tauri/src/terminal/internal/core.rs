@@ -260,6 +260,27 @@ pub struct SerialPortOption {
     pub(super) label: String,
 }
 
+/// 串口名的自然序比较:`ttyUSB2` 排在 `ttyUSB10` 之前(数字段按数值比较)。
+/// 供探测顺序与列表展示共用,保证两处排序一致。
+pub(crate) fn compare_serial_port_names(a: &str, b: &str) -> std::cmp::Ordering {
+    serial_port_sort_key(a)
+        .cmp(&serial_port_sort_key(b))
+        .then_with(|| a.cmp(b))
+}
+
+pub(crate) fn serial_port_sort_key(port: &str) -> (String, u32) {
+    let trimmed = port.trim();
+    let split_at = trimmed
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !ch.is_ascii_digit())
+        .map(|(index, ch)| index + ch.len_utf8())
+        .unwrap_or(0);
+    let (prefix, digits) = trimmed.split_at(split_at);
+    let number = digits.parse::<u32>().unwrap_or(u32::MAX);
+    (prefix.to_ascii_lowercase(), number)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SshRuntimeMetricsRequest {

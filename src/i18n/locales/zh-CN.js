@@ -938,6 +938,7 @@ export default {
     serial_port_required: "请选择串口后再连接。",
     serial_port_scan_failed: "扫描串口失败。",
     serial_port_unavailable: "串口 {portName} 当前不可用。",
+    serial_session_close_timeout: "串口 {portName} 的上一个连接仍在关闭中，请稍候片刻后重试。",
     serial_startup_auth_failed: "串口启动认证失败。",
     ssh_auth_rejected: "SSH 服务器拒绝了凭证，请检查认证方式和账号权限。",
     ssh_channel_open_failed: "SSH 已认证，但无法打开会话通道。",
