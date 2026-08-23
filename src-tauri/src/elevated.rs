@@ -96,10 +96,18 @@ pub(crate) async fn bind_service_sockets(
     fallback: Option<BindSpec>,
 ) -> Result<Vec<BoundSocket>, String> {
     match bind_direct(&binds, fallback.as_ref()) {
-        Ok(sockets) => {
-            allow_rule(&rule).await?;
-            Ok(sockets)
-        }
+        Ok(sockets) => match allow_rule(&rule).await {
+            Ok(()) => Ok(sockets),
+            #[cfg(target_os = "linux")]
+            Err(error) if error.requires_elevation() => {
+                // 端口已直接绑定成功（高端口），但防火墙放行仍需 root。这里改走
+                // bind helper 的「仅防火墙」模式（空 binds），避免触发已失效的
+                // `--firewall-elevated` 路径，且保证每次开启只提权一次。
+                bind_elevated(&rule, &[], None).await?;
+                Ok(sockets)
+            }
+            Err(error) => Err(error.user_message),
+        },
         Err(failure) => {
             #[cfg(target_os = "linux")]
             if failure.permission_denied
@@ -180,25 +188,83 @@ fn format_bind_error(addr: SocketAddr, error: &std::io::Error) -> String {
     }
 }
 
-async fn allow_rule(rule: &ServiceRule) -> Result<(), String> {
-    let result = if rule.all_udp {
-        firewall::allow_service_port_and_all_udp_ports_for_current_app(
-            rule.prefix,
-            rule.action,
-            rule.ports[0],
-        )
-        .await
-    } else {
-        firewall::allow_service_ports(rule.prefix, rule.action, rule.ports.clone(), rule.protocol)
+async fn allow_rule(rule: &ServiceRule) -> Result<(), FirewallCommandError> {
+    #[cfg(target_os = "linux")]
+    {
+        return allow_rule_linux(rule).await;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let result = if rule.all_udp {
+            firewall::allow_service_port_and_all_udp_ports_for_current_app(
+                rule.prefix,
+                rule.action,
+                rule.ports[0],
+            )
             .await
-    };
-    result.map_err(|error| {
-        logging::event("firewall", "firewall.allow.failed")
-            .field("prefix", rule.prefix)
-            .field("detail", &error.detail)
-            .warn();
-        error.user_message
+        } else {
+            firewall::allow_service_ports(
+                rule.prefix,
+                rule.action,
+                rule.ports.clone(),
+                rule.protocol,
+            )
+            .await
+        };
+        return result.map_err(|error| {
+            logging::event("firewall", "firewall.allow.failed")
+                .field("prefix", rule.prefix)
+                .field("detail", &error.detail)
+                .warn();
+            error
+        });
+    }
+}
+
+/// Linux 下只做「非提权」的防火墙放行探测：真正需要 root 时由
+/// [`bind_service_sockets`] 改走 bind helper（`--bind-elevated`）完成，避免依赖
+/// 桌面上失效的 `--firewall-elevated` 路径。这里直接调用底层实现，拿到原始
+/// 的权限错误供上层判断是否提权。
+#[cfg(target_os = "linux")]
+async fn allow_rule_linux(rule: &ServiceRule) -> Result<(), FirewallCommandError> {
+    let prefix = rule.prefix;
+    let action = rule.action;
+    let ports = rule.ports.clone();
+    let first_port = ports[0];
+    let protocol = rule.protocol;
+    let all_udp = rule.all_udp;
+    let result = tokio::task::spawn_blocking(move || {
+        if all_udp {
+            firewall::allow_port_impl(prefix, first_port, protocol)?;
+            firewall::allow_all_udp_ports_for_current_app_impl(prefix)
+        } else {
+            ports
+                .iter()
+                .try_for_each(|port| firewall::allow_port_impl(prefix, *port, protocol))
+        }
     })
+    .await
+    .map_err(|error| {
+        FirewallCommandError::new(
+            "The firewall operation did not complete.",
+            error.to_string(),
+        )
+    })?;
+    match result {
+        Ok(()) => {
+            logging::event("firewall", action)
+                .field("port", first_port)
+                .info();
+            Ok(())
+        }
+        Err(error) => {
+            logging::event("firewall", "firewall.allow.failed")
+                .field("prefix", prefix)
+                .field("detail", &error.detail)
+                .warn();
+            Err(error)
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -234,6 +300,28 @@ struct ElevatedBindResponse {
     detail: Option<String>,
     /// 每个成功绑定的 socket 的协议，与随后通过 SCM_RIGHTS 传入的 fd 一一对应。
     protocols: Vec<FirewallProtocol>,
+}
+
+/// 提权 helper 的回复 Unix socket 读写超时，与防火墙提权共用同一预算。
+#[cfg(target_os = "linux")]
+const ELEVATED_IPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+#[cfg(target_os = "linux")]
+fn encode_elevated_token(request: &ElevatedBindRequest) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+    URL_SAFE_NO_PAD.encode(serde_json::to_vec(request).unwrap_or_default())
+}
+
+#[cfg(target_os = "linux")]
+fn decode_elevated_token(
+    mut args: impl Iterator<Item = std::ffi::OsString>,
+) -> Option<ElevatedBindRequest> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+    let first = args.next()?;
+    let decoded = URL_SAFE_NO_PAD.decode(first.to_str()?).ok()?;
+    serde_json::from_slice(&decoded).ok()
 }
 
 #[cfg(target_os = "linux")]
@@ -288,25 +376,17 @@ fn run_elevated_bind(
     // helper 连接后该路径就没有用了；无论成败都删掉，避免 /tmp 残留。
     let _cleanup = SocketFileCleanup(request.reply.path.clone());
 
-    let exe_path = std::env::current_exe().map_err(|error| {
-        FirewallCommandError::new(
-            "Unable to request administrator approval for the service listener.",
-            error.to_string(),
-        )
-    })?;
-    #[cfg(target_os = "linux")]
     let exe_path = firewall::stage_elevated_executable().map_err(|error| {
         FirewallCommandError::new(
             "Unable to prepare the administrator approval helper.",
             error.to_string(),
         )
     })?;
-    #[cfg(target_os = "linux")]
     let cleanup_path = exe_path.clone();
     let mut command = std::process::Command::new(exe_path);
     command
         .arg(ELEVATED_BIND_FLAG)
-        .arg(firewall::encode_elevated_token(&request));
+        .arg(encode_elevated_token(&request));
     let output = elevated_command::Command::new(command)
         .output()
         .map_err(|error| {
@@ -316,7 +396,6 @@ fn run_elevated_bind(
             )
         })?;
 
-    #[cfg(target_os = "linux")]
     let _ = std::fs::remove_file(cleanup_path);
 
     // helper 约定：成功 exit 0、校验失败 exit 2、执行失败但已回报 exit 1；
@@ -397,7 +476,7 @@ fn accept_with_timeout(
             error.to_string(),
         )
     })?;
-    let deadline = std::time::Instant::now() + firewall::ELEVATED_IPC_TIMEOUT;
+    let deadline = std::time::Instant::now() + ELEVATED_IPC_TIMEOUT;
     loop {
         match listener.accept() {
             Ok(result) => return Ok(result),
@@ -429,7 +508,7 @@ fn read_bind_response(
     use std::io::Read;
 
     stream
-        .set_read_timeout(Some(firewall::ELEVATED_IPC_TIMEOUT))
+        .set_read_timeout(Some(ELEVATED_IPC_TIMEOUT))
         .map_err(|error| {
             FirewallCommandError::new(
                 "Unable to wait for the service listener approval result.",
@@ -574,9 +653,7 @@ pub(crate) fn handle_elevated_bind_helper() -> bool {
         return false;
     }
 
-    let Some(request) =
-        firewall::decode_elevated_token(args).and_then(validate_elevated_bind_request)
-    else {
+    let Some(request) = decode_elevated_token(args).and_then(validate_elevated_bind_request) else {
         process::exit(2);
     };
 
@@ -641,6 +718,10 @@ fn run_bind_helper(
         }
     }
     if sockets.is_empty() {
+        // 「仅防火墙」模式：无任何绑定点，只放行防火墙，空 socket 列表即成功。
+        if request.binds.is_empty() && request.fallback.is_none() {
+            return Ok(sockets);
+        }
         return match &request.fallback {
             Some(spec) => bind_one(spec).map(|socket| vec![socket]).map_err(|error| {
                 FirewallCommandError::new(
@@ -674,7 +755,6 @@ fn validate_elevated_bind_request(request: ElevatedBindRequest) -> Option<Elevat
     }
     if request.binds.len() > 32
         || !request.binds.iter().all(privileged)
-        || (request.binds.is_empty() && !request.fallback.as_ref().is_some_and(privileged))
         || request
             .fallback
             .as_ref()
@@ -759,6 +839,25 @@ mod tests {
             "/tmp/xterm-bind-a.sock"
         ))
         .is_some());
+    }
+
+    #[test]
+    fn helper_validation_accepts_firewall_only_request() {
+        // 高端口服务（如代理）只提权放行防火墙、不绑定端口：空 binds + 无
+        // fallback 的「仅防火墙」请求必须被接受。
+        let request = ElevatedBindRequest {
+            prefix: "XTerm Proxy".to_string(),
+            firewall_ports: vec![3128],
+            firewall_protocol: FirewallProtocol::Tcp,
+            all_udp: false,
+            binds: Vec::new(),
+            fallback: None,
+            reply: ElevatedBindReply {
+                path: "/tmp/xterm-bind-firewall.sock".into(),
+                nonce: "nonce".to_string(),
+            },
+        };
+        assert!(validate_elevated_bind_request(request).is_some());
     }
 
     #[test]

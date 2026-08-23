@@ -124,13 +124,16 @@ pub(crate) async fn start_runtime(
         std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
         internal_port,
     );
-    firewall::allow_ftp_ports(config.port, passive_ports.clone()).await?;
+    // 控制端口 + 被动端口段一并交给 bind helper 放行，保证每次开启只提权一次。
+    let firewall_ports = std::iter::once(config.port)
+        .chain(passive_ports.clone())
+        .collect::<Vec<_>>();
     let external_listener = match elevated::bind_service_sockets(
         ServiceRule {
             prefix: "XTerm FTP",
             action: "ftp.firewall.allow",
             protocol: crate::firewall::FirewallProtocol::Tcp,
-            ports: vec![config.port],
+            ports: firewall_ports,
             all_udp: false,
         },
         vec![BindSpec::tcp(external_addr)],
@@ -229,7 +232,7 @@ pub(crate) async fn start_runtime(
 
 pub(crate) async fn stop_runtime(runtime: FtpRuntimeHandle, port: u16) -> Result<(), String> {
     let _ = runtime.shutdown_tx.send(true);
-    let _ = runtime.proxy_task.abort();
+    runtime.proxy_task.abort();
     let task_result = await_runtime_task("FTP", FTP_TASK_DRAIN_TIMEOUT, runtime.accept_task).await;
     let firewall_result = firewall::remove_ftp_ports(port, runtime.passive_ports).await;
     task_result?;

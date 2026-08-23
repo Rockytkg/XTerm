@@ -1,8 +1,6 @@
 use tauri::AppHandle;
 
-use crate::firewall::{
-    allow_service_ports, remove_service_ports_rule, FirewallCommandError, FirewallProtocol,
-};
+use crate::firewall::{remove_service_ports_rule, FirewallCommandError, FirewallProtocol};
 
 const TFTP_RULE_PREFIX: &str = "XTerm TFTP";
 const FTP_RULE_PREFIX: &str = "XTerm FTP";
@@ -17,23 +15,6 @@ pub(crate) async fn remove_tftp_port_rule<R: tauri::Runtime>(
         port,
     )
     .await
-}
-
-pub(crate) async fn allow_ftp_ports(
-    control_port: u16,
-    passive_ports: std::ops::RangeInclusive<u16>,
-) -> Result<(), String> {
-    let ports = std::iter::once(control_port)
-        .chain(passive_ports)
-        .collect::<Vec<_>>();
-    allow_service_ports(
-        FTP_RULE_PREFIX,
-        "ftp.firewall.allow",
-        ports,
-        FirewallProtocol::Tcp,
-    )
-    .await
-    .map_err(|error| error.user_message)
 }
 
 pub(crate) async fn remove_ftp_ports(

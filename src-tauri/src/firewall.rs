@@ -57,11 +57,17 @@ pub(crate) struct FirewallCommandError {
 }
 
 impl FirewallCommandError {
-    fn new(user_message: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub(crate) fn new(user_message: impl Into<String>, detail: impl Into<String>) -> Self {
         Self {
             user_message: user_message.into(),
             detail: detail.into(),
         }
+    }
+
+    /// 该错误是否意味着「需要管理员权限」——用于让调用方决定是否改走提权
+    /// helper，而不是把这个原始错误直接抛给用户。
+    pub(crate) fn requires_elevation(&self) -> bool {
+        firewall_error_requires_elevation(&self.detail)
     }
 }
 
@@ -100,6 +106,7 @@ impl FirewallTaskRequest {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 pub(crate) async fn allow_service_ports(
     prefix: &'static str,
     action: &'static str,
@@ -121,6 +128,7 @@ pub(crate) async fn allow_service_ports(
     .await
 }
 
+#[cfg(not(target_os = "linux"))]
 pub(crate) async fn allow_service_port_and_all_udp_ports_for_current_app(
     prefix: &'static str,
     action: &'static str,
@@ -259,6 +267,7 @@ fn firewall_error_requires_elevation(detail: &str) -> bool {
         || lower.contains("authorization failed")
 }
 
+#[cfg(not(target_os = "linux"))]
 fn allow_ports_impl(
     prefix: &'static str,
     ports: &[u16],
@@ -849,8 +858,8 @@ fn remove_all_udp_ports_for_current_app_rule_direct(
 }
 
 #[cfg(target_os = "linux")]
-fn allow_all_udp_ports_for_current_app_impl(
-    prefix: &'static str,
+pub(crate) fn allow_all_udp_ports_for_current_app_impl(
+    prefix: &str,
 ) -> Result<(), FirewallCommandError> {
     allow_all_udp_ports_for_current_app_direct(prefix)
 }
@@ -865,10 +874,7 @@ fn allow_all_udp_ports_for_current_app_direct(prefix: &str) -> Result<(), Firewa
     })?;
     let chain = linux_chain_name(prefix);
     ensure_linux_chain(&ipt, &chain, FirewallProtocol::Udp)?;
-    ipt.append_unique("filter", &chain, &accept_all_udp_rule(prefix))
-        .map_err(|error| {
-            FirewallCommandError::new("Unable to add the Linux firewall rule.", error.to_string())
-        })
+    append_rule_if_absent(&ipt, &chain, &accept_all_udp_rule(prefix))
 }
 
 #[cfg(target_os = "linux")]
@@ -882,6 +888,14 @@ fn remove_all_udp_ports_for_current_app_rule_impl(
 fn remove_all_udp_ports_for_current_app_rule_direct(
     prefix: &str,
 ) -> Result<(), FirewallCommandError> {
+    // 同上：非 root 无法可靠判断规则是否存在，直接声明需要提权。
+    if !elevated_command::Command::is_elevated() {
+        return Err(FirewallCommandError::new(
+            "Administrator permission is required to remove the Linux firewall rule.",
+            "permission denied",
+        ));
+    }
+
     let ipt = iptables::new(false).map_err(|error| {
         FirewallCommandError::new(
             "Unable to initialize the Linux firewall integration.",
@@ -923,8 +937,8 @@ fn map_windows_error(
 }
 
 #[cfg(target_os = "linux")]
-fn allow_port_impl(
-    prefix: &'static str,
+pub(crate) fn allow_port_impl(
+    prefix: &str,
     port: u16,
     protocol: FirewallProtocol,
 ) -> Result<(), FirewallCommandError> {
@@ -938,6 +952,27 @@ fn allow_port_direct(
     protocol: FirewallProtocol,
 ) -> Result<(), FirewallCommandError> {
     allow_port_linux_direct(prefix, port, protocol)
+}
+
+/// 幂等地追加一条规则：已存在则视为成功。iptables 的 `append_unique` 在规则
+/// 已存在时会返回错误，导致「停止未删除规则 + 再次开启」时报出
+/// “Unable to add the Linux firewall rule.”，这里用先查后加的方式规避。
+#[cfg(target_os = "linux")]
+fn append_rule_if_absent(
+    ipt: &iptables::IPTables,
+    chain: &str,
+    rule: &str,
+) -> Result<(), FirewallCommandError> {
+    match ipt.exists("filter", chain, rule) {
+        Ok(true) => Ok(()),
+        Ok(false) => ipt.append("filter", chain, rule).map_err(|error| {
+            FirewallCommandError::new("Unable to add the Linux firewall rule.", error.to_string())
+        }),
+        Err(error) => Err(FirewallCommandError::new(
+            "Unable to inspect the Linux firewall rule.",
+            error.to_string(),
+        )),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -955,10 +990,7 @@ fn allow_port_linux_direct(
 
     let chain = linux_chain_name(prefix);
     ensure_linux_chain(&ipt, &chain, protocol)?;
-    ipt.append_unique("filter", &chain, &accept_rule(prefix, port, protocol))
-        .map_err(|error| {
-            FirewallCommandError::new("Unable to add the Linux firewall rule.", error.to_string())
-        })
+    append_rule_if_absent(&ipt, &chain, &accept_rule(prefix, port, protocol))
 }
 
 #[cfg(target_os = "linux")]
@@ -985,6 +1017,15 @@ fn remove_port_rule_linux_direct(
     port: u16,
     protocol: FirewallProtocol,
 ) -> Result<(), FirewallCommandError> {
+    // 非 root 下 `iptables -C`/`-L` 会把权限错误吞成“不存在”，导致删除被
+    // 静默跳过、规则残留；这里提前声明需要提权，交给 elevated helper 完成。
+    if !elevated_command::Command::is_elevated() {
+        return Err(FirewallCommandError::new(
+            "Administrator permission is required to remove the Linux firewall rule.",
+            "permission denied",
+        ));
+    }
+
     let ipt = iptables::new(false).map_err(|error| {
         FirewallCommandError::new(
             "Unable to initialize the Linux firewall integration.",
