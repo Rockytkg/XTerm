@@ -20,7 +20,7 @@
         "minWidth": 960,
         "minHeight": 600,
         "decorations": false,
-        "devtools": false,
+        "devtools": true,
         "visible": false
       }
     ],
