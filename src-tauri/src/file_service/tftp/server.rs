@@ -51,7 +51,20 @@ pub(crate) async fn start_runtime(
     config: FileServiceConfig,
 ) -> Result<TftpRuntimeHandle, String> {
     let bind_addr = parse_bind_address("TFTP", &config.bind_ip, config.port)?;
-    let listeners = bind_listeners(bind_addr).await?;
+    if let Err(error) = firewall::allow_tftp_port(&app, config.port).await {
+        logging::event("tftp.firewall", "tftp.firewall.allow.failed")
+            .field("port", config.port)
+            .field("detail", &error.detail)
+            .warn();
+        return Err(error.user_message);
+    }
+    let listeners = match bind_listeners(bind_addr).await {
+        Ok(listeners) => listeners,
+        Err(error) => {
+            let _ = firewall::remove_tftp_port_rule(&app, config.port).await;
+            return Err(error);
+        }
+    };
     let root = canonical_shared_dir("TFTP", &config.shared_dir).await?;
 
     if let Err(error) = firewall::allow_tftp_port(&app, config.port).await {

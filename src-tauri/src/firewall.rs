@@ -12,6 +12,20 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_os = "linux")]
+fn stage_elevated_executable() -> Result<std::path::PathBuf, std::io::Error> {
+    let source = std::env::current_exe()?;
+    let target = std::env::temp_dir().join(format!(
+        "xterm-elevated-{}-{:016x}",
+        std::process::id(),
+        rand::random::<u64>()
+    ));
+    std::fs::copy(source, &target)?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o700))?;
+    Ok(target)
+}
+
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum FirewallProtocol {
@@ -421,6 +435,7 @@ fn run_elevated_firewall_task(
     protocol: FirewallProtocol,
     all_ports: bool,
 ) -> Result<(), FirewallCommandError> {
+    #[cfg(not(target_os = "linux"))]
     let exe_path = std::env::current_exe().map_err(|error| {
         FirewallCommandError::new(
             "Unable to request administrator approval for the firewall change.",
@@ -456,6 +471,15 @@ fn run_elevated_firewall_task(
             nonce: nonce.clone(),
         },
     };
+    #[cfg(target_os = "linux")]
+    let exe_path = stage_elevated_executable().map_err(|error| {
+        FirewallCommandError::new(
+            "Unable to prepare the administrator approval helper.",
+            error.to_string(),
+        )
+    })?;
+    #[cfg(target_os = "linux")]
+    let cleanup_path = exe_path.clone();
     let mut command = Command::new(exe_path);
     command
         .arg(ELEVATED_FIREWALL_FLAG)
@@ -470,14 +494,18 @@ fn run_elevated_firewall_task(
             )
         })?;
 
-    if !elevated_command_started(&output) {
-        return Err(FirewallCommandError::new(
-            "Administrator approval was denied, so the firewall rule was not changed.",
-            elevated_status_detail(&output),
-        ));
-    }
-
-    let response = wait_for_elevated_response(listener, &nonce)?;
+    #[cfg(target_os = "linux")]
+    let _ = std::fs::remove_file(cleanup_path);
+    let response = match wait_for_elevated_response(listener, &nonce) {
+        Ok(response) => response,
+        Err(error) if !elevated_command_started(&output) => {
+            return Err(FirewallCommandError::new(
+                "Administrator approval was denied, so the firewall rule was not changed.",
+                format!("{}; {}", elevated_status_detail(&output), error.detail),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
     if response.ok {
         return Ok(());
     }
@@ -506,7 +534,22 @@ fn elevated_command_started(output: &std::process::Output) -> bool {
 }
 
 fn elevated_status_detail(output: &std::process::Output) -> String {
-    format!("elevated command launch status {}", output.status)
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    format!(
+        "elevated command launch status {}; stdout: {}; stderr: {}",
+        output.status,
+        if stdout.is_empty() {
+            "<empty>"
+        } else {
+            &stdout
+        },
+        if stderr.is_empty() {
+            "<empty>"
+        } else {
+            &stderr
+        },
+    )
 }
 
 #[cfg(any(windows, unix))]

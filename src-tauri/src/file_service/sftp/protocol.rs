@@ -45,12 +45,19 @@ pub(crate) async fn start_runtime(
     let host_key = load_or_create_host_key(state).await?;
     let shared_dir = canonical_shared_dir("SFTP", &config.shared_dir).await?;
     let bind_addr = parse_bind_address("SFTP", &config.bind_ip, config.port)?;
-    let listener = TcpListener::bind(bind_addr)
-        .await
-        .map_err(|error| format!("failed to bind SFTP server to {bind_addr}: {error}"))?;
     firewall::allow_sftp_port(config.port)
         .await
         .map_err(|error| error.user_message.clone())?;
+    let listener = TcpListener::bind(bind_addr).await;
+    let listener = match listener {
+        Ok(listener) => listener,
+        Err(error) => {
+            let _ = firewall::remove_sftp_port_rule(config.port).await;
+            return Err(format!(
+                "failed to bind SFTP server to {bind_addr}: {error}"
+            ));
+        }
+    };
     let mut server_config = server::Config {
         auth_rejection_time: Duration::from_secs(1),
         auth_rejection_time_initial: Some(Duration::from_millis(100)),
