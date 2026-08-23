@@ -81,6 +81,7 @@ windows_firewall = "0.7.0"
 
 [target.'cfg(not(windows))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 iptables = "0.6.0"

@@ -11,16 +11,15 @@ use crate::{
     terminal::internal::{
         codec::analyze_serial_sample,
         core::{
-            open_serial_port, compare_serial_port_names, ConnectionError,
-            ConnectionOpenResult, ConnectionResult,
-            ResolvedConnection, SerialLineSettings, SerialProbeResult, SerialRedetectResult,
-            SessionCommand, SessionTransportRuntime, SessionWorkerEvent, TerminalSession,
-            TerminalSessionResources, TerminalSize, TransportCommand, BAUD_CANDIDATES,
-            SERIAL_FALLBACK_BAUD_RATE, SERIAL_FAST_BAUD_SAMPLE_MS, SERIAL_MIN_DETECT_BYTES,
-            SERIAL_PASSIVE_BAUD_SAMPLE_MS, SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS,
-            SERIAL_PROBE_MAX_SAMPLE_MS, SERIAL_PROBE_SETTLE_MS, SERIAL_QUICK_AUTO_BAUD_CANDIDATES,
-            SERIAL_RELIABLE_BAUD_SCORE, SERIAL_SAMPLE_MAX_BYTES, SERIAL_WAKE_SEQUENCE,
-            SESSION_BUFFER_SIZE,
+            compare_serial_port_names, open_serial_port, ConnectionError, ConnectionOpenResult,
+            ConnectionResult, ResolvedConnection, SerialLineSettings, SerialProbeResult,
+            SerialRedetectResult, SessionCommand, SessionTransportRuntime, SessionWorkerEvent,
+            TerminalSession, TerminalSessionResources, TerminalSize, TransportCommand,
+            BAUD_CANDIDATES, SERIAL_FALLBACK_BAUD_RATE, SERIAL_FAST_BAUD_SAMPLE_MS,
+            SERIAL_MIN_DETECT_BYTES, SERIAL_PASSIVE_BAUD_SAMPLE_MS,
+            SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS, SERIAL_PROBE_MAX_SAMPLE_MS, SERIAL_PROBE_SETTLE_MS,
+            SERIAL_QUICK_AUTO_BAUD_CANDIDATES, SERIAL_RELIABLE_BAUD_SCORE, SERIAL_SAMPLE_MAX_BYTES,
+            SERIAL_WAKE_SEQUENCE, SESSION_BUFFER_SIZE,
         },
         serial_transport::spawn_serial_transport_actor,
         startup_auth::resolve_startup_password_auth,
@@ -49,6 +48,8 @@ struct SerialOpenSelection {
 pub(super) struct SerialSessionTransport {
     pub(super) port: tokio_serial::SerialStream,
     pub(super) port_name: String,
+    /// 传输 actor 退出并释放串口 fd 后通知;重开端口前必须等到它。
+    pub(super) close_ack: tokio::sync::oneshot::Sender<()>,
 }
 
 impl SessionTransportRuntime for SerialSessionTransport {
@@ -62,7 +63,14 @@ impl SessionTransportRuntime for SerialSessionTransport {
         rx: tokio::sync::mpsc::UnboundedReceiver<TransportCommand>,
         event_tx: tokio::sync::mpsc::UnboundedSender<SessionWorkerEvent>,
     ) {
-        spawn_serial_transport_actor(session_id, self.port, self.port_name, rx, event_tx);
+        spawn_serial_transport_actor(
+            session_id,
+            self.port,
+            self.port_name,
+            rx,
+            event_tx,
+            self.close_ack,
+        );
     }
 }
 
@@ -181,6 +189,7 @@ impl SerialConnectionFactory {
         );
         ensure_open_not_cancelled(&request)?;
         ensure_open_current(state, &request)?;
+        let (close_ack_tx, close_ack_rx) = tokio::sync::oneshot::channel();
         let session_id = spawn_bound_session(
             app.clone(),
             state,
@@ -190,12 +199,13 @@ impl SerialConnectionFactory {
                 transport: Box::new(SerialSessionTransport {
                     port,
                     port_name: port_name.clone(),
+                    close_ack: close_ack_tx,
                 }),
                 capabilities: crate::terminal::domain::ConnectionCapabilities::serial(),
                 codec: open_context.codec,
                 initial_data,
                 startup_auth,
-                resources: TerminalSessionResources::serial(port_name.clone()),
+                resources: TerminalSessionResources::serial(port_name.clone(), close_ack_rx),
                 replay_line_limit: open_context.replay_line_limit,
             },
         );
@@ -224,9 +234,12 @@ pub(crate) async fn redetect_serial_baud_on_open_port(
         )
     })?;
     let mut scores = Vec::new();
-    let candidates = redetect_serial_baud_candidates(original_baud_rate);
-    let selection =
-        match detect_serial_baud(port, port_name, &candidates, encoding, &mut scores).await {
+    // 两阶段:先扫当前波特率和常用候选;只有快扫见到线路活动时才扩展到完整
+    // 列表。全量扫每档要数百毫秒,在静默线路上会拖慢重检测并长时间阻塞会话
+    // 关闭;而每档探测都会发 CR 唤醒,接着有设备的线路几乎总会留下字节。
+    let quick_candidates = redetect_quick_baud_candidates(original_baud_rate);
+    let mut selection =
+        match detect_serial_baud(port, port_name, &quick_candidates, encoding, &mut scores).await {
             Ok(detection) => detection.confirmed,
             Err(error) => {
                 let _ = set_serial_probe_baud(port, port_name, original_baud_rate);
@@ -234,6 +247,21 @@ pub(crate) async fn redetect_serial_baud_on_open_port(
                 return Err(error);
             }
         };
+    if selection.is_none() {
+        let additional = additional_serial_baud_candidates(&quick_candidates, BAUD_CANDIDATES);
+        if should_expand_serial_baud_search(&scores, false, !additional.is_empty()) {
+            selection =
+                match detect_serial_baud(port, port_name, &additional, encoding, &mut scores).await
+                {
+                    Ok(detection) => detection.confirmed,
+                    Err(error) => {
+                        let _ = set_serial_probe_baud(port, port_name, original_baud_rate);
+                        prepare_serial_probe_port(port).await;
+                        return Err(error);
+                    }
+                };
+        }
+    }
 
     let (baud_rate, confirmed, initial_sample) = if let Some(selection) = selection {
         (selection.baud_rate, true, selection.sample)
@@ -252,14 +280,12 @@ pub(crate) async fn redetect_serial_baud_on_open_port(
     })
 }
 
-/// Redetection starts from the current baud, then the common quick rates, then
-/// the full list — most redetects confirm within the first few entries.
-fn redetect_serial_baud_candidates(current_baud_rate: u32) -> Vec<u32> {
+/// Redetection quick round: the current baud, then the common quick rates.
+/// Most redetects confirm within these; the full list is only probed when the
+/// quick round saw line activity (see `redetect_serial_baud_on_open_port`).
+fn redetect_quick_baud_candidates(current_baud_rate: u32) -> Vec<u32> {
     let mut candidates = vec![current_baud_rate];
-    for baud_rate in SERIAL_QUICK_AUTO_BAUD_CANDIDATES
-        .iter()
-        .chain(BAUD_CANDIDATES.iter())
-    {
+    for baud_rate in SERIAL_QUICK_AUTO_BAUD_CANDIDATES {
         if !candidates.contains(baud_rate) {
             candidates.push(*baud_rate);
         }
@@ -391,14 +417,21 @@ async fn close_serial_sessions(
         .iter()
         .filter_map(|(_, session)| session.resources.serial_port().map(str::to_string))
         .collect();
+    // 串口 fd 由传输 actor 持有;worker 退出(会话从状态移除)不代表端口已释放。
+    // 取出每个会话的关闭确认,后面等 actor 真正 drop 端口后再放行重开。
+    let close_acks: Vec<tokio::sync::oneshot::Receiver<()>> = conflicting_sessions
+        .iter()
+        .filter_map(|(_, session)| session.resources.take_serial_close_ack())
+        .collect();
 
     for (session_id, session) in &conflicting_sessions {
         log::info!(target: "terminal.serial", "closing serial session '{session_id}' before {reason}");
         let _ = session.tx.send(SessionCommand::Close);
     }
 
-    // 关闭是异步的:worker 需要先排空缓冲输出/重放,再退出并移除会话。给足
-    // 余量避免在重连时偶发超时;3 秒对正常关闭绰绰有余,仅在 worker 卡死时触发。
+    // 关闭是异步的:worker 需要先排空缓冲输出/重放,再退出并移除会话,随后传输
+    // actor 释放串口 fd。给足余量避免在重连时偶发超时;3 秒对正常关闭绰绰有余,
+    // 仅在 worker/actor 卡死时触发。
     let deadline = Instant::now() + Duration::from_millis(3_000);
     loop {
         let remaining: Vec<String> = {
@@ -410,28 +443,54 @@ async fn close_serial_sessions(
                 .collect()
         };
         if remaining.is_empty() {
-            return Ok(());
+            break;
         }
         if Instant::now() >= deadline {
-            log::warn!(
-                target: "terminal.serial",
-                "serial sessions still open after close timeout before {reason}: {remaining:?}"
-            );
-            // 用户可见的错误用端口名而非内部会话 ID,并提供可重试的错误码。
-            let port_label = if port_names.is_empty() {
-                "the serial port".to_string()
-            } else {
-                port_names.join(", ")
-            };
-            return Err(ConnectionError::with_args(
-                "serial_session_close_timeout",
-                format!("port={port_label}; timed out waiting for the previous serial session to close"),
-                serde_json::json!({ "portName": port_label }),
-                true,
-            ));
+            return Err(serial_close_timeout_error(&port_names, reason, &remaining));
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+
+    // 等 actor 退出:POSIX 下 fd 持有 TIOCEXCL + 独占 flock,不等到这里,
+    // 紧接着重开同一端口会得到 EBUSY(表现为"串口被占用")。
+    for close_ack in close_acks {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        // 发送端随 actor 任务结束必然被 drop,因此收到 Err 同样代表端口已释放;
+        // 只有超时(actor 卡死)才算失败。
+        if remaining.is_zero() || tokio::time::timeout(remaining, close_ack).await.is_err() {
+            log::warn!(
+                target: "terminal.serial",
+                "serial transport actor still holds the port after close timeout before {reason}"
+            );
+            return Err(serial_close_timeout_error(&port_names, reason, &[]));
+        }
+    }
+    Ok(())
+}
+
+fn serial_close_timeout_error(
+    port_names: &[String],
+    reason: &str,
+    remaining_sessions: &[String],
+) -> ConnectionError {
+    if !remaining_sessions.is_empty() {
+        log::warn!(
+            target: "terminal.serial",
+            "serial sessions still open after close timeout before {reason}: {remaining_sessions:?}"
+        );
+    }
+    // 用户可见的错误用端口名而非内部会话 ID,并提供可重试的错误码。
+    let port_label = if port_names.is_empty() {
+        "the serial port".to_string()
+    } else {
+        port_names.join(", ")
+    };
+    ConnectionError::with_args(
+        "serial_session_close_timeout",
+        format!("port={port_label}; timed out waiting for the previous serial session to close"),
+        serde_json::json!({ "portName": port_label }),
+        true,
+    )
 }
 
 pub(crate) async fn serial_port_candidates(
@@ -488,7 +547,7 @@ async fn resolve_serial_open(
     settings: SerialLineSettings,
 ) -> ConnectionResult<SerialOpenSelection> {
     if let Some(baud_rate) = fixed_baud {
-        return resolve_fixed_baud(requested_port, port_candidates, baud_rate, settings);
+        return resolve_fixed_baud(requested_port, port_candidates, baud_rate, settings).await;
     }
 
     resolve_auto_baud(
@@ -521,7 +580,7 @@ async fn resolve_auto_baud(
             .first()
             .copied()
             .unwrap_or(SERIAL_FALLBACK_BAUD_RATE);
-        let mut port = match open_serial_probe_handle(&port_name, initial_baud, &settings) {
+        let mut port = match open_serial_probe_handle(&port_name, initial_baud, &settings).await {
             Ok(port) => port,
             Err(error) => {
                 last_error = Some(error);
@@ -721,7 +780,7 @@ fn additional_serial_baud_candidates(
         .collect()
 }
 
-fn resolve_fixed_baud(
+async fn resolve_fixed_baud(
     requested_port: &str,
     port_candidates: Vec<SerialPortCandidate>,
     baud_rate: u32,
@@ -729,7 +788,7 @@ fn resolve_fixed_baud(
 ) -> ConnectionResult<SerialOpenSelection> {
     let mut last_error = None;
     for candidate in sorted_serial_port_candidates(port_candidates) {
-        match open_serial_selection(candidate.name, baud_rate, &settings) {
+        match open_serial_selection(candidate.name, baud_rate, &settings).await {
             Ok(selection) => return Ok(selection),
             Err(error) => {
                 last_error = Some(error);
@@ -800,12 +859,13 @@ fn set_serial_probe_baud(
 
 /// Open the port once at the initial candidate baud. Open failures depend on
 /// the port/driver, not the baud rate, so retrying other bauds is pointless.
-fn open_serial_probe_handle(
+async fn open_serial_probe_handle(
     port_name: &str,
     initial_baud: u32,
     settings: &SerialLineSettings,
 ) -> ConnectionResult<tokio_serial::SerialStream> {
-    open_serial_port(port_name, initial_baud, settings)
+    open_serial_port_with_busy_retry(port_name, initial_baud, settings)
+        .await
         .map_err(|error| classify_serial_open_error(port_name, initial_baud, error))
 }
 
@@ -835,12 +895,13 @@ fn record_failed_serial_probe_scores(
     );
 }
 
-fn open_serial_selection(
+async fn open_serial_selection(
     port_name: String,
     baud_rate: u32,
     settings: &SerialLineSettings,
 ) -> ConnectionResult<SerialOpenSelection> {
-    let port = open_serial_port(&port_name, baud_rate, settings)
+    let port = open_serial_port_with_busy_retry(&port_name, baud_rate, settings)
+        .await
         .map_err(|error| classify_serial_open_error(&port_name, baud_rate, error))?;
     Ok(SerialOpenSelection {
         port_name,
@@ -849,6 +910,39 @@ fn open_serial_selection(
         initial_sample: Vec::new(),
         port,
     })
+}
+
+/// POSIX 下串口释放不是即时的:fd 持有的 TIOCEXCL/独占 flock 要随 close 解除,
+/// USB 串口驱动也有释放延迟;外部程序(如 ModemManager 的 AT 探测)同样会短暂
+/// 占用端口。对这些"忙"错误做有限的退避重试,而不是立刻把端口判为不可用。
+async fn open_serial_port_with_busy_retry(
+    port_name: &str,
+    baud_rate: u32,
+    settings: &SerialLineSettings,
+) -> tokio_serial::Result<tokio_serial::SerialStream> {
+    const BUSY_RETRY_BUDGET: Duration = Duration::from_millis(1_200);
+    const BUSY_RETRY_INTERVAL: Duration = Duration::from_millis(120);
+    let started_at = Instant::now();
+    loop {
+        match open_serial_port(port_name, baud_rate, settings) {
+            Err(error)
+                if serial_port_error_is_busy(&error)
+                    && started_at.elapsed() + BUSY_RETRY_INTERVAL <= BUSY_RETRY_BUDGET =>
+            {
+                log::info!(
+                    target: "terminal.serial",
+                    "serial port '{port_name}' is busy; retrying open"
+                );
+                tokio::time::sleep(BUSY_RETRY_INTERVAL).await;
+            }
+            result => return result,
+        }
+    }
+}
+
+fn serial_port_error_is_busy(error: &tokio_serial::Error) -> bool {
+    let detail = error.to_string().to_lowercase();
+    detail.contains("busy") || detail.contains("资源忙")
 }
 
 async fn prepare_serial_probe_port(port: &mut tokio_serial::SerialStream) {
@@ -1083,6 +1177,10 @@ const SERIAL_UNAVAILABLE_ERROR_MARKERS: &[&str] = &[
     "函数不正确",
     "being used",
     "in use",
+    // Linux EBUSY("Device or resource busy"):端口被 TIOCEXCL/flock 占用,
+    // 常见于上一会话尚未释放或 ModemManager 等外部程序探测期间。
+    "resource busy",
+    "设备或资源忙",
     "占用",
 ];
 
@@ -1106,9 +1204,10 @@ pub(super) fn serial_error_looks_unavailable(detail: &str) -> bool {
 mod tests {
     use super::{
         additional_serial_baud_candidates, has_reliable_serial_probe, is_reliable_serial_probe,
-        redetect_serial_baud_candidates, serial_error_is_unavailable,
-        serial_error_looks_unavailable, should_expand_serial_baud_search,
-        sorted_serial_port_candidates, SerialPortCandidate, SerialProbeScore,
+        redetect_quick_baud_candidates, serial_error_is_unavailable,
+        serial_error_looks_unavailable, serial_port_error_is_busy,
+        should_expand_serial_baud_search, sorted_serial_port_candidates, SerialPortCandidate,
+        SerialProbeScore,
     };
     use crate::terminal::internal::core::BAUD_CANDIDATES;
     use std::collections::HashSet;
@@ -1149,19 +1248,27 @@ mod tests {
     }
 
     #[test]
-    fn redetection_prioritizes_current_and_common_baud_rates_without_duplicates() {
-        let candidates = redetect_serial_baud_candidates(38_400);
-        assert_eq!(&candidates[..3], &[38_400, 9_600, 115_200]);
+    fn redetection_quick_round_prioritizes_current_and_common_rates() {
+        assert_eq!(
+            redetect_quick_baud_candidates(38_400),
+            vec![38_400, 9_600, 115_200]
+        );
+        assert_eq!(redetect_quick_baud_candidates(9_600), vec![9_600, 115_200]);
+        assert_eq!(
+            redetect_quick_baud_candidates(115_200),
+            vec![115_200, 9_600]
+        );
+    }
+
+    #[test]
+    fn redetection_expansion_covers_all_remaining_known_rates() {
+        let quick = redetect_quick_baud_candidates(38_400);
+        let additional = additional_serial_baud_candidates(&quick, BAUD_CANDIDATES);
+        let all: HashSet<u32> = quick.iter().chain(additional.iter()).copied().collect();
         assert!(BAUD_CANDIDATES
             .iter()
-            .all(|baud_rate| candidates.contains(baud_rate)));
-        let unique: HashSet<u32> = candidates.iter().copied().collect();
-        assert_eq!(unique.len(), candidates.len());
-
-        assert_eq!(
-            &redetect_serial_baud_candidates(9_600)[..3],
-            &[9_600, 115_200, 38_400]
-        );
+            .all(|baud_rate| all.contains(baud_rate)));
+        assert_eq!(all.len(), quick.len() + additional.len());
     }
 
     #[test]
@@ -1243,5 +1350,29 @@ mod tests {
             "The requested resource is in use."
         ));
         assert!(serial_error_looks_unavailable("端口已被占用"));
+    }
+
+    #[test]
+    fn serial_unavailable_detection_covers_linux_busy_errors() {
+        // EBUSY:上一会话的 fd 尚未释放(TIOCEXCL/flock)或外部程序短暂占用。
+        assert!(serial_error_looks_unavailable(
+            "EBUSY: Device or resource busy (os error 16)"
+        ));
+        assert!(serial_error_looks_unavailable("设备或资源忙"));
+    }
+
+    #[test]
+    fn serial_busy_retry_matches_only_busy_errors() {
+        let busy = tokio_serial::Error::new(
+            tokio_serial::ErrorKind::NoDevice,
+            "Device or resource busy (os error 16)",
+        );
+        let missing = tokio_serial::Error::new(
+            tokio_serial::ErrorKind::NoDevice,
+            "No such file or directory",
+        );
+
+        assert!(serial_port_error_is_busy(&busy));
+        assert!(!serial_port_error_is_busy(&missing));
     }
 }

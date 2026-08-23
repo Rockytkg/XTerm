@@ -566,6 +566,10 @@ pub struct SshSessionResources {
 #[derive(Clone)]
 pub struct SerialSessionResources {
     pub(crate) port_name: String,
+    /// 串口传输 actor 退出(串口 fd 已释放)时的确认。POSIX 下串口以
+    /// TIOCEXCL + 独占 flock 打开,fd 不释放,任何后续 open 都会得到 EBUSY;
+    /// 关闭会话后必须先等到这个确认,才能重开同一端口。
+    close_ack: std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>>,
 }
 
 #[derive(Clone)]
@@ -603,9 +607,12 @@ impl TerminalSessionResources {
         }
     }
 
-    pub(crate) fn serial(port_name: String) -> Self {
+    pub(crate) fn serial(port_name: String, close_ack: tokio::sync::oneshot::Receiver<()>) -> Self {
         Self {
-            serial: Some(SerialSessionResources { port_name }),
+            serial: Some(SerialSessionResources {
+                port_name,
+                close_ack: std::sync::Arc::new(std::sync::Mutex::new(Some(close_ack))),
+            }),
             ..Self::default()
         }
     }
@@ -624,6 +631,16 @@ impl TerminalSessionResources {
         self.serial
             .as_ref()
             .map(|resources| resources.port_name.as_str())
+    }
+
+    /// 取出串口关闭确认的接收端(只能取一次,随会话关闭流程消费)。
+    pub(crate) fn take_serial_close_ack(&self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        self.serial
+            .as_ref()?
+            .close_ack
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
     }
 }
 
@@ -1101,8 +1118,31 @@ pub(crate) fn open_serial_port(
         .preserve_dtr_on_open()
         .open_native_async()?;
 
+    #[cfg(unix)]
+    clear_hangup_on_close(port_name, &port);
     prime_serial_control_lines(port_name, settings, &mut port);
     Ok(port)
+}
+
+/// POSIX 默认的 HUPCL 会让最后一次 close 挂断线路(拉低 DTR),许多设备因此
+/// 复位,表现为"重连后开头几秒没有输出/输出的是启动日志"。终端工具的惯例
+/// (tio/picocom)是打开时清掉它,与本应用在 Windows 上 preserve_dtr_on_open
+/// 的语义一致。失败仅记录日志,不影响打开。
+#[cfg(unix)]
+fn clear_hangup_on_close(port_name: &str, port: &tokio_serial::SerialStream) {
+    use std::os::unix::io::AsRawFd;
+
+    unsafe {
+        let mut termios: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(port.as_raw_fd(), &mut termios) != 0 {
+            log::debug!(target: "terminal.core", "failed to read termios on serial port '{port_name}' to clear HUPCL");
+            return;
+        }
+        termios.c_cflag &= !libc::HUPCL;
+        if libc::tcsetattr(port.as_raw_fd(), libc::TCSANOW, &termios) != 0 {
+            log::debug!(target: "terminal.core", "failed to clear HUPCL on serial port '{port_name}'");
+        }
+    }
 }
 
 fn prime_serial_control_lines(
