@@ -121,7 +121,9 @@ jobs:
 
       - name: Build deb / rpm / AppImage
         run: |
-          pnpm tauri build --bundles deb,rpm,appimage \
+          # 用 pnpm exec 直接调 tauri CLI:package.json 里 "tauri" 脚本是 "tauri dev",
+          # 若写 `pnpm tauri build` 会被解析成 `tauri dev build`,跑到 dev profile 且参数报错
+          pnpm exec tauri build --bundles deb,rpm,appimage \
             --config "{\"version\":\"${VERSION}\"}"
 
       - name: Upload artifacts
@@ -189,7 +191,7 @@ jobs:
 
       - name: Build arm64 deb
         run: |
-          pnpm tauri build --target aarch64-unknown-linux-gnu \
+          pnpm exec tauri build --target aarch64-unknown-linux-gnu \
             --bundles deb \
             --config "{\"version\":\"${VERSION}\"}"
 
@@ -249,7 +251,9 @@ jobs:
 
       - name: Build NSIS / MSI
         run: |
-          pnpm tauri build --bundles nsis,msi \
+          # 用 pnpm exec 直接调 tauri CLI:package.json 里 "tauri" 脚本是 "tauri dev",
+          # 若写 `pnpm tauri build` 会被解析成 `tauri dev build`,跑到 dev profile 且参数报错
+          pnpm exec tauri build --bundles nsis,msi \
             --config "{\"version\":\"${VERSION}\"}"
 
       - name: Upload artifacts
@@ -310,7 +314,7 @@ jobs:
 
       - name: Build arm64 NSIS / MSI
         run: |
-          pnpm tauri build --target aarch64-pc-windows-msvc \
+          pnpm exec tauri build --target aarch64-pc-windows-msvc \
             --bundles nsis,msi \
             --config "{\"version\":\"${VERSION}\"}"
 
@@ -373,7 +377,7 @@ jobs:
         run: pnpm build
       - name: Build aarch64 app / dmg
         run: |
-          pnpm tauri build --target aarch64-apple-darwin \
+          pnpm exec tauri build --target aarch64-apple-darwin \
             --bundles app,dmg --no-before-build \
             --config "{\"version\":\"${VERSION}\"}"
 
@@ -441,7 +445,7 @@ jobs:
         run: pnpm build
       - name: Build x86_64 app / dmg
         run: |
-          pnpm tauri build --target x86_64-apple-darwin \
+          pnpm exec tauri build --target x86_64-apple-darwin \
             --bundles app,dmg --no-before-build \
             --config "{\"version\":\"${VERSION}\"}"
 

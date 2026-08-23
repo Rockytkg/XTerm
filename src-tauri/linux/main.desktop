@@ -1,5 +1,4 @@
-# Tauri Handlebars 桌面文件模板,用于 deb / rpm 打包。
-# 可用变量:{{categories}} {{comment}} {{exec}} {{icon}} {{name}}(见 tauri.conf.json bundle.linux.*.desktopTemplate)。
+{{! Tauri Handlebars 桌面文件模板,用于 deb / rpm 打包;可用变量见 tauri.conf.json bundle.linux.*.desktopTemplate }}
 [Desktop Entry]
 Type=Application
 Name={{name}}
