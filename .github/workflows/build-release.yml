@@ -99,8 +99,18 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
-          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
+          node -e '
+            const fs = require("fs");
+            const v = process.env.VERSION;
+            let cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+            cargo = cargo.replace(/^version = "[^"]*"/m, `version = "${v}"`);
+            fs.writeFileSync("src-tauri/Cargo.toml", cargo);
+            const pkgPath = "package.json";
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            pkg.version = v;
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+          '
 
       - name: Install system dependencies
         run: |
@@ -157,8 +167,18 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
-          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
+          node -e '
+            const fs = require("fs");
+            const v = process.env.VERSION;
+            let cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+            cargo = cargo.replace(/^version = "[^"]*"/m, `version = "${v}"`);
+            fs.writeFileSync("src-tauri/Cargo.toml", cargo);
+            const pkgPath = "package.json";
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            pkg.version = v;
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+          '
 
       - name: Install system dependencies
         run: |
@@ -214,8 +234,18 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
-          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
+          node -e '
+            const fs = require("fs");
+            const v = process.env.VERSION;
+            let cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+            cargo = cargo.replace(/^version = "[^"]*"/m, `version = "${v}"`);
+            fs.writeFileSync("src-tauri/Cargo.toml", cargo);
+            const pkgPath = "package.json";
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            pkg.version = v;
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+          '
 
       - name: Build NSIS / MSI
         run: |
@@ -265,8 +295,18 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
-          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
+          node -e '
+            const fs = require("fs");
+            const v = process.env.VERSION;
+            let cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+            cargo = cargo.replace(/^version = "[^"]*"/m, `version = "${v}"`);
+            fs.writeFileSync("src-tauri/Cargo.toml", cargo);
+            const pkgPath = "package.json";
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            pkg.version = v;
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+          '
 
       - name: Build arm64 NSIS / MSI
         run: |
@@ -316,8 +356,18 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
-          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
+          node -e '
+            const fs = require("fs");
+            const v = process.env.VERSION;
+            let cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+            cargo = cargo.replace(/^version = "[^"]*"/m, `version = "${v}"`);
+            fs.writeFileSync("src-tauri/Cargo.toml", cargo);
+            const pkgPath = "package.json";
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            pkg.version = v;
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+          '
 
       - name: Build frontend
         run: pnpm build
@@ -374,8 +424,18 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
-          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
+          node -e '
+            const fs = require("fs");
+            const v = process.env.VERSION;
+            let cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+            cargo = cargo.replace(/^version = "[^"]*"/m, `version = "${v}"`);
+            fs.writeFileSync("src-tauri/Cargo.toml", cargo);
+            const pkgPath = "package.json";
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            pkg.version = v;
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+          '
 
       - name: Build frontend
         run: pnpm build
