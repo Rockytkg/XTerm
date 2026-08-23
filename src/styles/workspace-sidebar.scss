@@ -36,20 +36,25 @@
     background: transparent;
   }
 
+  // container 必须放在 wrapper（panel）上而非 pane 自身：WebKit（Linux WebKitGTK /
+  // macOS WKWebView）在 grid 容器自身带 size containment 时会把 auto 行的内容高度
+  // 算成 0（WebKit bug 256047），导致摘要和控制区整段塌缩不可见。
   .workspace-sidebar-panel-performance {
+    container: performance-sidebar / size;
     overflow: hidden;
   }
 
   .workspace-sidebar-panel-proxy {
+    container: proxy-sidebar / size;
     overflow: hidden;
   }
 
   .workspace-sidebar-panel-file-service {
+    container: file-service-sidebar / size;
     overflow: hidden;
   }
 
   .workspace-sidebar-pane-performance {
-    container: performance-sidebar / size;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 10px;
@@ -506,7 +511,6 @@
   }
 
   .workspace-sidebar-pane-proxy {
-    container: proxy-sidebar / size;
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr);
     gap: 12px;
@@ -679,12 +683,10 @@
 }
 
 .workspace-sidebar-pane-file-service {
-  container: file-service-sidebar / size;
   display: grid;
   grid-template-rows: auto auto minmax(128px, 1fr);
   gap: 14px;
   min-height: 0;
-  block-size: 100%;
   padding: 18px 14px 22px;
   overflow: hidden;
 }
