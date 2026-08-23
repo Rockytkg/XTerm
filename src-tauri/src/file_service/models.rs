@@ -24,12 +24,6 @@ pub(crate) const DEFAULT_FILE_SERVICE_BIND_IP: &str = DEFAULT_WILDCARD_BIND_IP;
 pub(crate) const DEFAULT_TFTP_PORT: u16 = 69;
 pub(crate) const FILE_SERVICE_BIND_IP_KEY: &str = "fileServiceBindIp";
 pub(crate) const DEFAULT_SFTP_PORT: u16 = 22;
-// Linux desktop applications should not require CAP_NET_BIND_SERVICE just to
-// start the embedded server. Keep the standard port on Windows/macOS, while
-// using the conventional unprivileged FTP alternate port on Linux.
-#[cfg(target_os = "linux")]
-pub(crate) const DEFAULT_FTP_PORT: u16 = 2121;
-#[cfg(not(target_os = "linux"))]
 pub(crate) const DEFAULT_FTP_PORT: u16 = 21;
 pub(crate) const DEFAULT_FTP_PASSIVE_START: u16 = 50000;
 pub(crate) const DEFAULT_FTP_PASSIVE_END: u16 = 50100;
@@ -38,9 +32,8 @@ pub(crate) const FILE_SERVICE_SHARED_DIR_KEY: &str = "fileServiceSharedDir";
 pub(crate) const FILE_SERVICE_USERNAME_KEY: &str = "fileServiceUsername";
 pub(crate) const FILE_SERVICE_PASSWORD_KEY: &str = "fileServicePassword";
 
-/// Listen ports are fixed to protocol defaults; Linux uses the unprivileged
-/// FTP alternate port (2121) because a desktop app must not require a global
-/// CAP_NET_BIND_SERVICE capability just to start its embedded server.
+/// Listen ports are fixed to the protocol defaults (TFTP 69, FTP 21,
+/// SFTP 22); Linux binds privileged listeners through the elevation helper.
 pub(crate) fn default_port(protocol: &str) -> u16 {
     match protocol {
         "ftp" => DEFAULT_FTP_PORT,
