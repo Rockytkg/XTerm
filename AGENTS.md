@@ -15,12 +15,12 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 
 - `index.html`：Vite HTML 入口；`src/main.js` 创建 Vue 应用并注册 i18n、router、UnoCSS、全局 SCSS；`src/App.vue` 挂载应用壳层。
 - `src/views/`：页面（会话、工作区、凭证、密钥、脚本、Dashboard、设置）。
-- `src/components/`：终端、SFTP、连接弹窗、通知、选择器等组件。右键菜单默认由独立悬浮窗口 `FloatingContextMenuWindow.vue` 渲染；Wayland 会话下自动降级为主窗口内的 `DomContextMenu.vue`（条目渲染共用 `ContextMenuPanel.vue`，图标映射共用 `contextMenuIcons.js`），决策逻辑在 `src/services/contextMenu.js` + `src/utils/contextMenu.js`（`shouldUseDomContextMenu`）。
+- `src/components/`：终端、SFTP、连接弹窗、通知、选择器等组件。右键菜单始终在主窗口内以 DOM 渲染（`ContextMenu.vue`，条目渲染共用 `ContextMenuPanel.vue`，图标映射共用 `contextMenuIcons.js`），状态与动作分发在 `src/services/contextMenu.js`。
 - `src/composables/`：可复用逻辑（工作区状态、偏好设置、SFTP 操作、终端运行时等，均以 `use*` 命名）。
 - `src/stores/`：Pinia store（连接状态机、工作区会话、终端几何、主机公钥提示、用户脚本等）。
 - `src/services/`：前端到 Tauri Rust 命令的封装（`ipc/` 子目录为底层调用；`scripting/` 子目录为脚本引擎：终端桥接、运行器、弹窗交互）。组件中不要散落裸 `invoke`，应在 service 中添加明确封装。
 - `src/i18n/`：中英文案。`src/utils/`：通用工具（如 `eventBridge.js`）。
-- `src-tauri/src/`：Rust 后端。`lib.rs` 初始化状态、插件并注册 `tauri::generate_handler!`；模块包括 `terminal/`（api/app/domain/protocol 分层）、`credentials/`、`file_service/`、`tftp/`、`storage/`、`session_recording/`、`paths/`、`logging/`、`proxy/`、`desktop.rs`（平台/显示会话/webview 引擎检测，前端据此做 Wayland、WebKitGTK 兼容分支）、`firewall.rs` 等。
+- `src-tauri/src/`：Rust 后端。`lib.rs` 初始化状态、插件并注册 `tauri::generate_handler!`；模块包括 `terminal/`（api/app/domain/protocol 分层）、`credentials/`、`file_service/`、`tftp/`、`storage/`、`session_recording/`、`paths/`、`logging/`、`proxy/`、`firewall.rs` 等。
 - 日志体系：`src-tauri/src/logging/`（`level`/`event`/`writer`/`retention`/`panic`/`commands` 子模块）。后端写日志一律用 `crate::logging::event(scope, action)` 结构化事件或带显式 `target: "<scope>"` 的 `log::<level>!`，scope 为点分逻辑名（如 `terminal.serial`），不使用默认模块路径 target；panic/启动应急路径除外。日志按日写入 `<log_dir>/YYYYMMDD.log`（无缓冲逐条 flush，保留 7 天 / 最多 14 个文件），`panic.log`、`startup-error.log` 超 4 MiB 截尾。级别持久化于 settings（`logLevel`），`log_level_set` 立即生效；嘈杂依赖 crate（russh/keyring/mio/tao）在级别低于 debug 时被钳制。前端统一用 `createLogger("frontend.<area>.<module>")` + 点分事件名（`src/utils/logger.js`），启动时经 `src/services/logging.js` 同步后端级别；生产模式 error/warn 转发到后端日志文件。日志相关 Tauri 命令：`log_level_get/set`、`log_files_list`、`log_file_tail`、`log_files_prune`、`log_dir_open`；设置页"通用"内置日志查看对话框。
 - `src-tauri/capabilities/default.json`：Tauri 2 权限能力配置。
 - `src-tauri/tauri.conf.json`：开发地址（`http://127.0.0.1:1420`）、`dist` 输出、无边框窗口（`decorations: false`）、deep-link scheme（`ssh`、`telnet`）和打包配置。

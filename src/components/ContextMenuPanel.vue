@@ -6,9 +6,8 @@ import { isContextMenuDangerItem } from "../utils/contextMenu";
 import "../styles/context-menu.scss";
 
 /**
- * 右键菜单面板：悬浮窗口菜单（FloatingContextMenuWindow）与 Wayland 下的
- * DOM 降级菜单（DomContextMenu）共用同一份渲染。定位、显隐、动作分发留在
- * 各自的宿主里；这里只管条目渲染与焦点。
+ * 右键菜单面板：条目渲染与焦点管理。定位、显隐、动作分发留在
+ * services/contextMenu.js 与 ContextMenu.vue 里。
  */
 defineProps({
   items: { type: Array, required: true },
@@ -38,7 +37,7 @@ defineExpose({ focus, containsFocusedElement });
 <template>
   <main
     ref="menuRef"
-    class="floating-context-menu"
+    class="context-menu-surface"
     :data-theme="theme"
     aria-label="Context menu"
     role="menu"

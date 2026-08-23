@@ -1,5 +1,5 @@
 @layer components {
-  .floating-context-menu {
+  .context-menu-surface {
     --context-menu-surface: oklch(100% 0 0deg / 96.5%);
     --context-menu-surface-soft: oklch(97.4% 0.004 260deg / 94%);
     --context-menu-border: oklch(24% 0.016 260deg / 14%);
@@ -19,8 +19,6 @@
 
     box-sizing: border-box;
     inline-size: var(--context-menu-panel-width);
-    block-size: -webkit-fill-available;
-    block-size: stretch;
     max-block-size: min(
       var(--context-menu-max-height),
       var(--reka-context-menu-content-available-height, var(--context-menu-max-height))
@@ -41,7 +39,7 @@
     color: var(--context-menu-text);
   }
 
-  .floating-context-menu[data-theme="dark"] {
+  .context-menu-surface[data-theme="dark"] {
     --context-menu-surface: oklch(20% 0.014 260deg / 97%);
     --context-menu-surface-soft: oklch(25% 0.017 260deg / 95%);
     --context-menu-border: oklch(96% 0.005 260deg / 13%);
@@ -60,22 +58,18 @@
       0 1px 0 oklch(100% 0 0deg / 4.5%) inset;
   }
 
-  /* DOM 降级菜单（Wayland 等无法定位独立窗口的环境）。
-     遮罩层拦截菜单外的指针交互，面板按服务算好的视口内坐标固定定位。 */
-  .dom-context-menu-overlay {
+  /* 右键菜单容器：遮罩层拦截菜单外的指针交互，
+     面板按服务算好的视口内坐标固定定位。 */
+  .context-menu-overlay {
     position: fixed;
     inset: 0;
     z-index: 100;
   }
 
-  .dom-context-menu-panel {
+  .context-menu-panel {
     position: fixed;
-    inset-block-start: var(--dom-context-menu-y, 0);
-    inset-inline-start: var(--dom-context-menu-x, 0);
-
-    /* .floating-context-menu 的 stretch 块尺寸是为填满独立窗口准备的，
-       DOM 面板必须改回按内容自适应。 */
-    block-size: auto;
+    inset-block-start: var(--context-menu-y, 0);
+    inset-inline-start: var(--context-menu-x, 0);
     max-block-size: var(--context-menu-max-height);
   }
 

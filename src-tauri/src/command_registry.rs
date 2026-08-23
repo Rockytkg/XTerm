@@ -4,7 +4,6 @@ macro_rules! app_invoke_handler {
             crate::app_info::app_metadata,
             crate::app_info::app_restart,
             crate::app_info::check_for_updates,
-            crate::desktop::desktop_environment,
             crate::terminal::internal::commands::serial_ports::serial_list_ports,
             crate::terminal::internal::commands::sftp::sftp_close_session,
             crate::terminal::internal::commands::sftp::sftp_list_remote,

@@ -69,7 +69,7 @@ sudo usermod -aG uucp $USER
 
 ### Wayland 会话
 
-Wayland 出于安全设计不允许客户端查询全局光标坐标，也不允许程序主动设置窗口的绝对位置，因此“独立悬浮窗口”式的右键菜单无法跟随鼠标定位。应用在检测到 Wayland 会话（`XDG_SESSION_TYPE=wayland` 或 `WAYLAND_DISPLAY`）时自动把右键菜单降级为主窗口内渲染的 DOM 菜单，功能与外观保持一致；X11 会话不受影响。
+右键菜单始终在主窗口内以 DOM 渲染，不依赖全局光标坐标或窗口绝对定位（Wayland 出于安全设计禁止客户端使用这两类能力），因此 Wayland 与 X11 下行为一致，无需额外配置。
 
 ### NVIDIA 闭源驱动渲染异常
 

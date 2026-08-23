@@ -111,7 +111,7 @@ const asyncListeners = createAsyncListenerRegistry();
 function dismissTransientFocus() {
   blurActiveElement({
     exclude: (element) =>
-      element.closest?.(".dialog-content") || element.closest?.(".floating-context-menu"),
+      element.closest?.(".dialog-content") || element.closest?.(".context-menu-surface"),
   });
 }
 

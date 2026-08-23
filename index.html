@@ -5,11 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>XTerm</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <script>
-      if (new URLSearchParams(window.location.search).get("window") === "context-menu") {
-        document.documentElement.dataset.window = "context-menu";
-      }
-    </script>
     <style>
       @layer reset, tokens, base, utilities, components, overlays;
 
@@ -31,10 +26,6 @@
       }
 
       @layer overlays {
-        html[data-window="context-menu"] .startup-splash {
-          display: none !important;
-        }
-
         .startup-splash {
           position: fixed;
           inset: 0;

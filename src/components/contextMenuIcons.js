@@ -73,7 +73,7 @@ const DEFAULT_ICON_BY_ID = {
   "terminal-select-all": "terminalSelectAll",
 };
 
-/** 悬浮窗口菜单与 DOM 降级菜单共用的图标解析。 */
+/** 右键菜单项的图标解析。 */
 export function contextMenuIconFor(item) {
   return ICONS[item?.icon || DEFAULT_ICON_BY_ID[item?.id] || "terminal"] || Terminal;
 }

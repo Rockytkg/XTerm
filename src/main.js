@@ -1,12 +1,10 @@
 import { createApp, nextTick } from "vue";
 import { createPinia } from "pinia";
 import App from "./App.vue";
-import FloatingContextMenuWindow from "./components/FloatingContextMenuWindow.vue";
 import { i18n } from "./i18n";
 import { router } from "./router";
 import { initializePreferences } from "./composables/useAppPreferences";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { createLogger } from "./utils/logger";
 import { noop } from "./utils/noop";
 import { isWebKitGtkUserAgent } from "./utils/platform";
@@ -16,13 +14,7 @@ import "virtual:uno.css";
 import "./styles.scss";
 
 const logger = createLogger("frontend.startup");
-const currentWindowLabel = getCurrentWebviewWindow().label;
-const currentWindowParam = new URLSearchParams(window.location.search).get("window");
-const isContextMenuWindow =
-  currentWindowLabel === "context-menu" || currentWindowParam === "context-menu";
 const startupSplash = document.getElementById("startup-splash");
-
-document.documentElement.dataset.window = isContextMenuWindow ? "context-menu" : "main";
 
 // WebKitGTK（Linux webview）存在若干渲染/合成差异（如 backdrop-filter 走
 // CPU 模糊导致掉帧），尽早打上标记让 compat-webkitgtk.scss 在首帧前生效。
@@ -136,11 +128,4 @@ async function mountMainWindow() {
   await showMainWindow();
 }
 
-if (isContextMenuWindow) {
-  startupSplash?.remove();
-  const contextMenuApp = createApp(FloatingContextMenuWindow).use(i18n);
-  installGlobalErrorHandlers(contextMenuApp);
-  contextMenuApp.mount("#app");
-} else {
-  mountMainWindow();
-}
+mountMainWindow();

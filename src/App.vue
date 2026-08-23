@@ -2,7 +2,7 @@
 import { ToastProvider, TooltipProvider } from "reka-ui";
 import AppShell from "./layouts/AppShell.vue";
 import AppToasts from "./components/AppToasts.vue";
-import DomContextMenu from "./components/DomContextMenu.vue";
+import ContextMenu from "./components/ContextMenu.vue";
 import { initializeContextMenuService } from "./services/contextMenu";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 
@@ -23,8 +23,8 @@ initializeContextMenuService();
     >
       <AppShell />
       <AppToasts />
-      <!-- Wayland 等无法定位独立菜单窗口的环境使用的窗口内右键菜单 -->
-      <DomContextMenu />
+      <!-- 窗口内右键菜单（所有平台统一的渲染形态） -->
+      <ContextMenu />
     </ToastProvider>
   </TooltipProvider>
 </template>
