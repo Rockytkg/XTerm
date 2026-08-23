@@ -4,6 +4,11 @@
 #   - 推送 tag v1.2.3             -> 版本 1.2.3,打全平台包并创建 GitHub Release
 #   - 推送 main / 手动触发        -> 版本 <上一tag>-dev.<commit数>+<短sha> 快照,只上传 workflow artifacts,不发布
 #
+# 发布策略(逐平台即时发布,不等全部编译完):
+#   - release-init 在 version 确定后立即创建 Release(含发行说明)
+#   - 各平台 job 编译完成后马上 `gh release upload` 上传自己的安装包,先完成的先上
+#   - 各 job 上传时若 Release 尚未创建则先创建空壳(幂等),避免竞态
+#
 # 平台矩阵(全部原生编译,无交叉):
 #   - linux   x64  (ubuntu-22.04)       deb / rpm / appimage
 #   - linux   arm64(ubuntu-22.04-arm)   deb(GitHub ARM runner 仅公共仓库可用)
@@ -12,6 +17,9 @@
 #   - macos   arm64(macos-latest)       app / dmg
 #   - macos   x64  (macos-latest 交叉)   app / dmg
 #   - arch    x86_64(ubuntu-latest + archlinux:base-devel 容器) .pkg.tar.zst
+#
+# 缓存:Rust 依赖与编译产物用 Swatinem/rust-cache 缓存,前端依赖用 pnpm 缓存,
+#   避免每次构建都重新下载依赖。构建失败也保存缓存,加速重试。
 #
 # 命名说明:Linux 上 "xterm" 是 X11 终端的固定名称,Arch 包改用 xterm-workspace 避免覆盖
 #   /usr/bin/xterm;deb/rpm/AppImage 二进制名保持 productName "XTerm"(大小写不同不冲突)。
@@ -68,11 +76,73 @@ jobs:
           echo "Computed version: ${VERSION} (release=${IS_RELEASE})"
 
   # ---------------------------------------------------------------------------
+  # 发布初始化:version 确定后立即创建 Release(带发行说明),不等各平台编译完
+  # ---------------------------------------------------------------------------
+  release-init:
+    needs: [version]
+    if: needs.version.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes from commits
+        run: |
+          set -euo pipefail
+          # 发行说明 = 从上一 tag(或首次发布的所有 commit)到当前 tag 的 commit,按类型分组
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [[ -n "$PREV" ]]; then RANGE="${PREV}..HEAD"; else RANGE="HEAD"; fi
+          NOTES="release-notes.md"
+
+          echo "# XTerm v${VERSION}" > "$NOTES"
+          echo "" >> "$NOTES"
+          echo "> 基于合并 commit 自动生成的发行说明(${RANGE})。" >> "$NOTES"
+
+          FEAT=$(git log "$RANGE" --pretty=format:"%s" | grep -E '^feat' \
+            | sed -E 's/^feat(\([^)]*\))?: //' | sed 's/^/- /' || true)
+          if [[ -n "$FEAT" ]]; then printf '\n## ✨ 新功能\n%s\n' "$FEAT" >> "$NOTES"; fi
+
+          FIX=$(git log "$RANGE" --pretty=format:"%s" | grep -E '^fix' \
+            | sed -E 's/^fix(\([^)]*\))?: //' | sed 's/^/- /' || true)
+          if [[ -n "$FIX" ]]; then printf '\n## 🐛 修复\n%s\n' "$FIX" >> "$NOTES"; fi
+
+          OTHER=$(git log "$RANGE" --pretty=format:"%s" \
+            | grep -vE '^(feat|fix)(\([^)]*\))?: ' | grep -vE '^(Merge|merge)' \
+            | grep -v '^$' \
+            | sed -E 's/^(chore|refactor|docs|build|style|perf|test|ci)(\([^)]*\))?: //' \
+            | sed 's/^/- /' || true)
+          if [[ -n "$OTHER" ]]; then printf '\n## 🔧 其他变更\n%s\n' "$OTHER" >> "$NOTES"; fi
+
+          echo "---- generated release notes ----"
+          cat "$NOTES"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 幂等:若某平台已抢先创建了空壳 Release,这里只补齐发行说明
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --notes-file release-notes.md
+          fi
+
+  # ---------------------------------------------------------------------------
   # Linux x86_64:deb / rpm / AppImage
   # ---------------------------------------------------------------------------
   linux-x64:
     needs: [version]
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -84,6 +154,7 @@ jobs:
         with:
           # Tauri 的 Cargo 工作区在 src-tauri,必须指定才能正确缓存依赖
           workspaces: './src-tauri -> target'
+          cache-on-failure: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -138,12 +209,30 @@ jobs:
             # 裸二进制,供 arch job 组装 pacman 包
             src-tauri/target/release/xterm
 
+      - name: Publish to release
+        if: needs.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+          fi
+          gh release upload "$TAG" \
+            src-tauri/target/release/bundle/deb/*.deb \
+            src-tauri/target/release/bundle/rpm/*.rpm \
+            src-tauri/target/release/bundle/appimage/*.AppImage \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
   # ---------------------------------------------------------------------------
   # Linux arm64:deb(GitHub 原生 ARM runner;arm runner 仅公共仓库免费)
   # ---------------------------------------------------------------------------
   linux-arm64:
     needs: [version]
     runs-on: ubuntu-22.04-arm
+    permissions:
+      contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -154,6 +243,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          cache-on-failure: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -169,7 +259,6 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
           node -e '
             const fs = require("fs");
             const v = process.env.VERSION;
@@ -202,12 +291,28 @@ jobs:
           if-no-files-found: error
           path: src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb
 
+      - name: Publish to release
+        if: needs.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+          fi
+          gh release upload "$TAG" \
+            src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
   # ---------------------------------------------------------------------------
   # Windows x86_64:NSIS / MSI
   # ---------------------------------------------------------------------------
   windows-x64:
     needs: [version]
     runs-on: windows-latest
+    permissions:
+      contents: write
     defaults:
       run:
         shell: bash
@@ -221,6 +326,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          cache-on-failure: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -236,7 +342,6 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
           node -e '
             const fs = require("fs");
             const v = process.env.VERSION;
@@ -251,8 +356,6 @@ jobs:
 
       - name: Build NSIS / MSI
         run: |
-          # 用 pnpm exec 直接调 tauri CLI:package.json 里 "tauri" 脚本是 "tauri dev",
-          # 若写 `pnpm tauri build` 会被解析成 `tauri dev build`,跑到 dev profile 且参数报错
           pnpm exec tauri build --bundles nsis,msi \
             --config "{\"version\":\"${VERSION}\"}"
 
@@ -265,12 +368,29 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
 
+      - name: Publish to release
+        if: needs.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+          fi
+          gh release upload "$TAG" \
+            src-tauri/target/release/bundle/nsis/*.exe \
+            src-tauri/target/release/bundle/msi/*.msi \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
   # ---------------------------------------------------------------------------
   # Windows arm64:NSIS / MSI(GitHub 原生 ARM runner)
   # ---------------------------------------------------------------------------
   windows-arm64:
     needs: [version]
     runs-on: windows-11-arm
+    permissions:
+      contents: write
     defaults:
       run:
         shell: bash
@@ -284,6 +404,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          cache-on-failure: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -299,7 +420,6 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
           node -e '
             const fs = require("fs");
             const v = process.env.VERSION;
@@ -327,12 +447,29 @@ jobs:
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/msi/*.msi
 
+      - name: Publish to release
+        if: needs.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+          fi
+          gh release upload "$TAG" \
+            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe \
+            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/msi/*.msi \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
   # ---------------------------------------------------------------------------
   # macOS arm64:app / dmg(原生)
   # ---------------------------------------------------------------------------
   macos-arm64:
     needs: [version]
     runs-on: macos-latest
+    permissions:
+      contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -345,6 +482,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          cache-on-failure: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -360,7 +498,6 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
           node -e '
             const fs = require("fs");
             const v = process.env.VERSION;
@@ -393,12 +530,29 @@ jobs:
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             XTerm-*.zip
 
+      - name: Publish to release
+        if: needs.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+          fi
+          gh release upload "$TAG" \
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg \
+            XTerm-*.zip \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
   # ---------------------------------------------------------------------------
   # macOS x86_64:app / dmg(在 arm64 runner 上交叉,避免依赖 Intel runner 生命周期)
   # ---------------------------------------------------------------------------
   macos-x64:
     needs: [version]
     runs-on: macos-latest
+    permissions:
+      contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -411,6 +565,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          cache-on-failure: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -426,7 +581,6 @@ jobs:
 
       - name: Sync version across manifests
         run: |
-          # 用 node 而非 sed:macOS/Windows runner 是 BSD sed,不支持 GNU 的 0,/pattern/ 语法
           node -e '
             const fs = require("fs");
             const v = process.env.VERSION;
@@ -459,6 +613,21 @@ jobs:
             src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
             XTerm-*.zip
 
+      - name: Publish to release
+        if: needs.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+          fi
+          gh release upload "$TAG" \
+            src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg \
+            XTerm-*.zip \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
   # ---------------------------------------------------------------------------
   # Arch Linux x86_64 pacman 包(原生二进制 PKGBUILD)
   # 在 archlinux:base-devel 容器内以非 root 用户运行 makepkg
@@ -466,6 +635,8 @@ jobs:
   arch:
     needs: [version, linux-x64]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -526,84 +697,16 @@ jobs:
           if-no-files-found: error
           path: arch-build/*.pkg.tar.zst
 
-  # ---------------------------------------------------------------------------
-  # 发布:仅当推送 tag 时,收集所有平台产物上传到 GitHub Release
-  # ---------------------------------------------------------------------------
-  release:
-    needs:
-      - version
-      - linux-x64
-      - linux-arm64
-      - windows-x64
-      - windows-arm64
-      - macos-arm64
-      - macos-x64
-      - arch
-    if: needs.version.outputs.is_release == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: dist-artifacts
-
-      - name: Generate release notes from commits
-        id: notes
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          # 发行说明 = 从上一 tag(或首次发布的所有 commit)到当前 tag 的 commit,按类型分组
-          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
-          if [[ -n "$PREV" ]]; then RANGE="${PREV}..HEAD"; else RANGE="HEAD"; fi
-          NOTES="$RUNNER_TEMP/release-notes.md"
-
-          echo "# XTerm v${VERSION}" > "$NOTES"
-          echo "" >> "$NOTES"
-          echo "> 基于合并 commit 自动生成的发行说明(${RANGE})。" >> "$NOTES"
-
-          FEAT=$(git log "$RANGE" --pretty=format:"%s" | grep -E '^feat' \
-            | sed -E 's/^feat(\([^)]*\))?: //' | sed 's/^/- /' || true)
-          if [[ -n "$FEAT" ]]; then printf '\n## ✨ 新功能\n%s\n' "$FEAT" >> "$NOTES"; fi
-
-          FIX=$(git log "$RANGE" --pretty=format:"%s" | grep -E '^fix' \
-            | sed -E 's/^fix(\([^)]*\))?: //' | sed 's/^/- /' || true)
-          if [[ -n "$FIX" ]]; then printf '\n## 🐛 修复\n%s\n' "$FIX" >> "$NOTES"; fi
-
-          OTHER=$(git log "$RANGE" --pretty=format:"%s" \
-            | grep -vE '^(feat|fix)(\([^)]*\))?: ' | grep -vE '^(Merge|merge)' \
-            | grep -v '^$' \
-            | sed -E 's/^(chore|refactor|docs|build|style|perf|test|ci)(\([^)]*\))?: //' \
-            | sed 's/^/- /' || true)
-          if [[ -n "$OTHER" ]]; then printf '\n## 🔧 其他变更\n%s\n' "$OTHER" >> "$NOTES"; fi
-
-          echo "notes_file=${NOTES}" >> "$GITHUB_OUTPUT"
-          echo "---- generated release notes ----"
-          cat "$NOTES"
-
-      - name: Create GitHub Release
+      - name: Publish to release
+        if: needs.version.outputs.is_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
         run: |
-          # 只上传安装包格式;排除裸二进制(供 arch 使用)与 -debug 符号包
-          FILES=$(find dist-artifacts -type f \
-            \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \
-               -o -name "*.exe" -o -name "*.msi" -o -name "*.dmg" \
-               -o -name "*.zip" -o -name "*.pkg.tar.zst" \) \
-            ! -name "*-debug-*" | sort)
-          [[ -n "$FILES" ]] || { echo "no artifacts to upload" >&2; exit 1; }
-          echo "Uploading to ${TAG}:"
-          echo "$FILES"
-          # shellcheck disable=SC2046
-          gh release create "${TAG}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --verify-tag \
-            --notes-file "${{ steps.notes.outputs.notes_file }}" \
-            $FILES
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+          fi
+          gh release upload "$TAG" \
+            arch-build/*.pkg.tar.zst \
+            --repo "$GITHUB_REPOSITORY" --clobber
