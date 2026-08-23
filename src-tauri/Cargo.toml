@@ -1,6 +1,6 @@
 [package]
 name = "xterm"
-version = "1.0.0"
+version = "1.0.1"
 description = "A desktop terminal workspace for SSH, Telnet, serial sessions, SFTP, credentials, and session tooling."
 authors = ["Rockytkg"]
 edition = "2021"
