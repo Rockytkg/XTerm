@@ -3,7 +3,6 @@
 
 use std::{
     collections::HashSet,
-    io,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -18,6 +17,7 @@ use tokio::{
 };
 
 use crate::{
+    elevated::{self, BindSpec, BoundSocket, ServiceRule},
     file_service::{
         firewall,
         models::{
@@ -51,29 +51,34 @@ pub(crate) async fn start_runtime(
     config: FileServiceConfig,
 ) -> Result<TftpRuntimeHandle, String> {
     let bind_addr = parse_bind_address("TFTP", &config.bind_ip, config.port)?;
-    if let Err(error) = firewall::allow_tftp_port(&app, config.port).await {
-        logging::event("tftp.firewall", "tftp.firewall.allow.failed")
-            .field("port", config.port)
-            .field("detail", &error.detail)
-            .warn();
-        return Err(error.user_message);
-    }
-    let listeners = match bind_listeners(bind_addr).await {
-        Ok(listeners) => listeners,
-        Err(error) => {
-            let _ = firewall::remove_tftp_port_rule(&app, config.port).await;
-            return Err(error);
-        }
+    let bind_specs = if !bind_addr.ip().is_unspecified() {
+        vec![BindSpec::udp(bind_addr, false)]
+    } else {
+        local_listener_ips(bind_addr.is_ipv4())
+            .into_iter()
+            .map(|ip| BindSpec::udp(SocketAddr::new(ip, bind_addr.port()), true))
+            .collect()
     };
+    let listeners = elevated::bind_service_sockets(
+        ServiceRule {
+            prefix: "XTerm TFTP",
+            action: "tftp.firewall.allow",
+            protocol: crate::firewall::FirewallProtocol::Udp,
+            ports: vec![config.port],
+            all_udp: true,
+        },
+        bind_specs,
+        Some(BindSpec::udp(bind_addr, false)),
+    )
+    .await?
+    .into_iter()
+    .map(|socket| match socket {
+        BoundSocket::Udp(socket) => UdpSocket::from_std(socket)
+            .map_err(|error| format!("failed to prepare TFTP server socket: {error}")),
+        BoundSocket::Tcp(_) => Err("The TFTP listener protocol was invalid.".to_string()),
+    })
+    .collect::<Result<Vec<_>, _>>()?;
     let root = canonical_shared_dir("TFTP", &config.shared_dir).await?;
-
-    if let Err(error) = firewall::allow_tftp_port(&app, config.port).await {
-        logging::event("tftp.firewall", "tftp.firewall.allow.failed")
-            .field("port", config.port)
-            .field("detail", &error.detail)
-            .warn();
-        return Err(error.user_message);
-    }
 
     let shared = TransferRegistry::new();
     let active_requests: ActiveRequests = Arc::new(parking_lot::Mutex::new(HashSet::new()));
@@ -219,37 +224,6 @@ async fn accept_loop(
 /// reach the server.  Routing-based source selection picks the wrong
 /// interface on multi-homed hosts (overlapping subnets, virtual adapters),
 /// and the client then never sees the response and keeps retransmitting.
-async fn bind_listeners(bind_addr: SocketAddr) -> Result<Vec<UdpSocket>, String> {
-    if !bind_addr.ip().is_unspecified() {
-        let socket = UdpSocket::bind(bind_addr)
-            .await
-            .map_err(|error| format_bind_error(bind_addr, error))?;
-        return Ok(vec![socket]);
-    }
-    let mut sockets = Vec::new();
-    for ip in local_listener_ips(bind_addr.is_ipv4()) {
-        let addr = SocketAddr::new(ip, bind_addr.port());
-        match UdpSocket::bind(addr).await {
-            Ok(socket) => sockets.push(socket),
-            Err(error) => {
-                logging::event("tftp.runtime", "tftp.listener.bind_failed")
-                    .field("bind_addr", addr)
-                    .field("error", error.to_string())
-                    .warn();
-            }
-        }
-    }
-    if sockets.is_empty() {
-        // Interface enumeration yielded nothing usable; fall back to the
-        // wildcard socket so the service can still start.
-        let socket = UdpSocket::bind(bind_addr)
-            .await
-            .map_err(|error| format_bind_error(bind_addr, error))?;
-        sockets.push(socket);
-    }
-    Ok(sockets)
-}
-
 fn local_listener_ips(ipv4: bool) -> Vec<IpAddr> {
     let mut ips: Vec<IpAddr> = match if_addrs::get_if_addrs() {
         Ok(interfaces) => interfaces
@@ -269,8 +243,28 @@ fn local_listener_ips(ipv4: bool) -> Vec<IpAddr> {
     ips
 }
 
-fn format_bind_error(bind_addr: SocketAddr, error: io::Error) -> String {
-    format!("Failed to bind the TFTP server to {bind_addr}: {error}")
+#[cfg(test)]
+async fn bind_listeners(bind_addr: SocketAddr) -> Result<Vec<UdpSocket>, String> {
+    if !bind_addr.ip().is_unspecified() {
+        return UdpSocket::bind(bind_addr)
+            .await
+            .map(|socket| vec![socket])
+            .map_err(|error| error.to_string());
+    }
+    let mut sockets = Vec::new();
+    for ip in local_listener_ips(bind_addr.is_ipv4()) {
+        if let Ok(socket) = UdpSocket::bind(SocketAddr::new(ip, bind_addr.port())).await {
+            sockets.push(socket);
+        }
+    }
+    if sockets.is_empty() {
+        sockets.push(
+            UdpSocket::bind(bind_addr)
+                .await
+                .map_err(|error| error.to_string())?,
+        );
+    }
+    Ok(sockets)
 }
 
 #[cfg(test)]

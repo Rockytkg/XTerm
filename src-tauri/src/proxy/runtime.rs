@@ -33,7 +33,9 @@ use tokio::{
 };
 
 use crate::{
-    firewall, logging,
+    elevated::{self, BindSpec, BoundSocket, ServiceRule},
+    firewall::{self, FirewallProtocol},
+    logging,
     network_interface::validate_bind_ip,
     proxy::models::{emit_proxy_stats, ProxyConfig, ProxySharedState},
     state::AppState,
@@ -109,17 +111,27 @@ pub(crate) async fn start_runtime(
 ) -> Result<ProxyRuntimeHandle, String> {
     validate_bind_ip(&bind_ip)?;
     let bind_addr = parse_bind_address(&bind_ip, port)?;
-    let listener = TcpListener::bind(bind_addr)
-        .await
-        .map_err(|error| format_bind_error(bind_addr, error))?;
-
-    if let Err(error) = firewall::allow_proxy_port(port).await {
-        logging::event("proxy.firewall", "proxy.firewall.allow.failed")
-            .field("port", port)
-            .field("detail", &error.detail)
-            .warn();
-        return Err(error.user_message);
-    }
+    let listener = match elevated::bind_service_sockets(
+        ServiceRule {
+            prefix: "XTerm Proxy",
+            action: "proxy.firewall.allow",
+            protocol: FirewallProtocol::Tcp,
+            ports: vec![port],
+            all_udp: false,
+        },
+        vec![BindSpec::tcp(bind_addr)],
+        None,
+    )
+    .await?
+    .into_iter()
+    .next()
+    .ok_or_else(|| "The proxy listener was not created.".to_string())?
+    {
+        BoundSocket::Tcp(listener) => {
+            TcpListener::from_std(listener).map_err(|error| format_bind_error(bind_addr, error))?
+        }
+        BoundSocket::Udp(_) => return Err("The proxy listener protocol was invalid.".to_string()),
+    };
 
     let shared = ProxySharedState::new();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -167,9 +179,14 @@ pub(crate) async fn stop_runtime(runtime: ProxyRuntimeHandle, port: u16) -> Resu
     let _ = runtime.shutdown_tx.send(true);
     await_runtime_task("proxy.accept", runtime.accept_task).await;
     await_runtime_task("proxy.stats", runtime.stats_task).await;
-    firewall::remove_proxy_port_rule(port)
-        .await
-        .map_err(|error| error.user_message.clone())?;
+    firewall::remove_service_port_rule(
+        "XTerm Proxy",
+        "proxy.firewall.remove",
+        port,
+        FirewallProtocol::Tcp,
+    )
+    .await
+    .map_err(|error| error.user_message.clone())?;
     logging::event("proxy.runtime", "proxy.stop.success")
         .field("port", port)
         .info();

@@ -15,8 +15,8 @@ use tokio::{
 };
 
 use crate::{
+    elevated::{self, BindSpec, BoundSocket, ServiceRule},
     file_service::{
-        firewall,
         manager::SharedPassword,
         models::{
             await_runtime_task, canonical_shared_dir, emit_file_transfer, parse_bind_address,
@@ -45,18 +45,25 @@ pub(crate) async fn start_runtime(
     let host_key = load_or_create_host_key(state).await?;
     let shared_dir = canonical_shared_dir("SFTP", &config.shared_dir).await?;
     let bind_addr = parse_bind_address("SFTP", &config.bind_ip, config.port)?;
-    firewall::allow_sftp_port(config.port)
-        .await
-        .map_err(|error| error.user_message.clone())?;
-    let listener = TcpListener::bind(bind_addr).await;
-    let listener = match listener {
-        Ok(listener) => listener,
-        Err(error) => {
-            let _ = firewall::remove_sftp_port_rule(config.port).await;
-            return Err(format!(
-                "failed to bind SFTP server to {bind_addr}: {error}"
-            ));
-        }
+    let raw_listener = elevated::bind_service_sockets(
+        ServiceRule {
+            prefix: "XTerm SFTP",
+            action: "sftp.firewall.allow",
+            protocol: crate::firewall::FirewallProtocol::Tcp,
+            ports: vec![config.port],
+            all_udp: false,
+        },
+        vec![BindSpec::tcp(bind_addr)],
+        None,
+    )
+    .await?
+    .into_iter()
+    .next()
+    .ok_or_else(|| "The SFTP listener was not created.".to_string())?;
+    let listener = match raw_listener {
+        BoundSocket::Tcp(listener) => TcpListener::from_std(listener)
+            .map_err(|error| format!("failed to prepare SFTP server socket: {error}"))?,
+        BoundSocket::Udp(_) => return Err("The SFTP listener protocol was invalid.".to_string()),
     };
     let mut server_config = server::Config {
         auth_rejection_time: Duration::from_secs(1),
@@ -93,9 +100,14 @@ pub(crate) async fn stop_runtime(runtime: SftpRuntimeHandle, port: u16) -> Resul
     let _ = runtime.shutdown_tx.send(true);
     let task_result =
         await_runtime_task("SFTP", SFTP_TASK_DRAIN_TIMEOUT, runtime.accept_task).await;
-    let firewall_result = firewall::remove_sftp_port_rule(port)
-        .await
-        .map_err(|error| error.user_message.clone());
+    let firewall_result = crate::firewall::remove_service_port_rule(
+        "XTerm SFTP",
+        "sftp.firewall.remove",
+        port,
+        crate::firewall::FirewallProtocol::Tcp,
+    )
+    .await
+    .map_err(|error| error.user_message.clone());
     task_result?;
     firewall_result?;
     logging::event("sftp.runtime", "sftp.stop.success")

@@ -1,7 +1,5 @@
 use crate::logging;
 
-pub(crate) const PROXY_RULE_PREFIX: &str = "XTerm Proxy";
-
 #[cfg(any(windows, unix))]
 use std::ffi::OsStr;
 
@@ -13,7 +11,7 @@ use std::{
 };
 
 #[cfg(target_os = "linux")]
-fn stage_elevated_executable() -> Result<std::path::PathBuf, std::io::Error> {
+pub(crate) fn stage_elevated_executable() -> Result<std::path::PathBuf, std::io::Error> {
     let source = std::env::current_exe()?;
     let target = std::env::temp_dir().join(format!(
         "xterm-elevated-{}-{:016x}",
@@ -102,35 +100,6 @@ impl FirewallTaskRequest {
     }
 }
 
-pub(crate) async fn allow_proxy_port(port: u16) -> Result<(), FirewallCommandError> {
-    allow_service_port(
-        PROXY_RULE_PREFIX,
-        "proxy.firewall.allow",
-        port,
-        FirewallProtocol::Tcp,
-    )
-    .await
-}
-
-pub(crate) async fn remove_proxy_port_rule(port: u16) -> Result<(), FirewallCommandError> {
-    remove_service_port_rule(
-        PROXY_RULE_PREFIX,
-        "proxy.firewall.remove",
-        port,
-        FirewallProtocol::Tcp,
-    )
-    .await
-}
-
-pub(crate) async fn allow_service_port(
-    prefix: &'static str,
-    action: &'static str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    allow_service_ports(prefix, action, vec![port], protocol).await
-}
-
 pub(crate) async fn allow_service_ports(
     prefix: &'static str,
     action: &'static str,
@@ -182,7 +151,7 @@ pub(crate) async fn allow_service_port_and_all_udp_ports_for_current_app(
 
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
-        allow_service_port(prefix, action, port, FirewallProtocol::Udp).await
+        allow_service_ports(prefix, action, vec![port], FirewallProtocol::Udp).await
     }
 }
 

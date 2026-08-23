@@ -112,11 +112,15 @@ pub(crate) async fn start_runtime(
     let root = canonical_shared_dir("FTP", &config.shared_dir).await?;
     let passive_ports = DEFAULT_FTP_PASSIVE_START..=DEFAULT_FTP_PASSIVE_END;
     let bind_addr = format!("{}:{}", config.bind_ip, config.port);
-    let probe = tokio::net::TcpListener::bind(&bind_addr)
-        .await
-        .map_err(|error| format!("failed to bind FTP server to {bind_addr}: {error}"))?;
-    drop(probe);
     firewall::allow_ftp_ports(config.port, passive_ports.clone()).await?;
+    let probe = match tokio::net::TcpListener::bind(&bind_addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            let _ = firewall::remove_ftp_ports(config.port, passive_ports.clone()).await;
+            return Err(format!("failed to bind FTP server to {bind_addr}: {error}"));
+        }
+    };
+    drop(probe);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let auth = Arc::new(PasswordAuthenticator {
         username: config.username.clone(),

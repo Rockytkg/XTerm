@@ -3,6 +3,7 @@ mod app_info;
 mod command_registry;
 mod credentials;
 pub(crate) mod deep_link;
+mod elevated;
 mod file_service;
 mod firewall;
 mod fonts;
@@ -32,6 +33,10 @@ pub fn install_early_panic_hook() {
 pub fn run() {
     #[cfg(any(windows, unix))]
     if firewall::handle_elevated_helper() {
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    if elevated::handle_elevated_bind_helper() {
         return;
     }
 
