@@ -511,6 +511,8 @@ jobs:
               # -d/--nodeps:容器未装 GUI 运行时依赖,我们打包的是已编译二进制,
               # 运行时依赖由目标系统 pacman 安装时解析,容器内无需安装
               su builder -c "makepkg -f -d --noconfirm"
+              # 移除 makepkg 生成的 -debug 符号包,只保留正式安装包
+              rm -f /build/*-debug-*.pkg.tar.zst
             '
 
       - name: Upload artifacts
@@ -552,7 +554,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
         run: |
-          FILES=$(find dist-artifacts -type f | sort)
+          # 只上传安装包格式;排除裸二进制(供 arch 使用)与 -debug 符号包
+          FILES=$(find dist-artifacts -type f \
+            \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \
+               -o -name "*.exe" -o -name "*.msi" -o -name "*.dmg" \
+               -o -name "*.zip" -o -name "*.pkg.tar.zst" \) \
+            ! -name "*-debug-*" | sort)
           [[ -n "$FILES" ]] || { echo "no artifacts to upload" >&2; exit 1; }
           echo "Uploading to ${TAG}:"
           echo "$FILES"
