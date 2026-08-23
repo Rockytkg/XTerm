@@ -1,87 +1,12 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
-import { useI18n } from "vue-i18n";
 import { emitTo as importedEmitTo, listen as importedListen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { commitLocale, currentLocale, loadLocaleMessages, resolveLocale } from "../i18n";
 import { createAsyncListenerRegistry } from "../utils/asyncListeners";
 import { CONTEXT_MENU_EVENTS, CONTEXT_MENU_LAYOUT } from "../utils/contextMenu";
 import { addDomListener } from "../utils/domListeners";
-import "../styles/context-menu.scss";
-import {
-  ClipboardCopy,
-  ClipboardPaste,
-  Copy,
-  Download,
-  Eraser,
-  FilePenLine,
-  FilePlus,
-  FolderOpen,
-  FolderPlus,
-  ListChecks,
-  RefreshCw,
-  RotateCcw,
-  RotateCw,
-  Scissors,
-  Search,
-  Terminal,
-  TextSelect,
-  Trash2,
-  Upload,
-} from "@lucide/vue";
-
-const ICONS = {
-  clear: Eraser,
-  copy: Copy,
-  copyPath: ClipboardCopy,
-  cut: Scissors,
-  delete: Trash2,
-  download: Download,
-  edit: FilePenLine,
-  newFile: FilePlus,
-  newFolder: FolderPlus,
-  open: FolderOpen,
-  paste: ClipboardPaste,
-  redo: RotateCw,
-  refresh: RefreshCw,
-  rename: FilePenLine,
-  search: Search,
-  selectAll: TextSelect,
-  terminal: Terminal,
-  terminalSelectAll: ListChecks,
-  undo: RotateCcw,
-  upload: Upload,
-};
-
-const DEFAULT_ICON_BY_ID = {
-  "global-copy": "copy",
-  "global-cut": "cut",
-  "global-delete": "delete",
-  "global-paste": "paste",
-  "global-redo": "redo",
-  "global-select-all": "selectAll",
-  "global-undo": "undo",
-  "relationship-edit": "edit",
-  "relationship-focus-related": "search",
-  "relationship-quick-add": "redo",
-  "relationship-refresh": "refresh",
-  "relationship-delete-credential": "delete",
-  "relationship-remove-relation": "delete",
-  "sftp-copy-path": "copyPath",
-  "sftp-delete": "delete",
-  "sftp-download": "download",
-  "sftp-edit": "edit",
-  "sftp-new-file": "newFile",
-  "sftp-new-folder": "newFolder",
-  "sftp-open": "open",
-  "sftp-refresh": "refresh",
-  "sftp-rename": "rename",
-  "sftp-select-all": "selectAll",
-  "sftp-upload": "upload",
-  "terminal-clear": "clear",
-  "terminal-search": "search",
-  "terminal-select-all": "terminalSelectAll",
-};
+import ContextMenuPanel from "./ContextMenuPanel.vue";
 
 const menuRef = ref(null);
 const requestId = ref(0);
@@ -90,7 +15,6 @@ const menuOpen = ref(false);
 const theme = ref("light");
 const menuPanelWidth = ref(CONTEXT_MENU_LAYOUT.width);
 const menuMaxHeight = ref(CONTEXT_MENU_LAYOUT.maxHeight);
-const { t } = useI18n();
 
 let closeInFlight = false;
 let closeResetTimer = 0;
@@ -101,18 +25,6 @@ const menuStyle = computed(() => ({
   "--context-menu-panel-width": `${menuPanelWidth.value}px`,
   "--context-menu-max-height": `${menuMaxHeight.value}px`,
 }));
-
-function iconFor(item) {
-  return ICONS[item.icon || DEFAULT_ICON_BY_ID[item.id] || "terminal"] || Terminal;
-}
-
-function isDangerItem(item) {
-  return item?.tone === "danger" || item?.id?.includes("delete");
-}
-
-function itemLabel(item) {
-  return item?.labelKey ? t(item.labelKey) : item?.label || "";
-}
 
 function tauriEventApi() {
   return window.__TAURI__?.event;
@@ -224,54 +136,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <span class="floating-context-menu-anchor" />
-  <main
+  <ContextMenuPanel
     v-if="menuOpen && items.length"
     ref="menuRef"
-    class="floating-context-menu ui-context-menu-shell"
-    :data-theme="theme"
+    :items="items"
+    :theme="theme"
     :style="menuStyle"
-    aria-label="Context menu"
-    role="menu"
-    tabindex="-1"
     @click.self="closeMenu('dismiss')"
     @keydown.escape.stop.prevent="closeMenu('keyboard')"
-  >
-    <template
-      v-for="(item, index) in items"
-      :key="item.id || `separator-${index}`"
-    >
-      <div
-        v-if="item.type === 'separator'"
-        class="ui-context-menu-separator"
-        role="separator"
-      />
-      <button
-        v-else
-        type="button"
-        class="ui-context-menu-item"
-        :class="{ 'is-danger': isDangerItem(item) }"
-        :disabled="!item.enabled"
-        :data-disabled="!item.enabled ? '' : undefined"
-        role="menuitem"
-        @click="activateItem(item)"
-      >
-        <span
-          class="ui-context-menu-icon"
-          aria-hidden="true"
-        >
-          <component
-            :is="iconFor(item)"
-            :size="19"
-            stroke-width="2.05"
-          />
-        </span>
-        <span class="ui-context-menu-label">{{ itemLabel(item) }}</span>
-        <kbd
-          v-if="item.shortcut"
-          class="ui-context-menu-shortcut"
-        >{{ item.shortcut }}</kbd>
-      </button>
-    </template>
-  </main>
+    @activate="activateItem"
+  />
 </template>

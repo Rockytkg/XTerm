@@ -933,6 +933,8 @@ export default {
     serial_port_config_failed: "串口 {portName}（{baudRate} 波特）参数设置失败。",
     serial_port_not_found: "串口 {portName} 未找到",
     serial_port_open_failed: "打开串口 {portName}（{baudRate} 波特）失败。",
+    serial_port_permission_denied:
+      "没有访问串口 {portName} 的权限。请将当前用户加入串口设备所属用户组（Debian/Ubuntu/Fedora 为 dialout，Arch 为 uucp），例如：sudo usermod -aG dialout $USER，重新登录后生效。",
     serial_port_required: "请选择串口后再连接。",
     serial_port_scan_failed: "扫描串口失败。",
     serial_port_unavailable: "串口 {portName} 当前不可用。",

@@ -2,6 +2,7 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { availableMonitors, cursorPosition } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { reactive } from "vue";
 import {
   readText as readClipboardText,
   writeText as writeClipboardText,
@@ -14,8 +15,10 @@ import {
   CONTEXT_MENU_EVENTS,
   CONTEXT_MENU_LAYOUT,
   CONTEXT_MENU_WINDOW_LABEL,
+  shouldUseDomContextMenu,
 } from "../utils/contextMenu";
 import { isMacPlatform } from "../utils/platform";
+import { getDesktopEnvironment } from "./desktopEnvironment";
 
 const PRESERVE_DISABLED_IDS = new Set(["global-cut", "global-copy", "global-paste"]);
 const MONITOR_CACHE_MS = 1000;
@@ -41,7 +44,24 @@ let cachedMonitors = null;
 let cachedMonitorsAt = 0;
 let popupReadyWaiter = Promise.resolve();
 let resolvePopupReadyWaiter = null;
+let menuBackendPromise = null;
+let lastEnvironment = null;
+let forceDomMenu = false;
 const asyncListeners = createAsyncListenerRegistry();
+
+/**
+ * DOM 降级菜单的渲染状态（Wayland 等无法用独立窗口定位的环境使用）。
+ * 只存纯展示数据；动作回调留在非响应式的 activeMenuActions 里。
+ */
+export const domContextMenuState = reactive({
+  visible: false,
+  items: [],
+  x: 0,
+  y: 0,
+  theme: "light",
+  width: MENU_WIDTH,
+  maxHeight: MENU_MAX_HEIGHT,
+});
 
 function t(key, params) {
   return i18n.global.t(key, params);
@@ -303,6 +323,24 @@ function menuHeight(items, maxHeight = MENU_MAX_HEIGHT) {
   return Math.min(maxHeight, Math.max(MENU_MIN_HEIGHT, contentHeight));
 }
 
+/**
+ * 菜单项的纯展示视图（剥离动作回调），悬浮窗口载荷与 DOM 降级菜单共用。
+ * labelKey 一并带上：悬浮窗口里用于本地化重译，DOM 菜单里忽略即可。
+ */
+function menuItemView(item) {
+  if (item.type === "separator") return { id: item.id, type: "separator" };
+  return {
+    id: item.id,
+    type: "item",
+    labelKey: item.labelKey || "",
+    label: item.label,
+    icon: item.icon || "",
+    shortcut: item.shortcut || "",
+    tone: item.tone || "",
+    enabled: item.enabled !== false,
+  };
+}
+
 function menuPayload(items, requestId, { width, maxHeight }) {
   return {
     requestId,
@@ -310,19 +348,7 @@ function menuPayload(items, requestId, { width, maxHeight }) {
     theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
     width,
     maxHeight,
-    items: items.map((item) => {
-      if (item.type === "separator") return { type: "separator" };
-      return {
-        id: item.id,
-        type: "item",
-        labelKey: item.labelKey || "",
-        label: item.label,
-        icon: item.icon || "",
-        shortcut: item.shortcut || "",
-        tone: item.tone || "",
-        enabled: item.enabled !== false,
-      };
-    }),
+    items: items.map(menuItemView),
   };
 }
 
@@ -497,17 +523,75 @@ function menuActionMap(items, context) {
   );
 }
 
+/**
+ * 菜单渲染后端：默认独立悬浮窗口；Wayland 会话用 DOM 菜单
+ * （见 shouldUseDomContextMenu）。forceDomMenu 是悬浮窗口运行期失败后的
+ * 永久降级开关。
+ */
+function resolveMenuBackend() {
+  if (!menuBackendPromise) {
+    menuBackendPromise = getDesktopEnvironment().then((environment) => {
+      lastEnvironment = environment;
+      return shouldUseDomContextMenu(environment) ? "dom" : "window";
+    });
+  }
+  return menuBackendPromise.then((backend) => (forceDomMenu ? "dom" : backend));
+}
+
 function hidePopupMenu() {
-  activeMenuActions = new Map();
   if (!popupMenuVisible) return;
   popupMenuVisible = false;
   popupWindow?.hide?.().catch(noop);
 }
 
+function hideDomMenu() {
+  if (!domContextMenuState.visible) return;
+  domContextMenuState.visible = false;
+  domContextMenuState.items = [];
+}
+
+function hideAnyMenu() {
+  activeMenuActions = new Map();
+  hideDomMenu();
+  hidePopupMenu();
+}
+
+/**
+ * 在主窗口内打开 DOM 菜单。定位用 contextmenu 事件的 clientX/Y（窗口内
+ * 坐标，Wayland 下可靠），并按视口边缘收拢。
+ */
+function openDomMenu(items, context, nativeEvent) {
+  popupRequestId += 1;
+  hideAnyMenu();
+  activeMenuActions = menuActionMap(items, context);
+  const width = MENU_WIDTH;
+  const height = menuHeight(items);
+  const viewWidth = Math.max(window.innerWidth || 0, width + MENU_SCREEN_MARGIN * 2);
+  const viewHeight = Math.max(window.innerHeight || 0, height + MENU_SCREEN_MARGIN * 2);
+  const rawX = finiteNumber(nativeEvent?.clientX, (viewWidth - width) / 2);
+  const rawY = finiteNumber(nativeEvent?.clientY, (viewHeight - height) / 2);
+  domContextMenuState.items = items.map(menuItemView);
+  domContextMenuState.theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  domContextMenuState.width = width;
+  domContextMenuState.maxHeight = height;
+  domContextMenuState.x = clamp(rawX, MENU_SCREEN_MARGIN, viewWidth - width - MENU_SCREEN_MARGIN);
+  domContextMenuState.y = clamp(rawY, MENU_SCREEN_MARGIN, viewHeight - height - MENU_SCREEN_MARGIN);
+  domContextMenuState.visible = true;
+}
+
+/** DOM 菜单项激活：与悬浮窗口路径一致，先收起再执行动作。 */
+export async function activateDomContextMenuItem(id) {
+  const entry = activeMenuActions.get(id);
+  hideAnyMenu();
+  if (entry?.enabled) {
+    await entry.action?.(entry.context);
+  }
+}
+
 async function openPopupMenu(items, context) {
   if (!items.length) {
-    hidePopupMenu();
-    return;
+    hideAnyMenu();
+    return true;
   }
   const requestId = ++popupRequestId;
   const windowWidth = MENU_WIDTH;
@@ -518,12 +602,12 @@ async function openPopupMenu(items, context) {
       ensurePopupWindow(),
       popupGeometry(windowWidth, items),
     ]);
-    if (!menuWindow) return;
-    if (requestId !== popupRequestId) return;
+    if (!menuWindow) return false;
+    if (requestId !== popupRequestId) return true;
 
     await menuWindow.setSize(new LogicalSize(windowWidth, geometry.height));
     await menuWindow.setPosition(geometry.position);
-    if (requestId !== popupRequestId) return;
+    if (requestId !== popupRequestId) return true;
 
     await emitTo(
       CONTEXT_MENU_WINDOW_LABEL,
@@ -533,21 +617,23 @@ async function openPopupMenu(items, context) {
         maxHeight: geometry.maxHeight,
       }),
     );
-    if (requestId !== popupRequestId) return;
+    if (requestId !== popupRequestId) return true;
 
     await menuWindow.show();
     popupMenuVisible = true;
+    return true;
   } catch {
     resetPopupWindow();
     popupMenuVisible = false;
     activeMenuActions = new Map();
+    return false;
   }
 }
 
 async function runPopupMenuAction(payload = {}) {
   if (payload.requestId !== popupRequestId) return;
   const item = activeMenuActions.get(payload.id);
-  hidePopupMenu();
+  hideAnyMenu();
   if (item?.enabled) {
     await item.action?.(item.context);
   }
@@ -568,21 +654,29 @@ export function initializeContextMenuService() {
   // so it never receives/loses focus and onFocusChanged-based blur detection never
   // fires.  Listen for pointer interactions on the main window and dismiss the
   // popup when the user clicks (any button except the right button, which may be
-  // repositioning the menu).
+  // repositioning the menu).  DOM 降级菜单（Wayland）的条目点击也落在主窗口
+  // document 上，需要在捕获阶段放行，否则条目在 click 前就被收起。
   asyncListeners.add(
     addDomListener(
       document,
       "mousedown",
       (event) => {
-        if (popupMenuVisible && event.button !== 2) {
-          hidePopupMenu();
+        if (event.button === 2) return;
+        if (event.target instanceof Element && event.target.closest(".dom-context-menu-panel")) {
+          return;
+        }
+        if (popupMenuVisible || domContextMenuState.visible) {
+          hideAnyMenu();
         }
       },
       true,
     ),
   );
   asyncListeners.register(listen(CONTEXT_MENU_EVENTS.ready, resolvePopupReady)).then(() => {
-    warmPopupWindow();
+    // Wayland 下根本不会用悬浮窗口，预热只会留下一个隐藏的空窗口。
+    void resolveMenuBackend().then((backend) => {
+      if (backend === "window") warmPopupWindow();
+    });
   });
   asyncListeners.register(
     listen(CONTEXT_MENU_EVENTS.action, ({ payload }) => runPopupMenuAction(payload)),
@@ -590,14 +684,14 @@ export function initializeContextMenuService() {
   asyncListeners.register(
     listen(CONTEXT_MENU_EVENTS.close, ({ payload }) => {
       if (payload?.requestId === popupRequestId) {
-        hidePopupMenu();
+        hideAnyMenu();
       }
     }),
   );
 }
 
 export function dismissContextMenu() {
-  hidePopupMenu();
+  hideAnyMenu();
 }
 
 export async function openContextMenu(
@@ -618,11 +712,24 @@ export async function openContextMenu(
   ]);
 
   if (!nextItems.length) {
-    hidePopupMenu();
+    hideAnyMenu();
     return;
   }
 
   nativeEvent?.preventDefault?.();
   nativeEvent?.stopPropagation?.();
-  await openPopupMenu(nextItems, context);
+
+  const backend = await resolveMenuBackend();
+  if (backend === "dom") {
+    openDomMenu(nextItems, context, nativeEvent);
+    return;
+  }
+
+  const opened = await openPopupMenu(nextItems, context);
+  if (!opened && lastEnvironment?.platform === "linux") {
+    // 悬浮窗口创建/定位失败（部分 Wayland 合成器直接拒绝透明无边框窗口）：
+    // 之后一律改用 DOM 菜单，不再反复尝试失败路径。
+    forceDomMenu = true;
+    openDomMenu(nextItems, context, nativeEvent);
+  }
 }

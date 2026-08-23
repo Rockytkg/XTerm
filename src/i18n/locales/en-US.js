@@ -981,6 +981,8 @@ export default {
     serial_port_config_failed: "Failed to apply serial settings on {portName} at {baudRate} baud.",
     serial_port_not_found: "Serial port {portName} not found",
     serial_port_open_failed: "Failed to open serial port {portName} at {baudRate} baud.",
+    serial_port_permission_denied:
+      "No permission to access serial port {portName}. Add your user to the serial device group (dialout on Debian/Ubuntu/Fedora, uucp on Arch), e.g.: sudo usermod -aG dialout $USER, then log out and back in.",
     serial_port_required: "Select a serial port before connecting.",
     serial_port_scan_failed: "Failed to scan serial ports.",
     serial_port_unavailable: "Serial port {portName} is unavailable.",

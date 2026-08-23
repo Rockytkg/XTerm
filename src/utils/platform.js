@@ -20,3 +20,22 @@ export function isMacPlatform() {
 export function isPrimaryModifier(event) {
   return isMacPlatform() ? !!event?.metaKey : !!event?.ctrlKey;
 }
+
+// 桌面 Linux UA；排除 Android（本项目不做移动端，但避免误判）。
+export function isLinuxUserAgent(userAgent) {
+  const ua = String(userAgent || "");
+  return /Linux/.test(ua) && !/Android/.test(ua);
+}
+
+// WebKitGTK 是 Tauri 在 Linux 上的 webview 引擎：UA 含 AppleWebKit 但不含
+// Chromium 系标识（Chrome/Chromium/Edg）。macOS WKWebView 的 UA 同样无
+// Chrome 标识，因此必须先限定 Linux。
+export function isWebKitGtkUserAgent(userAgent) {
+  const ua = String(userAgent || "");
+  return isLinuxUserAgent(ua) && /AppleWebKit/.test(ua) && !/Chrome|Chromium|Edg\//.test(ua);
+}
+
+export function isWebKitGtkPlatform() {
+  if (typeof navigator === "undefined") return false;
+  return isWebKitGtkUserAgent(navigator.userAgent);
+}

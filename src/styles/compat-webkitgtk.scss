@@ -1,0 +1,16 @@
+@layer components {
+  /* ============================================================
+     WebKitGTK（Linux webview）兼容层
+     触发条件：main.js 按 UA 在 :root 上设置 data-webview="webkitgtk"。
+     只收录确实在 WebKitGTK 上有问题的写法，并保留原视觉效果的最大近似。
+     ============================================================ */
+
+  /* backdrop-filter 的实时模糊在 WebKitGTK 多数合成路径下由 CPU 完成，
+     toast 反复进出/堆叠时会造成明显掉帧；降级为不透明背景。 */
+  :root[data-webview="webkitgtk"] .toast-root {
+    /* stylelint-disable-next-line property-no-vendor-prefix */
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--bg-secondary);
+  }
+}

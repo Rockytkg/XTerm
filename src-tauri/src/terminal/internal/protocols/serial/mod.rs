@@ -1010,6 +1010,22 @@ pub(super) fn classify_serial_open_error(
 ) -> ConnectionError {
     log::warn!(target: "terminal.serial", "failed to open serial port '{port_name}' at {baud_rate} baud: {error}");
     let detail = error.to_string();
+    // Linux 串口设备节点默认归属 root:dialout（Arch 等为 uucp），EACCES 几乎
+    // 总是当前用户不在设备组；返回独立错误码，让前端给出“加入用户组”的可操作
+    // 提示，而不是笼统的“端口不可用”。Windows 的 ACCESS_DENIED 多为端口被
+    // 占用，仍按不可用处理。
+    #[cfg(target_os = "linux")]
+    if matches!(
+        error.kind(),
+        tokio_serial::ErrorKind::Io(std::io::ErrorKind::PermissionDenied)
+    ) {
+        return ConnectionError::with_args(
+            "serial_port_permission_denied",
+            format!("port={port_name}; {detail}"),
+            serde_json::json!({ "portName": port_name, "detail": detail }),
+            true,
+        );
+    }
     if serial_error_is_unavailable(&error) {
         return ConnectionError::serial_port_unavailable(port_name, detail);
     }

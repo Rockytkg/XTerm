@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isMacPlatform, isMacUserAgent, isPrimaryModifier } from "../src/utils/platform.js";
+import {
+  isLinuxUserAgent,
+  isMacPlatform,
+  isMacUserAgent,
+  isPrimaryModifier,
+  isWebKitGtkUserAgent,
+} from "../src/utils/platform.js";
 import { createTerminalShortcutHandler } from "../src/utils/terminal/createTerminalShortcutHandler.js";
 
 const MAC_SAFARI_UA =
@@ -31,6 +37,33 @@ test("isMacUserAgent rejects Windows/Linux/empty user agents", () => {
 test("isMacPlatform is safe without a browser navigator", () => {
   // node --test 环境没有 mac navigator（Node 自带的 navigator UA 是 Node.js）。
   assert.equal(isMacPlatform(), false);
+});
+
+const WEBKITGTK_UA =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+const LINUX_CHROME_UA =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+test("isLinuxUserAgent detects desktop Linux and rejects Android/others", () => {
+  assert.equal(isLinuxUserAgent(WEBKITGTK_UA), true);
+  assert.equal(isLinuxUserAgent(LINUX_CHROME_UA), true);
+  assert.equal(
+    isLinuxUserAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0.0.0"),
+    false,
+  );
+  assert.equal(isLinuxUserAgent(WINDOWS_UA), false);
+  assert.equal(isLinuxUserAgent(MAC_SAFARI_UA), false);
+  assert.equal(isLinuxUserAgent(""), false);
+  assert.equal(isLinuxUserAgent(undefined), false);
+});
+
+test("isWebKitGtkUserAgent only matches Linux WebKit without Chromium markers", () => {
+  assert.equal(isWebKitGtkUserAgent(WEBKITGTK_UA), true);
+  // macOS WKWebView 同样没有 Chrome 标识，必须靠 Linux 限定排除。
+  assert.equal(isWebKitGtkUserAgent(MAC_SAFARI_UA), false);
+  assert.equal(isWebKitGtkUserAgent(LINUX_CHROME_UA), false);
+  assert.equal(isWebKitGtkUserAgent(WINDOWS_UA), false);
+  assert.equal(isWebKitGtkUserAgent(""), false);
 });
 
 test("isPrimaryModifier follows the platform modifier", () => {

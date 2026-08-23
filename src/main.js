@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { createLogger } from "./utils/logger";
 import { noop } from "./utils/noop";
+import { isWebKitGtkUserAgent } from "./utils/platform";
 import { getLogLevel } from "./services/logging";
 import { showFatalErrorOverlay } from "./utils/fatalErrorOverlay";
 import "virtual:uno.css";
@@ -22,6 +23,12 @@ const isContextMenuWindow =
 const startupSplash = document.getElementById("startup-splash");
 
 document.documentElement.dataset.window = isContextMenuWindow ? "context-menu" : "main";
+
+// WebKitGTK（Linux webview）存在若干渲染/合成差异（如 backdrop-filter 走
+// CPU 模糊导致掉帧），尽早打上标记让 compat-webkitgtk.scss 在首帧前生效。
+if (isWebKitGtkUserAgent(navigator.userAgent)) {
+  document.documentElement.dataset.webview = "webkitgtk";
+}
 
 const FONT_LOAD_TIMEOUT_MS = 3000;
 const STARTUP_SPLASH_FADE_MS = 320;

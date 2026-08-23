@@ -60,12 +60,23 @@
       0 1px 0 oklch(100% 0 0deg / 4.5%) inset;
   }
 
-  .floating-context-menu-anchor {
+  /* DOM 降级菜单（Wayland 等无法定位独立窗口的环境）。
+     遮罩层拦截菜单外的指针交互，面板按服务算好的视口内坐标固定定位。 */
+  .dom-context-menu-overlay {
     position: fixed;
-    inset-block-start: 0;
-    inset-inline-start: 0;
-    inline-size: 0;
-    block-size: 0;
+    inset: 0;
+    z-index: 100;
+  }
+
+  .dom-context-menu-panel {
+    position: fixed;
+    inset-block-start: var(--dom-context-menu-y, 0);
+    inset-inline-start: var(--dom-context-menu-x, 0);
+
+    /* .floating-context-menu 的 stretch 块尺寸是为填满独立窗口准备的，
+       DOM 面板必须改回按内容自适应。 */
+    block-size: auto;
+    max-block-size: var(--context-menu-max-height);
   }
 
   .ui-context-menu-item {

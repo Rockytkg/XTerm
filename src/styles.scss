@@ -1,6 +1,7 @@
 @use "./styles/tokens";
 @use "./styles/reset";
 @use "./styles/base";
+@use "./styles/compat-webkitgtk";
 @use "./styles/mixins" as *;
 @layer reset, tokens, base, utilities, components, overlays;
 @import "@unocss/reset/tailwind.css" layer(reset);

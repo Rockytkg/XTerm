@@ -39,6 +39,54 @@ pnpm check          # format:check + lint + test 一键检查
 pnpm release        # 构建生产桌面包（NSIS）
 ```
 
+## Linux 平台说明
+
+### 运行依赖
+
+Linux 上应用基于 WebKitGTK 渲染，运行前需要安装以下系统包（Debian/Ubuntu 名称）：
+
+```bash
+sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1
+```
+
+凭证（密码、私钥）经 OS keyring 加密保存，Linux 上依赖 Secret Service 实现——桌面环境通常自带（GNOME 的 gnome-keyring、KDE 的 KWallet）。无头/最小化环境若提示 keyring 相关错误，请先安装并解锁 gnome-keyring。
+
+### 串口访问权限（重要）
+
+Linux 的串口设备节点（`/dev/ttyUSB*`、`/dev/ttyACM*` 等）默认归属 `root` 和设备组（Debian/Ubuntu/Fedora 为 `dialout`，Arch 为 `uucp`），普通用户默认无权读写，打开串口会报“没有权限访问”。参考 Wireshark 的做法，把当前用户加入对应组即可（无需 root 运行应用）：
+
+```bash
+# Debian / Ubuntu / Fedora
+sudo usermod -aG dialout $USER
+
+# Arch Linux
+sudo usermod -aG uucp $USER
+```
+
+**重新登录**（或重启）后生效。可用 `id -nG` 检查组是否已包含 `dialout`/`uucp`，用 `ls -l /dev/ttyUSB0` 确认设备节点所属组。
+
+应用侧的配合：打开串口被内核拒绝（EACCES）时，连接错误会直接提示上述用户组操作，而不是笼统的“端口不可用”。
+
+### Wayland 会话
+
+Wayland 出于安全设计不允许客户端查询全局光标坐标，也不允许程序主动设置窗口的绝对位置，因此“独立悬浮窗口”式的右键菜单无法跟随鼠标定位。应用在检测到 Wayland 会话（`XDG_SESSION_TYPE=wayland` 或 `WAYLAND_DISPLAY`）时自动把右键菜单降级为主窗口内渲染的 DOM 菜单，功能与外观保持一致；X11 会话不受影响。
+
+### NVIDIA 闭源驱动渲染异常
+
+WebKitGTK 在 NVIDIA 专有驱动下可能出现页面空白或严重掉帧（DMA-BUF 渲染器兼容问题）。如遇此情况，用环境变量禁用该渲染器后启动：
+
+```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=1 xterm
+```
+
+### 构建 Linux 安装包
+
+仓库默认的打包目标是 Windows NSIS；构建 Linux 包（deb / rpm / AppImage）需在 Linux 环境执行：
+
+```bash
+pnpm tauri build -- --bundles deb    # 或 rpm / appimage
+```
+
 ## 项目结构
 
 ```

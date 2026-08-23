@@ -3,6 +3,7 @@ mod app_info;
 mod command_registry;
 mod credentials;
 pub(crate) mod deep_link;
+mod desktop;
 mod file_service;
 mod firewall;
 mod fonts;
