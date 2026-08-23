@@ -1271,7 +1271,7 @@ fn remove_all_udp_ports_for_current_app_rule_direct(
 #[cfg(target_os = "macos")]
 fn map_pfctl_init_error(error: pfctl::Error) -> FirewallCommandError {
     let detail = error.to_string();
-    let user_message = if unix_error_requires_elevation(&detail) {
+    let user_message = if firewall_error_requires_elevation(&detail) {
         "Administrator permission is required to update the macOS firewall rule."
     } else {
         "Unable to initialize the macOS firewall integration."
@@ -1285,7 +1285,7 @@ fn map_pfctl_runtime_error(
 ) -> impl FnOnce(pfctl::Error) -> FirewallCommandError {
     move |error| {
         let detail = error.to_string();
-        let user_message = if unix_error_requires_elevation(&detail) {
+        let user_message = if firewall_error_requires_elevation(&detail) {
             "Administrator permission is required to update the macOS firewall rule."
         } else {
             fallback_message

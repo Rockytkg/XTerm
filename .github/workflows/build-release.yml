@@ -508,7 +508,9 @@ jobs:
               useradd -m builder 2>/dev/null || true
               chown -R builder:builder /build
               cd /build
-              su builder -c "makepkg -f --noconfirm"
+              # -d/--nodeps:容器未装 GUI 运行时依赖,我们打包的是已编译二进制,
+              # 运行时依赖由目标系统 pacman 安装时解析,容器内无需安装
+              su builder -c "makepkg -f -d --noconfirm"
             '
 
       - name: Upload artifacts
