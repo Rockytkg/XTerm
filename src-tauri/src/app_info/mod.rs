@@ -25,13 +25,30 @@ pub struct AppMetadata {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReleaseAsset {
+    name: String,
+    download_url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateStatus {
     current_version: String,
     latest_version: Option<String>,
     update_available: bool,
     release_url: Option<String>,
     release_name: Option<String>,
+    release_notes: Option<String>,
     published_at: Option<String>,
+    assets: Vec<ReleaseAsset>,
+    platform: &'static str,
+    arch: &'static str,
+}
+
+#[derive(Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -39,9 +56,12 @@ struct GithubRelease {
     tag_name: String,
     name: Option<String>,
     html_url: Option<String>,
+    body: Option<String>,
     published_at: Option<String>,
     draft: bool,
     prerelease: bool,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
 }
 
 /// Returns compile-time app metadata used by the About screen.
@@ -96,7 +116,11 @@ pub async fn check_for_updates() -> Result<UpdateStatus, String> {
             update_available: false,
             release_url: None,
             release_name: None,
+            release_notes: None,
             published_at: None,
+            assets: Vec::new(),
+            platform: std::env::consts::OS,
+            arch: std::env::consts::ARCH,
         });
     }
 
@@ -115,7 +139,20 @@ pub async fn check_for_updates() -> Result<UpdateStatus, String> {
         update_available,
         release_url: release.html_url,
         release_name: release.name,
+        release_notes: release.body,
         published_at: release.published_at,
+        assets: release
+            .assets
+            .into_iter()
+            .filter_map(|asset| {
+                asset.browser_download_url.map(|url| ReleaseAsset {
+                    name: asset.name,
+                    download_url: url,
+                })
+            })
+            .collect(),
+        platform: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
     })
 }
 

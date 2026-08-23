@@ -663,6 +663,15 @@ export default {
         available: "发现新版本 v{version}。",
         failed: "检查更新失败，请稍后重试。",
         release: "发布页",
+        dialog: {
+          title: "发现新版本 v{version}",
+          notes: "更新内容",
+          noNotes: "该版本暂无更新说明。",
+          publishedAt: "发布于 {date}",
+          download: "下载更新",
+          later: "稍后",
+          viewRelease: "查看发布页",
+        },
       },
     },
     theme: {

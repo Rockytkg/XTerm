@@ -699,6 +699,15 @@ export default {
         available: "New version v{version} is available.",
         failed: "Update check failed. Try again later.",
         release: "Release",
+        dialog: {
+          title: "New version v{version} available",
+          notes: "Release notes",
+          noNotes: "No release notes for this version.",
+          publishedAt: "Published {date}",
+          download: "Download update",
+          later: "Later",
+          viewRelease: "View release page",
+        },
       },
     },
     theme: {

@@ -3,6 +3,7 @@ import { computed, ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { Bug, ExternalLink, GitBranch as Github, Info, RefreshCw } from "@lucide/vue";
 import { checkForUpdates, getAppMetadata, openExternalUrl } from "../../services/appInfo";
+import { runManualUpdateCheck } from "../../composables/useUpdateChecker";
 import { showToast } from "../../composables/useToasts";
 import { createLogger } from "../../utils/logger";
 
@@ -34,12 +35,10 @@ async function handleCheckUpdates(notify = true) {
   checkingUpdates.value = true;
   updateError.value = false;
   try {
-    updateStatus.value = await checkForUpdates();
-    if (notify) {
-      const msg = updateStatus.value.updateAvailable
-        ? t("settings.about.update.available", { version: updateStatus.value.latestVersion })
-        : t("settings.about.update.current");
-      showToast({ type: "success", title: msg });
+    // 手动检测命中更新时由全局模态框承接提示，无需再弹 toast
+    updateStatus.value = notify ? await runManualUpdateCheck() : await checkForUpdates();
+    if (notify && !updateStatus.value.updateAvailable) {
+      showToast({ type: "success", title: t("settings.about.update.current") });
     }
   } catch (e) {
     logger.error("updates.check.failed", e);
