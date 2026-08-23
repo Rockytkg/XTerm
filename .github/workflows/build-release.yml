@@ -553,6 +553,40 @@ jobs:
         with:
           path: dist-artifacts
 
+      - name: Generate release notes from commits
+        id: notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # 发行说明 = 从上一 tag(或首次发布的所有 commit)到当前 tag 的 commit,按类型分组
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [[ -n "$PREV" ]]; then RANGE="${PREV}..HEAD"; else RANGE="HEAD"; fi
+          NOTES="$RUNNER_TEMP/release-notes.md"
+
+          echo "# XTerm v${VERSION}" > "$NOTES"
+          echo "" >> "$NOTES"
+          echo "> 基于合并 commit 自动生成的发行说明(${RANGE})。" >> "$NOTES"
+
+          FEAT=$(git log "$RANGE" --pretty=format:"%s" | grep -E '^feat' \
+            | sed -E 's/^feat(\([^)]*\))?: //' | sed 's/^/- /' || true)
+          if [[ -n "$FEAT" ]]; then printf '\n## ✨ 新功能\n%s\n' "$FEAT" >> "$NOTES"; fi
+
+          FIX=$(git log "$RANGE" --pretty=format:"%s" | grep -E '^fix' \
+            | sed -E 's/^fix(\([^)]*\))?: //' | sed 's/^/- /' || true)
+          if [[ -n "$FIX" ]]; then printf '\n## 🐛 修复\n%s\n' "$FIX" >> "$NOTES"; fi
+
+          OTHER=$(git log "$RANGE" --pretty=format:"%s" \
+            | grep -vE '^(feat|fix)(\([^)]*\))?: ' | grep -vE '^(Merge|merge)' \
+            | grep -v '^$' \
+            | sed -E 's/^(chore|refactor|docs|build|style|perf|test|ci)(\([^)]*\))?: //' \
+            | sed 's/^/- /' || true)
+          if [[ -n "$OTHER" ]]; then printf '\n## 🔧 其他变更\n%s\n' "$OTHER" >> "$NOTES"; fi
+
+          echo "notes_file=${NOTES}" >> "$GITHUB_OUTPUT"
+          echo "---- generated release notes ----"
+          cat "$NOTES"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -571,5 +605,5 @@ jobs:
           gh release create "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
-            --generate-notes \
+            --notes-file "${{ steps.notes.outputs.notes_file }}" \
             $FILES
