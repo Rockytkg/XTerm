@@ -38,7 +38,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": "all",
+    "category": "DeveloperTool",
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/main.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/main.desktop"
+      }
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "embedBootstrapper"

@@ -1,0 +1,502 @@
+# XTerm 多平台构建与发布工作流
+#
+# 版本号策略(由 version job 统一计算,经 `tauri build --config` 注入,不改仓库文件):
+#   - 推送 tag v1.2.3             -> 版本 1.2.3,打全平台包并创建 GitHub Release
+#   - 推送 main / 手动触发        -> 版本 <上一tag>-dev.<commit数>+<短sha> 快照,只上传 workflow artifacts,不发布
+#
+# 平台矩阵(全部原生编译,无交叉):
+#   - linux   x64  (ubuntu-22.04)       deb / rpm / appimage
+#   - linux   arm64(ubuntu-22.04-arm)   deb(GitHub ARM runner 仅公共仓库可用)
+#   - windows x64  (windows-latest)     nsis / msi
+#   - windows arm64(windows-11-arm)     nsis / msi
+#   - macos   arm64(macos-latest)       app / dmg
+#   - macos   x64  (macos-latest 交叉)   app / dmg
+#   - arch    x86_64(ubuntu-latest + archlinux:base-devel 容器) .pkg.tar.zst
+#
+# 命名说明:Linux 上 "xterm" 是 X11 终端的固定名称,Arch 包改用 xterm-workspace 避免覆盖
+#   /usr/bin/xterm;deb/rpm/AppImage 二进制名保持 productName "XTerm"(大小写不同不冲突)。
+
+name: Build & Release
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 统一版本号计算
+  # ---------------------------------------------------------------------------
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      is_release: ${{ steps.compute.outputs.is_release }}
+      tag: ${{ steps.compute.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute version from git ref
+        id: compute
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            IS_RELEASE=true
+            TAG="${GITHUB_REF_NAME}"
+          else
+            BASE=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
+            if [[ -z "$BASE" ]]; then
+              # 仓库尚无 tag 时,退回 tauri.conf.json 中声明的版本
+              BASE=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -n1)
+            fi
+            N=$(git rev-list --count HEAD)
+            SHA=$(git rev-parse --short HEAD)
+            VERSION="${BASE}-dev.${N}+${SHA}"
+            IS_RELEASE=false
+            TAG=""
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "is_release=${IS_RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Computed version: ${VERSION} (release=${IS_RELEASE})"
+
+  # ---------------------------------------------------------------------------
+  # Linux x86_64:deb / rpm / AppImage
+  # ---------------------------------------------------------------------------
+  linux-x64:
+    needs: [version]
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Tauri 的 Cargo 工作区在 src-tauri,必须指定才能正确缓存依赖
+          workspaces: './src-tauri -> target'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync version across manifests
+        run: |
+          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
+          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev librsvg2-dev patchelf zstd \
+            xdg-utils build-essential libssl-dev
+
+      - name: Build deb / rpm / AppImage
+        run: |
+          pnpm tauri build --bundles deb,rpm,appimage \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            # 裸二进制,供 arch job 组装 pacman 包
+            src-tauri/target/release/xterm
+
+  # ---------------------------------------------------------------------------
+  # Linux arm64:deb(GitHub 原生 ARM runner;arm runner 仅公共仓库免费)
+  # ---------------------------------------------------------------------------
+  linux-arm64:
+    needs: [version]
+    runs-on: ubuntu-22.04-arm
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync version across manifests
+        run: |
+          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
+          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev librsvg2-dev patchelf zstd \
+            xdg-utils build-essential libssl-dev
+
+      - name: Build arm64 deb
+        run: |
+          pnpm tauri build --target aarch64-unknown-linux-gnu \
+            --bundles deb \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64
+          if-no-files-found: error
+          path: src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb
+
+  # ---------------------------------------------------------------------------
+  # Windows x86_64:NSIS / MSI
+  # ---------------------------------------------------------------------------
+  windows-x64:
+    needs: [version]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync version across manifests
+        run: |
+          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
+          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+
+      - name: Build NSIS / MSI
+        run: |
+          pnpm tauri build --bundles nsis,msi \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+
+  # ---------------------------------------------------------------------------
+  # Windows arm64:NSIS / MSI(GitHub 原生 ARM runner)
+  # ---------------------------------------------------------------------------
+  windows-arm64:
+    needs: [version]
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync version across manifests
+        run: |
+          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
+          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+
+      - name: Build arm64 NSIS / MSI
+        run: |
+          pnpm tauri build --target aarch64-pc-windows-msvc \
+            --bundles nsis,msi \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64
+          if-no-files-found: error
+          path: |
+            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/msi/*.msi
+
+  # ---------------------------------------------------------------------------
+  # macOS arm64:app / dmg(原生)
+  # ---------------------------------------------------------------------------
+  macos-arm64:
+    needs: [version]
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync version across manifests
+        run: |
+          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
+          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+
+      - name: Build frontend
+        run: pnpm build
+      - name: Build aarch64 app / dmg
+        run: |
+          pnpm tauri build --target aarch64-apple-darwin \
+            --bundles app,dmg --no-before-build \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Archive .app bundle
+        run: |
+          cd src-tauri/target/aarch64-apple-darwin/release/bundle/macos
+          zip -rqy "${GITHUB_WORKSPACE}/XTerm-${VERSION}-darwin-arm64.zip" XTerm.app
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          if-no-files-found: error
+          path: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            XTerm-*.zip
+
+  # ---------------------------------------------------------------------------
+  # macOS x86_64:app / dmg(在 arm64 runner 上交叉,避免依赖 Intel runner 生命周期)
+  # ---------------------------------------------------------------------------
+  macos-x64:
+    needs: [version]
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync version across manifests
+        run: |
+          sed -i "0,/^version = \"[^\"]*\"/s//version = \"${VERSION}\"/" src-tauri/Cargo.toml
+          sed -i "0,/\"version\": \"[^\"]*\"/s//\"version\": \"${VERSION}\"/" package.json
+
+      - name: Build frontend
+        run: pnpm build
+      - name: Build x86_64 app / dmg
+        run: |
+          pnpm tauri build --target x86_64-apple-darwin \
+            --bundles app,dmg --no-before-build \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Archive .app bundle
+        run: |
+          cd src-tauri/target/x86_64-apple-darwin/release/bundle/macos
+          zip -rqy "${GITHUB_WORKSPACE}/XTerm-${VERSION}-darwin-x64.zip" XTerm.app
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64
+          if-no-files-found: error
+          path: |
+            src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+            XTerm-*.zip
+
+  # ---------------------------------------------------------------------------
+  # Arch Linux x86_64 pacman 包(原生二进制 PKGBUILD)
+  # 在 archlinux:base-devel 容器内以非 root 用户运行 makepkg
+  # ---------------------------------------------------------------------------
+  arch:
+    needs: [version, linux-x64]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux x64 release binary
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x64
+          path: linux-x64-artifacts
+
+      - name: Build Arch package
+        run: |
+          set -euo pipefail
+          BIN=$(find linux-x64-artifacts -type f -name xterm | head -n1)
+          [[ -n "$BIN" ]] || { echo "xterm binary not found" >&2; exit 1; }
+
+          # pacman 的 pkgver 不允许连字符,将快照版本中的 '-' 转为 '_'
+          PKGVER=$(printf '%s' "${VERSION}" | tr '-' '_')
+
+          mkdir -p arch-build
+          cp "$BIN" arch-build/xterm-workspace
+          cp src-tauri/arch/xterm-workspace.desktop arch-build/
+          cp src-tauri/icons/128x128.png arch-build/icon-128.png
+
+          sed "s/^pkgver=__PKGVER__/pkgver=${PKGVER}/" src-tauri/arch/PKGBUILD > arch-build/PKGBUILD
+          # 用真实校验和替换 SKIP 占位,保证包完整性
+          SHA1=$(sha256sum arch-build/xterm-workspace | awk '{print $1}')
+          SHA2=$(sha256sum arch-build/xterm-workspace.desktop | awk '{print $1}')
+          SHA3=$(sha256sum arch-build/icon-128.png | awk '{print $1}')
+          sed -i "s/__SHA256_BIN__/$SHA1/; s/__SHA256_DESKTOP__/$SHA2/; s/__SHA256_ICON__/$SHA3/" arch-build/PKGBUILD
+
+          docker run --rm \
+            -v "$PWD/arch-build:/build" \
+            archlinux:base-devel \
+            bash -c '
+              set -e
+              pacman -Syu --noconfirm --needed >/tmp/pacman.log 2>&1 \
+                || { tail -n 30 /tmp/pacman.log; exit 1; }
+              useradd -m builder 2>/dev/null || true
+              chown -R builder:builder /build
+              cd /build
+              su builder -c "makepkg -f --noconfirm"
+            '
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          if-no-files-found: error
+          path: arch-build/*.pkg.tar.zst
+
+  # ---------------------------------------------------------------------------
+  # 发布:仅当推送 tag 时,收集所有平台产物上传到 GitHub Release
+  # ---------------------------------------------------------------------------
+  release:
+    needs:
+      - version
+      - linux-x64
+      - linux-arm64
+      - windows-x64
+      - windows-arm64
+      - macos-arm64
+      - macos-x64
+      - arch
+    if: needs.version.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          FILES=$(find dist-artifacts -type f | sort)
+          [[ -n "$FILES" ]] || { echo "no artifacts to upload" >&2; exit 1; }
+          echo "Uploading to ${TAG}:"
+          echo "$FILES"
+          # shellcheck disable=SC2046
+          gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --generate-notes \
+            $FILES

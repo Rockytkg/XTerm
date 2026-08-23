@@ -1,0 +1,21 @@
+# Maintainer: Rockytkg
+# XTerm 原生二进制 pacman 包。
+# __PKGVER__ 由 CI 根据 git 版本替换;source 三个文件由 workflow 拷入构建目录。
+# 注意:包名用 xterm-workspace 而非 xterm,避免覆盖 X11 终端的 /usr/bin/xterm。
+pkgname=xterm-workspace
+pkgver=__PKGVER__
+pkgrel=1
+pkgdesc="A desktop terminal workspace for SSH, Telnet, serial sessions, SFTP, credentials and session tooling"
+arch=('x86_64')
+url="https://github.com/Rockytkg/xterm"
+license=('MIT')
+# 运行时依赖:WebKitGTK 栈 + keyring(secret-service)+ 防火墙(iptables 命令)+ 字体(font-kit)
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'javascriptcoregtk-4.1' 'libsecret' 'fontconfig' 'iptables')
+source=('xterm-workspace' 'xterm-workspace.desktop' 'icon-128.png')
+sha256sums=('__SHA256_BIN__' '__SHA256_DESKTOP__' '__SHA256_ICON__')
+
+package() {
+  install -Dm755 "$srcdir/xterm-workspace" "$pkgdir/usr/bin/xterm-workspace"
+  install -Dm644 "$srcdir/xterm-workspace.desktop" "$pkgdir/usr/share/applications/xterm-workspace.desktop"
+  install -Dm644 "$srcdir/icon-128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/xterm-workspace.png"
+}

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=XTerm
+GenericName=Terminal Workspace
+Comment=A desktop terminal workspace for SSH, Telnet, serial sessions, SFTP and more
+Exec=xterm-workspace
+Icon=xterm-workspace
+Terminal=false
+Categories=Network;RemoteAccess;TerminalEmulator;System;
+StartupWMClass=XTerm

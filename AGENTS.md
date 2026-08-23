@@ -9,7 +9,8 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 - 前端：Vue 3（`<script setup>`）+ Vite + Pinia + vue-router + vue-i18n（中英文）+ UnoCSS + SCSS + XTerm.js 6 + CodeMirror 6。
 - 后端：Rust + Tauri 2，tokio 异步运行时。SSH/SFTP 用 `russh` / `russh-sftp`，FTP 服务端用 `libunftp`，串口、本地存储（`redb`）、keyring 加密凭证、防火墙管理等均为原生实现。
 - 包管理：`pnpm`（锁文件 `pnpm-lock.yaml`）。
-- 应用标识：`com.liushicong.xterm`，版本 `0.1.1`，打包目标为 NSIS（`pnpm tauri build`）。
+- 应用标识：`com.liushicong.xterm`；`tauri.conf.json` 中 `bundle.targets` 为 `"all"`，本地 `pnpm tauri build` 按平台默认出包（Windows：NSIS+MSI；Linux：deb+rpm+AppImage；macOS：app+dmg）。
+- 发版走 CI（`.github/workflows/build-release.yml`）：打 `v*` tag → 全平台构建（linux deb/rpm/appimage、win/mac 的 x64+arm64、Arch 的 xterm-workspace 包）并自动创建 GitHub Release；推送 main / 手动触发 → `<版本>-dev.<commit数>+<短sha>` 快照，仅上传 workflow artifacts。版本号由 `version` job 按 git ref 计算，经 `tauri build --config '{"version":"..."}'` 注入。
 
 ## 项目结构
 
