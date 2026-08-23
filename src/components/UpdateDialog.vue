@@ -80,7 +80,7 @@ function handleDownload() {
             {{ t("settings.about.update.dialog.notes") }}
           </span>
           <pre
-            class="min-h-[120px] max-h-[46vh] overflow-auto m-0 px-[10px] py-[8px] rounded-[6px] bg-[var(--bg-secondary)] font-mono text-[11px] leading-[1.6] whitespace-pre-wrap break-all select-text"
+            class="min-h-[120px] max-h-[46vh] overflow-auto m-0 px-[12px] py-[10px] rounded-[6px] bg-[var(--bg-secondary)] text-[var(--text-secondary)] text-[0.8571em] leading-[1.7] whitespace-pre-wrap break-words select-text [font-family:var(--font-sans)]"
           >{{ releaseNotes || t("settings.about.update.dialog.noNotes") }}</pre>
         </div>
 
