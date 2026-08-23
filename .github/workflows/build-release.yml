@@ -2,7 +2,7 @@
 #
 # 版本号策略(由 version job 统一计算,经 `tauri build --config` 注入,不改仓库文件):
 #   - 推送 tag v1.2.3             -> 版本 1.2.3,打全平台包并创建 GitHub Release
-#   - 推送 main / 手动触发        -> 版本 <上一tag>-dev.<commit数>+<短sha> 快照,只上传 workflow artifacts,不发布
+#   - 推送 main / 手动触发        -> 版本 <上一tag>-dev.<commit数>+<commit数> 快照,只上传 workflow artifacts,不发布
 #
 # 发布策略(逐平台即时发布,不等全部编译完):
 #   - release-init 在 version 确定后立即创建 Release(含发行说明)
@@ -65,8 +65,8 @@ jobs:
               BASE=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -n1)
             fi
             N=$(git rev-list --count HEAD)
-            SHA=$(git rev-parse --short HEAD)
-            VERSION="${BASE}-dev.${N}+${SHA}"
+            # Windows MSI 要求版本号 build metadata 为纯数字且 ≤65535,短 sha 含字母会导致打包失败
+            VERSION="${BASE}-dev.${N}+${N}"
             IS_RELEASE=false
             TAG=""
           fi
