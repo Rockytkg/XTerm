@@ -58,12 +58,13 @@
       0 1px 0 oklch(100% 0 0deg / 4.5%) inset;
   }
 
-  /* 右键菜单容器：遮罩层拦截菜单外的指针交互，
-     面板按服务算好的视口内坐标固定定位。 */
+  /* 模态框开启时 reka-ui 会让 body 暂时失去指针事件；菜单是独立的
+     Teleport 内容，必须在自己的交互边界上恢复事件。 */
   .context-menu-overlay {
     position: fixed;
     inset: 0;
     z-index: 100;
+    pointer-events: auto;
   }
 
   .context-menu-panel {

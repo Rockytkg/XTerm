@@ -48,6 +48,7 @@ watch(
       <ContextMenuPanel
         ref="menuRef"
         class="context-menu-panel"
+        data-context-menu-root
         :items="contextMenuState.items"
         :theme="contextMenuState.theme"
         :style="panelStyle"

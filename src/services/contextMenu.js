@@ -326,6 +326,10 @@ function menuActionMap(items, context) {
   );
 }
 
+function isContextMenuTarget(target) {
+  return target instanceof Element && !!target.closest("[data-context-menu-root]");
+}
+
 function dismissMenu() {
   activeMenuActions = new Map();
   if (!contextMenuState.visible) return;
@@ -375,17 +379,15 @@ export function initializeContextMenuService() {
     }),
   );
 
-  // Click-to-dismiss：监听主窗口上的指针交互收起菜单。菜单条目点击也落在
-  // document 上，需要在捕获阶段放行，否则条目在 click 前就被收起。
+  // Click-to-dismiss：在捕获阶段收起菜单外的交互，菜单根节点内的事件继续
+  // 传播到按钮，以便由 Vue 的 click 处理器执行动作。
   asyncListeners.add(
     addDomListener(
       document,
       "mousedown",
       (event) => {
         if (event.button === 2) return;
-        if (event.target instanceof Element && event.target.closest(".context-menu-panel")) {
-          return;
-        }
+        if (isContextMenuTarget(event.target)) return;
         if (contextMenuState.visible) {
           dismissMenu();
         }
