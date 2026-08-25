@@ -9,17 +9,21 @@
     container: jump-host-editor / inline-size;
   }
 
-  .conn-advanced-summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .conn-advanced-summary {
-    list-style: none;
-  }
-
-  .conn-advanced[open] .conn-advanced-chevron,
   .conn-advanced[data-state="open"] .conn-advanced-chevron {
     transform: rotate(180deg);
+  }
+
+  .conn-seg-tab[data-state="on"],
+  .conn-protocol-card[data-state="on"],
+  .conn-jump-picker-card[data-state="checked"] {
+    border-color: var(--accent) !important;
+    background: var(--accent-light) !important;
+    color: var(--accent) !important;
+  }
+
+  .conn-seg-tab[data-state="on"],
+  .conn-protocol-card[data-state="on"] {
+    box-shadow: 0 0 0 3px var(--accent-glow) !important;
   }
 
   .conn-jump-chain-actions .ui-row-action:disabled {
@@ -27,18 +31,19 @@
     pointer-events: none;
   }
 
-  .conn-seg-tab[data-state="on"],
-  .conn-protocol-card[data-state="on"] {
-    border-color: var(--accent) !important;
-    background: var(--accent-light) !important;
-    color: var(--accent) !important;
-    box-shadow: 0 0 0 3px var(--accent-glow) !important;
-  }
+  .conn-jump-chain-item[data-state="checked"] {
+    border-color: var(--accent);
+    background: var(--accent-light);
+    box-shadow: inset 3px 0 0 var(--accent);
 
-  .conn-jump-picker-card[data-state="checked"] {
-    border-color: var(--accent) !important;
-    background: var(--accent-light) !important;
-    color: var(--accent) !important;
+    .conn-jump-chain-actions .ui-row-action {
+      border-color: color-mix(in oklch, var(--accent) 34%, transparent);
+      color: var(--accent);
+
+      &:hover {
+        border-color: var(--accent);
+      }
+    }
   }
 
   .conn-saved-empty {
@@ -50,22 +55,6 @@
     padding: 0 12px;
     color: var(--text-tertiary);
     font-size: 12px;
-  }
-
-  .conn-jump-chain-item[data-state="checked"] {
-    border-color: var(--accent);
-    background: var(--accent-light);
-    box-shadow: inset 3px 0 0 var(--accent);
-  }
-
-  .conn-jump-chain-item[data-state="checked"] .conn-jump-chain-actions .ui-row-action {
-    border-color: color-mix(in oklch, var(--accent) 34%, transparent);
-    color: var(--accent);
-  }
-
-  .conn-jump-chain-item[data-state="checked"] .conn-jump-chain-actions .ui-row-action:hover {
-    border-color: var(--accent);
-    color: var(--accent);
   }
 
   .ui-input-port {

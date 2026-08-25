@@ -1,6 +1,6 @@
 <script setup>
 import "../styles/connection-dialog.scss";
-import { computed, onBeforeUnmount, reactive, ref, useSlots, watch } from "vue";
+import { computed, reactive, ref, useSlots, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   DialogClose,
@@ -13,8 +13,9 @@ import {
   DialogTrigger,
 } from "reka-ui";
 import { CirclePlus, SquarePen, X } from "@lucide/vue";
-import { choosePrivateKey, createCredential, loadCredentials } from "../services/credentials";
+import { createCredential, loadCredentials } from "../services/credentials";
 import { invokeDebugIpc } from "../services/ipc/core";
+import { usePrivateKeyPicker } from "../composables/usePrivateKeyPicker";
 import { createConnection, getConnection, updateConnectionProfile } from "../services/workspace";
 import {
   CONNECTION_PROTOCOLS,
@@ -56,10 +57,15 @@ const dialogOpen = computed({
 });
 const activeProtocol = ref("ssh");
 const jumpHostEditorOpen = ref(false);
-const privateKeyPickerOpen = ref(false);
+// Stays false until the edit profile and credentials have loaded, so the
+// form is first rendered in its final state instead of flashing from
+// "password" to "saved credential" when async data arrives.
+const dialogReady = ref(false);
 const loadedEditProfile = ref(null);
-let privateKeyPickerResetTimer = null;
 let dialogLoadToken = 0;
+
+const { pickPrivateKey, keepDialogOpen: keepDialogOpenForPrivateKeyPicker } =
+  usePrivateKeyPicker();
 
 const protocolDrafts = reactive({
   ssh: createProtocolDraft("ssh"),
@@ -135,7 +141,6 @@ const filteredCredentials = computed(() => {
   }
   return credentials.value;
 });
-const firstMatchingCredential = computed(() => filteredCredentials.value[0] ?? null);
 const selectedCredential = computed(() => {
   if (!activeProtocolSupportsCredentials.value) return null;
   return (
@@ -152,19 +157,13 @@ watch(
       void initializeDialog();
     } else {
       dialogLoadToken += 1;
+      dialogReady.value = false;
       jumpHostEditorOpen.value = false;
       serialPortsLoading.value = false;
     }
   },
   { immediate: true },
 );
-
-onBeforeUnmount(() => {
-  if (privateKeyPickerResetTimer) {
-    window.clearTimeout(privateKeyPickerResetTimer);
-    privateKeyPickerResetTimer = null;
-  }
-});
 
 function isCurrentDialogLoad(token) {
   return dialogOpen.value && token === dialogLoadToken;
@@ -186,7 +185,7 @@ function clearAllErrors() {
 
 async function initializeDialog() {
   const token = ++dialogLoadToken;
-  clearAllErrors();
+  dialogReady.value = false;
   resetSessionOptionsState();
   credentials.value = [];
   detectedSerialPorts.value = [];
@@ -210,7 +209,13 @@ async function initializeDialog() {
   if (loadError) {
     fieldErrors[activeProtocol.value].name = loadError;
   }
-  void loadProtocolResources(activeProtocol.value, token);
+  // Await credentials (and the default-credential selection they trigger)
+  // before revealing the form, so the auth-mode highlight renders once in
+  // its final state instead of flickering.
+  await loadProtocolResources(activeProtocol.value, token);
+  if (isCurrentDialogLoad(token)) {
+    dialogReady.value = true;
+  }
 }
 
 function selectProtocol(protocol) {
@@ -303,7 +308,7 @@ function validateConnection(commitErrors = true) {
       for (const hop of jumpHosts) {
         const source = hop?.source || (hop?.connectionId ? "connection" : "manual");
         const connectionId = hop?.connectionId?.trim?.() || "";
-        const host = hop?.host?.trim?.() || "";
+        const hopHost = hop?.host?.trim?.() || "";
         if (source === "connection") {
           if (!connectionId) {
             nextErrors.jumpHosts = t("connectionDialog.validation.jumpHostSelectionRequired");
@@ -317,7 +322,7 @@ function validateConnection(commitErrors = true) {
             nextErrors.jumpHosts = t("connectionDialog.validation.jumpHostSelectionRequired");
             break;
           }
-        } else if (!host) {
+        } else if (!hopHost) {
           nextErrors.jumpHosts = t("connectionDialog.validation.jumpHostsRequired");
           break;
         } else if (!hop?.user?.trim?.()) {
@@ -354,7 +359,7 @@ function clearFieldError(field) {
 function selectDefaultCredentialIfAvailable() {
   if (!isSSH.value || activeForm.value.savedCredentialId) return;
   if (activeForm.value.password?.trim?.() || activeForm.value.privateKey?.trim?.()) return;
-  const credential = firstMatchingCredential.value;
+  const credential = filteredCredentials.value[0];
   if (credential) {
     onCredentialSelect(credential.id);
   }
@@ -403,31 +408,13 @@ function onAuthMethodChange(method) {
 }
 
 async function pickPrivateKeyFile() {
-  if (privateKeyPickerOpen.value) return;
-  if (privateKeyPickerResetTimer) {
-    window.clearTimeout(privateKeyPickerResetTimer);
-    privateKeyPickerResetTimer = null;
-  }
-  privateKeyPickerOpen.value = true;
   try {
-    const privateKey = await choosePrivateKey(t("credentials.fields.choosePrivateKeyTitle"));
-    if (privateKey) {
-      activeForm.value.privateKey = privateKey;
-      clearFieldError("savedCredentialId");
-    }
+    const privateKey = await pickPrivateKey(t("credentials.fields.choosePrivateKeyTitle"));
+    if (!privateKey) return;
+    activeForm.value.privateKey = privateKey;
+    clearFieldError("savedCredentialId");
   } catch (error) {
     activeErrors.value.savedCredentialId = String(error);
-  } finally {
-    privateKeyPickerResetTimer = window.setTimeout(() => {
-      privateKeyPickerOpen.value = false;
-      privateKeyPickerResetTimer = null;
-    }, 150);
-  }
-}
-
-function keepDialogOpenForPrivateKeyPicker(event) {
-  if (privateKeyPickerOpen.value) {
-    event.preventDefault();
   }
 }
 
@@ -633,6 +620,7 @@ async function saveConnection() {
         </header>
 
         <form
+          v-if="dialogReady"
           class="conn-dialog-body"
           autocomplete="off"
           @submit.prevent="saveConnection"
@@ -640,7 +628,6 @@ async function saveConnection() {
           <ConnectionProtocolPicker
             v-if="!isEdit"
             :model-value="activeProtocol"
-            :locked="false"
             :protocols="CONNECTION_PROTOCOLS"
             @update:model-value="selectProtocol"
           />
@@ -703,6 +690,11 @@ async function saveConnection() {
             @update-field="updateActiveField"
           />
         </form>
+        <div
+          v-else
+          class="conn-dialog-body min-h-[280px]"
+          aria-hidden="true"
+        />
 
         <JumpHostEditorDialog
           v-if="isSSH"
@@ -728,6 +720,7 @@ async function saveConnection() {
           <button
             type="button"
             class="ui-button-primary"
+            :disabled="!dialogReady"
             @click="saveConnection"
           >
             {{ isEdit ? t("actions.save") : t("actions.addConnection") }}

@@ -1,9 +1,10 @@
 <script setup>
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { ToggleGroupItem, ToggleGroupRoot } from "reka-ui";
-import { FileKey, KeyRound, Lock, Route, ShieldCheck } from "@lucide/vue";
+import { FileKey, Route } from "@lucide/vue";
 import UiSelect from "../UiSelect.vue";
+import CredentialModeTabs from "./CredentialModeTabs.vue";
+import { toCredentialOptions } from "./connectionDialogModel";
 import { appFieldNames, NO_NATIVE_AUTOCOMPLETE } from "../../utils/autocomplete";
 
 const props = defineProps({
@@ -29,12 +30,7 @@ const hasFilteredCredentials = computed(() => props.filteredCredentials.length >
 const credentialMode = computed(() =>
   props.form.savedCredentialId ? "saved" : props.form.authMethod,
 );
-const credentialOptions = computed(() =>
-  props.filteredCredentials.map((credential) => ({
-    label: `${credential.name} · ${t(`credentials.credTypes.${credential.credType}`)}`,
-    value: credential.id,
-  })),
-);
+const credentialOptions = computed(() => toCredentialOptions(props.filteredCredentials, t));
 
 function updateField(field, value) {
   emit("update-field", field, value);
@@ -120,42 +116,12 @@ const jumpHostCount = computed(
 
   <div class="conn-field-group">
     <span class="conn-field-label">{{ t("connectionDialog.fields.authMethod") }}</span>
-    <ToggleGroupRoot
+    <CredentialModeTabs
       :model-value="credentialMode"
-      type="single"
-      class="conn-seg-tabs"
-      @update:model-value="selectCredentialMode"
-    >
-      <ToggleGroupItem
-        v-if="hasFilteredCredentials"
-        value="saved"
-        class="conn-seg-tab"
-      >
-        <ShieldCheck
-          :size="11"
-          stroke-width="2"
-        />
-        {{ t("connectionDialog.authMethods.savedCredential") }}
-      </ToggleGroupItem>
-      <ToggleGroupItem
-        v-for="method in ['password', 'key']"
-        :key="method"
-        :value="method"
-        class="conn-seg-tab"
-      >
-        <Lock
-          v-if="method === 'password'"
-          :size="11"
-          stroke-width="2"
-        />
-        <KeyRound
-          v-else
-          :size="11"
-          stroke-width="2"
-        />
-        {{ t(`connectionDialog.authMethods.${method}`) }}
-      </ToggleGroupItem>
-    </ToggleGroupRoot>
+      :show-saved="hasFilteredCredentials"
+      :methods="['password', 'key']"
+      @select="selectCredentialMode"
+    />
   </div>
 
   <div class="conn-auth-line-grid">

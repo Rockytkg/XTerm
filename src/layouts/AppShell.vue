@@ -22,7 +22,6 @@ import ShellPrimaryNav from "./shell/ShellPrimaryNav.vue";
 import ShellStatusBar from "./shell/ShellStatusBar.vue";
 import ShellTitlebar from "./shell/ShellTitlebar.vue";
 import WorkspaceRouteFrame from "./shell/WorkspaceRouteFrame.vue";
-import "../styles/context-menu.scss";
 import "../styles/shell-layout.scss";
 
 const { t } = useI18n();

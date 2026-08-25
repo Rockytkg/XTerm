@@ -3,25 +3,22 @@ import {
   readText as readClipboardText,
   writeText as writeClipboardText,
 } from "@tauri-apps/plugin-clipboard-manager";
-import { i18n } from "../i18n";
 import { createAsyncListenerRegistry } from "../utils/asyncListeners";
 import { addDomListener } from "../utils/domListeners";
-import { CONTEXT_MENU_LAYOUT } from "../utils/contextMenu";
-import { isMacPlatform } from "../utils/platform";
+import {
+  CONTEXT_MENU_LAYOUT,
+  contextMenuHeight,
+  contextMenuPosition,
+  normalizeContextMenuItems,
+} from "../utils/contextMenu";
+import { isMacPlatform, isPrimaryModifier } from "../utils/platform";
 
-const PRESERVE_DISABLED_IDS = new Set(["global-cut", "global-copy", "global-paste"]);
-const {
-  itemHeight: MENU_ITEM_HEIGHT,
-  maxHeight: MENU_MAX_HEIGHT,
-  minHeight: MENU_MIN_HEIGHT,
-  screenMargin: MENU_SCREEN_MARGIN,
-  separatorHeight: MENU_SEPARATOR_HEIGHT,
-  verticalPadding: MENU_VERTICAL_PADDING,
-  width: MENU_WIDTH,
-} = CONTEXT_MENU_LAYOUT;
+const { maxHeight: MENU_MAX_HEIGHT, width: MENU_WIDTH } = CONTEXT_MENU_LAYOUT;
 
 let initialized = false;
 let activeMenuActions = new Map();
+// 递增令牌：菜单被关闭或出现新的打开请求时，使进行中的异步打开（剪贴板读取）失效。
+let openToken = 0;
 const asyncListeners = createAsyncListenerRegistry();
 
 /**
@@ -40,10 +37,6 @@ export const contextMenuState = reactive({
   width: MENU_WIDTH,
   maxHeight: MENU_MAX_HEIGHT,
 });
-
-function t(key, params) {
-  return i18n.global.t(key, params);
-}
 
 const INERT_INPUT_TYPES = new Set([
   "button",
@@ -75,16 +68,12 @@ function editableTargetFrom(target) {
   return null;
 }
 
-function selectedTextFromEditable(target) {
+function selectedTextFrom(target) {
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
     const start = target.selectionStart ?? 0;
     const end = target.selectionEnd ?? start;
     return target.value.slice(start, end);
   }
-  return String(window.getSelection?.()?.toString() || "");
-}
-
-function selectedTextFromDocument() {
   return String(window.getSelection?.()?.toString() || "");
 }
 
@@ -103,15 +92,11 @@ function captureEditableSelection(target) {
 
 function buildEditContext(nativeEvent) {
   const editableTarget = editableTargetFrom(nativeEvent?.target);
-  const selectedText = editableTarget
-    ? selectedTextFromEditable(editableTarget)
-    : selectedTextFromDocument();
-
   return {
     editableTarget,
     nativeEvent,
     selection: editableTarget ? captureEditableSelection(editableTarget) : {},
-    selectedText,
+    selectedText: selectedTextFrom(editableTarget),
   };
 }
 
@@ -125,6 +110,11 @@ function restoreContentEditableRange(target, context) {
   selection.addRange(range);
 }
 
+/** 派发 input 事件，保证受控组件（:value + @input）状态与 DOM 同步。 */
+function notifyInput(target) {
+  target.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 function insertTextIntoTarget(target, text, context) {
   if (!target) return;
 
@@ -133,7 +123,7 @@ function insertTextIntoTarget(target, text, context) {
     const end = context.selection?.selectionEnd ?? target.selectionEnd ?? start;
     target.focus();
     target.setRangeText(text, start, end, "end");
-    target.dispatchEvent(new Event("input", { bubbles: true }));
+    notifyInput(target);
     return;
   }
 
@@ -147,7 +137,7 @@ function insertTextIntoTarget(target, text, context) {
     range.collapse(false);
     selection.removeAllRanges();
     selection.addRange(range);
-    target.dispatchEvent(new Event("input", { bubbles: true }));
+    notifyInput(target);
   }
 }
 
@@ -197,6 +187,57 @@ function selectAll(context) {
   selection.addRange(range);
 }
 
+/**
+ * 撤销/重做：execCommand 在 Chromium / WebKit 的文本框与 contenteditable 上
+ * 都能驱动原生编辑历史。菜单动作执行时菜单已关闭，先把焦点还回目标元素；
+ * 部分 webview 撤销/重做后不派发 input，值变化时补发一次以同步受控组件。
+ */
+function runEditHistoryCommand(context, command) {
+  const target = context.editableTarget;
+  if (!target) return;
+
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    const before = target.value;
+    target.focus();
+    document.execCommand?.(command);
+    if (target.value !== before) notifyInput(target);
+    return;
+  }
+
+  if (target.isContentEditable) {
+    restoreContentEditableRange(target, context);
+    document.execCommand?.(command);
+  }
+}
+
+/**
+ * 撤销/重做快捷键兜底：WebKitGTK 等 webview 不为表单控件处理编辑类加速键，
+ * 统一在这里补齐；webview 原生已处理时 execCommand 与原生行为等价
+ * （preventDefault 后不会重复执行）。元素级已处理（CodeMirror、xterm
+ * 会 preventDefault）或终端区域内不介入，避免与各自的历史栈冲突。
+ */
+function handleEditHistoryShortcut(event) {
+  if (event.defaultPrevented || event.altKey || !isPrimaryModifier(event)) return;
+  // 优先用物理键位（code），避免非英文布局下 event.key 不是 z/y。
+  const key =
+    event.code === "KeyZ" || event.code === "KeyY"
+      ? event.code.slice(-1).toLowerCase()
+      : String(event.key || "").toLowerCase();
+  const command =
+    key === "z"
+      ? event.shiftKey
+        ? "redo"
+        : "undo"
+      : key === "y" && !event.shiftKey && !isMacPlatform()
+        ? "redo"
+        : null;
+  if (!command) return;
+  const target = editableTargetFrom(event.target);
+  if (!target || target.closest(".xterm")) return;
+  event.preventDefault();
+  runEditHistoryCommand({ editableTarget: target }, command);
+}
+
 function defaultEditItems(context) {
   const hasSelection = !!context.selectedText;
   const canEdit = !!context.editableTarget;
@@ -204,10 +245,28 @@ function defaultEditItems(context) {
   const shortcutPrefix = isMacPlatform() ? "⌘" : "Ctrl+";
 
   return [
+    ...(canEdit
+      ? [
+          {
+            id: "global-undo",
+            labelKey: "contextMenu.undo",
+            icon: "undo",
+            shortcut: `${shortcutPrefix}Z`,
+            action: () => runEditHistoryCommand(context, "undo"),
+          },
+          {
+            id: "global-redo",
+            labelKey: "contextMenu.redo",
+            icon: "redo",
+            shortcut: isMacPlatform() ? "⇧⌘Z" : `${shortcutPrefix}Y`,
+            action: () => runEditHistoryCommand(context, "redo"),
+          },
+          { type: "separator" },
+        ]
+      : []),
     {
       id: "global-cut",
       labelKey: "contextMenu.cut",
-      label: t("contextMenu.cut"),
       icon: "cut",
       enabled: canEdit && hasSelection,
       shortcut: `${shortcutPrefix}X`,
@@ -216,7 +275,6 @@ function defaultEditItems(context) {
     {
       id: "global-copy",
       labelKey: "contextMenu.copy",
-      label: t("contextMenu.copy"),
       icon: "copy",
       enabled: hasSelection,
       shortcut: `${shortcutPrefix}C`,
@@ -225,7 +283,6 @@ function defaultEditItems(context) {
     {
       id: "global-paste",
       labelKey: "contextMenu.paste",
-      label: t("contextMenu.paste"),
       icon: "paste",
       enabled: canEdit,
       shortcut: `${shortcutPrefix}V`,
@@ -234,7 +291,6 @@ function defaultEditItems(context) {
     {
       id: "global-delete",
       labelKey: "contextMenu.delete",
-      label: t("contextMenu.delete"),
       icon: "delete",
       enabled: canEdit && hasSelection,
       action: () => deleteSelection(context),
@@ -243,7 +299,6 @@ function defaultEditItems(context) {
     {
       id: "global-select-all",
       labelKey: "contextMenu.selectAll",
-      label: t("contextMenu.selectAll"),
       icon: "selectAll",
       enabled: canEdit || !!document.body?.innerText,
       shortcut: `${shortcutPrefix}A`,
@@ -252,48 +307,9 @@ function defaultEditItems(context) {
   ];
 }
 
-function normalizeItems(rawItems) {
-  const normalized = [];
-  for (const item of rawItems.flat().filter(Boolean)) {
-    if (item.type === "separator") {
-      if (normalized.length && normalized[normalized.length - 1].type !== "separator") {
-        normalized.push({ id: `separator-${normalized.length}`, type: "separator" });
-      }
-      continue;
-    }
-
-    const normalizedItem = {
-      enabled: item.enabled !== false,
-      ...item,
-      id: item.id || `item-${normalized.length}`,
-      type: "item",
-    };
-    if (normalizedItem.enabled === false && !PRESERVE_DISABLED_IDS.has(normalizedItem.id)) {
-      continue;
-    }
-    normalized.push(normalizedItem);
-  }
-
-  while (normalized[normalized.length - 1]?.type === "separator") normalized.pop();
-  return normalized;
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), Math.max(min, max));
-}
-
 function finiteNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
-}
-
-function menuHeight(items, maxHeight = MENU_MAX_HEIGHT) {
-  const contentHeight = items.reduce(
-    (height, item) =>
-      height + (item.type === "separator" ? MENU_SEPARATOR_HEIGHT : MENU_ITEM_HEIGHT),
-    MENU_VERTICAL_PADDING,
-  );
-  return Math.min(maxHeight, Math.max(MENU_MIN_HEIGHT, contentHeight));
 }
 
 /** 菜单项的纯展示视图（剥离动作回调），回调只存在 activeMenuActions 里。 */
@@ -330,7 +346,16 @@ function isContextMenuTarget(target) {
   return target instanceof Element && !!target.closest("[data-context-menu-root]");
 }
 
+function preserveModalForMenuInteraction(event) {
+  if (isContextMenuTarget(event.target)) {
+    // Reka UI 的 dismissable layer 在 document 冒泡阶段处理 pointerdown；
+    // 菜单按钮自身已经完成目标阶段处理，此处只阻断后续的 outside-dismiss。
+    event.stopImmediatePropagation();
+  }
+}
+
 function dismissMenu() {
+  openToken += 1;
   activeMenuActions = new Map();
   if (!contextMenuState.visible) return;
   contextMenuState.visible = false;
@@ -338,24 +363,30 @@ function dismissMenu() {
 }
 
 /**
- * 打开菜单。定位用 contextmenu 事件的 clientX/Y（窗口内坐标），并按
- * 视口边缘收拢。
+ * 打开菜单。定位用 contextmenu 事件的 clientX/Y（窗口内坐标），边缘翻转
+ * 与收拢规则见 contextMenuPosition。
  */
 function openMenu(items, context, nativeEvent) {
   dismissMenu();
   activeMenuActions = menuActionMap(items, context);
   const width = MENU_WIDTH;
-  const height = menuHeight(items);
-  const viewWidth = Math.max(window.innerWidth || 0, width + MENU_SCREEN_MARGIN * 2);
-  const viewHeight = Math.max(window.innerHeight || 0, height + MENU_SCREEN_MARGIN * 2);
-  const rawX = finiteNumber(nativeEvent?.clientX, (viewWidth - width) / 2);
-  const rawY = finiteNumber(nativeEvent?.clientY, (viewHeight - height) / 2);
+  const height = contextMenuHeight(items);
+  const viewWidth = window.innerWidth || 0;
+  const viewHeight = window.innerHeight || 0;
+  const { x, y } = contextMenuPosition({
+    x: finiteNumber(nativeEvent?.clientX, (viewWidth - width) / 2),
+    y: finiteNumber(nativeEvent?.clientY, (viewHeight - height) / 2),
+    width,
+    height,
+    viewWidth,
+    viewHeight,
+  });
   contextMenuState.items = items.map(menuItemView);
   contextMenuState.theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
   contextMenuState.width = width;
   contextMenuState.maxHeight = height;
-  contextMenuState.x = clamp(rawX, MENU_SCREEN_MARGIN, viewWidth - width - MENU_SCREEN_MARGIN);
-  contextMenuState.y = clamp(rawY, MENU_SCREEN_MARGIN, viewHeight - height - MENU_SCREEN_MARGIN);
+  contextMenuState.x = x;
+  contextMenuState.y = y;
   contextMenuState.visible = true;
 }
 
@@ -379,6 +410,9 @@ export function initializeContextMenuService() {
     }),
   );
 
+  // 输入框撤销/重做快捷键兜底（见 handleEditHistoryShortcut 注释）。
+  asyncListeners.add(addDomListener(document, "keydown", handleEditHistoryShortcut));
+
   // Click-to-dismiss：在捕获阶段收起菜单外的交互，菜单根节点内的事件继续
   // 传播到按钮，以便由 Vue 的 click 处理器执行动作。
   asyncListeners.add(
@@ -395,27 +429,51 @@ export function initializeContextMenuService() {
       true,
     ),
   );
+
+  // 菜单通过 Teleport 位于 DialogContent 外部，但仍属于当前交互链路。
+  // 在 document 冒泡阶段隔离菜单事件，避免模态框误判为点击外部而关闭。
+  asyncListeners.add(addDomListener(document, "pointerdown", preserveModalForMenuInteraction));
+  asyncListeners.add(addDomListener(document, "click", preserveModalForMenuInteraction));
+
+  // 与原生菜单一致：视口缩放或菜单外滚动时收起（菜单自身滚动除外）。
+  asyncListeners.add(
+    addDomListener(window, "resize", () => {
+      if (contextMenuState.visible) dismissMenu();
+    }),
+  );
+  asyncListeners.add(
+    addDomListener(
+      document,
+      "scroll",
+      (event) => {
+        if (contextMenuState.visible && !isContextMenuTarget(event.target)) dismissMenu();
+      },
+      true,
+    ),
+  );
 }
 
 export function dismissContextMenu() {
   dismissMenu();
 }
 
-export function openContextMenu(
+export async function openContextMenu(
   nativeEvent,
   { items = [], suppressDefaultEditItems = false } = {},
 ) {
   initializeContextMenuService();
 
   const context = buildEditContext(nativeEvent);
-  const providedItems = normalizeItems(items);
-  const shouldShowEditItems =
+  const providedItems = normalizeContextMenuItems(items);
+  const editItems =
     !suppressDefaultEditItems &&
-    (!providedItems.length || context.editableTarget || context.selectedText);
-  const nextItems = normalizeItems([
+    (!providedItems.length || context.editableTarget || context.selectedText)
+      ? defaultEditItems(context)
+      : [];
+  const nextItems = normalizeContextMenuItems([
     ...providedItems,
-    ...(providedItems.length && shouldShowEditItems ? [{ type: "separator" }] : []),
-    ...(shouldShowEditItems ? defaultEditItems(context) : []),
+    ...(providedItems.length && editItems.length ? [{ type: "separator" }] : []),
+    ...editItems,
   ]);
 
   if (!nextItems.length) {
@@ -425,6 +483,18 @@ export function openContextMenu(
 
   nativeEvent?.preventDefault?.();
   nativeEvent?.stopPropagation?.();
+  // 新的右键请求立即收起旧菜单：剪贴板读取是异步 IPC，期间旧菜单不应残留。
+  dismissMenu();
+
+  // “粘贴”的可用态取决于剪贴板是否真有文本：读取是异步 IPC，读取期间
+  // 菜单被关闭或出现新的右键请求（openToken 变化）时放弃本次打开。
+  const pasteItem = nextItems.find((item) => item.id === "global-paste" && item.enabled);
+  if (pasteItem) {
+    const token = ++openToken;
+    const clipboardText = await readClipboardText().catch(() => "");
+    if (token !== openToken) return;
+    pasteItem.enabled = !!clipboardText;
+  }
 
   openMenu(nextItems, context, nativeEvent);
 }

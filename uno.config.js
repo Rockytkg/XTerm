@@ -303,11 +303,8 @@ export default defineConfig({
     "conn-seg-tab":
       "flex-1 min-h-[38px] flex items-center justify-center gap-[7px] rounded-[8px] border border-border bg-bg-primary px-[12px] py-[7px] text-[0.8571em] font-600 text-text-secondary transition-[background-color,border-color,box-shadow,color] duration-150 hover:border-[color-mix(in_oklch,var(--accent)_36%,var(--border))] hover:text-text-primary focus-visible:border-[color-mix(in_oklch,var(--accent)_36%,var(--border))] focus-visible:text-text-primary focus-visible:outline-none",
     "conn-protocol-grid": "grid grid-cols-[repeat(3,minmax(0,1fr))] gap-[8px]",
-    "conn-protocol-grid-locked": "grid-cols-[minmax(0,1fr)]",
     "conn-protocol-card":
       "min-h-[40px] flex items-center justify-center gap-[7px] rounded-[8px] border border-border bg-bg-primary text-[0.8571em] font-600 text-text-secondary transition-[background-color,border-color,box-shadow,color] duration-150 hover:bg-bg-tertiary hover:text-text-primary focus-visible:border-accent focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:cursor-default",
-    "conn-protocol-card-hidden": "hidden",
-    "conn-protocol-lock": "ml-auto mr-[2px] opacity-80",
     "conn-browse-btn":
       "h-[34px] shrink-0 flex items-center gap-[5px] rounded-[7px] border border-border bg-bg-primary px-[12px] text-[0.8571em] text-text-secondary transition-[background-color,color] duration-150 hover:bg-bg-tertiary hover:text-text-primary",
   },

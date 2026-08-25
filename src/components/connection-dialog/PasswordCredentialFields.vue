@@ -1,9 +1,9 @@
 <script setup>
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { ToggleGroupItem, ToggleGroupRoot } from "reka-ui";
-import { Lock, ShieldCheck } from "@lucide/vue";
 import UiSelect from "../UiSelect.vue";
+import CredentialModeTabs from "./CredentialModeTabs.vue";
+import { toCredentialOptions } from "./connectionDialogModel";
 import { appFieldNames, NO_NATIVE_AUTOCOMPLETE } from "../../utils/autocomplete";
 
 const props = defineProps({
@@ -28,12 +28,7 @@ const selectedSavedCredentialMissing = computed(
   () =>
     credentialMode.value === "saved" && props.form.savedCredentialId && !props.selectedCredential,
 );
-const credentialOptions = computed(() =>
-  props.filteredCredentials.map((credential) => ({
-    label: `${credential.name} · ${t(`credentials.credTypes.${credential.credType}`)}`,
-    value: credential.id,
-  })),
-);
+const credentialOptions = computed(() => toCredentialOptions(props.filteredCredentials, t));
 
 function updateField(field, value) {
   emit("update-field", field, value);
@@ -54,33 +49,11 @@ function selectCredentialMode(mode) {
 <template>
   <div class="conn-field-group">
     <span class="conn-field-label">{{ t("connectionDialog.fields.authMethod") }}</span>
-    <ToggleGroupRoot
+    <CredentialModeTabs
       :model-value="credentialMode"
-      type="single"
-      class="conn-seg-tabs"
-      @update:model-value="selectCredentialMode"
-    >
-      <ToggleGroupItem
-        value="password"
-        class="conn-seg-tab"
-      >
-        <Lock
-          :size="11"
-          stroke-width="2"
-        />
-        {{ t("connectionDialog.authMethods.password") }}
-      </ToggleGroupItem>
-      <ToggleGroupItem
-        value="saved"
-        class="conn-seg-tab"
-      >
-        <ShieldCheck
-          :size="11"
-          stroke-width="2"
-        />
-        {{ t("connectionDialog.authMethods.savedCredential") }}
-      </ToggleGroupItem>
-    </ToggleGroupRoot>
+      show-saved
+      @select="selectCredentialMode"
+    />
   </div>
 
   <div class="conn-auth-line-grid">

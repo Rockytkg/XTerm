@@ -64,6 +64,15 @@ function normalizeJumpHost(hop = {}) {
   };
 }
 
+// Shared "name · type" options for saved-credential pickers across the
+// connection dialog and the jump-host editor.
+export function toCredentialOptions(credentials, t) {
+  return credentials.map((credential) => ({
+    label: `${credential.name} · ${t(`credentials.credTypes.${credential.credType}`)}`,
+    value: credential.id,
+  }));
+}
+
 export function createProtocolDraft(protocol, profile = null) {
   const normalizedProtocol = normalizeConnectionProtocol(protocol);
   const common = commonDraftFromProfile(profile, normalizedProtocol);

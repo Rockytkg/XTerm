@@ -19,10 +19,7 @@
 
     box-sizing: border-box;
     inline-size: var(--context-menu-panel-width);
-    max-block-size: min(
-      var(--context-menu-max-height),
-      var(--reka-context-menu-content-available-height, var(--context-menu-max-height))
-    );
+    max-block-size: var(--context-menu-max-height);
     min-block-size: 44px;
     padding: 5px;
     overflow-y: auto;
@@ -58,20 +55,15 @@
       0 1px 0 oklch(100% 0 0deg / 4.5%) inset;
   }
 
-  /* 模态框开启时 reka-ui 会让 body 暂时失去指针事件；菜单是独立的
-     Teleport 内容，必须在自己的交互边界上恢复事件。 */
-  .context-menu-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    pointer-events: auto;
-  }
-
+  /* 菜单面板直接定位在视口内（无遮罩层），菜单外点击穿透到下层元素并
+     触发关闭。模态框开启时 reka-ui 会让 body 暂时失去指针事件，菜单是
+     独立的 Teleport 内容，必须在自己的边界上恢复事件。 */
   .context-menu-panel {
     position: fixed;
     inset-block-start: var(--context-menu-y, 0);
     inset-inline-start: var(--context-menu-x, 0);
-    max-block-size: var(--context-menu-max-height);
+    z-index: 100;
+    pointer-events: auto;
   }
 
   .ui-context-menu-item {
@@ -133,33 +125,32 @@
     background: var(--context-menu-divider);
   }
 
-  .ui-context-menu-item:not(.is-danger):is([data-highlighted], :hover:not([data-disabled])) {
+  .ui-context-menu-item:not(.is-danger):is([data-highlighted], :hover:not(:disabled)) {
     background: var(--context-menu-hover-bg);
     color: var(--context-menu-hover-text);
     box-shadow: 0 0 0 1px var(--context-menu-hover-border) inset;
     outline: none;
   }
 
-  .ui-context-menu-item.is-danger:is([data-highlighted], :hover:not([data-disabled])) {
+  .ui-context-menu-item.is-danger:is([data-highlighted], :hover:not(:disabled)) {
     background: var(--context-menu-danger-bg);
     color: var(--context-menu-danger-text);
     box-shadow: 0 0 0 1px var(--context-menu-danger-border) inset;
     outline: none;
   }
 
-  .ui-context-menu-item:is([data-highlighted], :hover:not([data-disabled]))
+  .ui-context-menu-item:is([data-highlighted], :hover:not(:disabled))
     :is(.ui-context-menu-icon, .ui-context-menu-shortcut) {
     color: currentcolor;
   }
 
-  .ui-context-menu-item[data-disabled] {
+  .ui-context-menu-item:disabled {
     color: var(--context-menu-muted);
     cursor: default;
     opacity: 0.46;
   }
 
-  .ui-context-menu-item[data-disabled] .ui-context-menu-icon,
-  .ui-context-menu-item[data-disabled] .ui-context-menu-shortcut {
+  .ui-context-menu-item:disabled :is(.ui-context-menu-icon, .ui-context-menu-shortcut) {
     color: currentcolor;
   }
 }

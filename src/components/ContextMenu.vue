@@ -39,23 +39,19 @@ watch(
 
 <template>
   <Teleport to="body">
-    <!-- 遮罩不拦截 contextmenu：右键菜单外区域时交给 document 监听器重新定位；
+    <!-- 菜单外区域的 contextmenu 直接穿透到 document 监听器重新定位；
          面板自身阻止，避免菜单上右键抖动。 -->
-    <div
+    <ContextMenuPanel
       v-if="contextMenuState.visible && contextMenuState.items.length"
-      class="context-menu-overlay"
-    >
-      <ContextMenuPanel
-        ref="menuRef"
-        class="context-menu-panel"
-        data-context-menu-root
-        :items="contextMenuState.items"
-        :theme="contextMenuState.theme"
-        :style="panelStyle"
-        @contextmenu.stop.prevent
-        @keydown.escape.stop.prevent="dismissContextMenu()"
-        @activate="activateContextMenuItem($event.id)"
-      />
-    </div>
+      ref="menuRef"
+      class="context-menu-panel"
+      data-context-menu-root
+      :items="contextMenuState.items"
+      :theme="contextMenuState.theme"
+      :style="panelStyle"
+      @contextmenu.stop.prevent
+      @keydown.escape.stop.prevent="dismissContextMenu()"
+      @activate="activateContextMenuItem($event.id)"
+    />
   </Teleport>
 </template>

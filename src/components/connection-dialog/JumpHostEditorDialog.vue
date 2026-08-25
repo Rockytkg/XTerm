@@ -1,6 +1,6 @@
 <script setup>
 import "../../styles/connection-dialog.scss";
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   DialogClose,
@@ -22,18 +22,18 @@ import {
   ChevronUp,
   FileKey,
   KeyRound,
-  Lock,
   Network,
   Plus,
   Server,
-  ShieldCheck,
   Trash2,
   X,
 } from "@lucide/vue";
-import { choosePrivateKey } from "../../services/credentials";
+import { usePrivateKeyPicker } from "../../composables/usePrivateKeyPicker";
 import { appFieldNames, NO_NATIVE_AUTOCOMPLETE } from "../../utils/autocomplete";
 import { requiresHostKeyVerification } from "../../utils/connectionProtocols";
 import UiSelect from "../UiSelect.vue";
+import CredentialModeTabs from "./CredentialModeTabs.vue";
+import { toCredentialOptions } from "./connectionDialogModel";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -47,8 +47,8 @@ const props = defineProps({
 const emit = defineEmits(["update:open", "update:jumpHosts"]);
 const { t } = useI18n();
 const selectedIndex = ref(0);
-const privateKeyPickerOpen = ref(false);
-let privateKeyPickerResetTimer = null;
+const { pickPrivateKey, keepDialogOpen: keepDialogOpenForPrivateKeyPicker } =
+  usePrivateKeyPicker();
 
 const hops = computed(() => (Array.isArray(props.jumpHosts) ? props.jumpHosts : []));
 const sshConnections = computed(() =>
@@ -60,12 +60,7 @@ const sshConnections = computed(() =>
 const selectedHop = computed(() => hops.value[selectedIndex.value] ?? null);
 const selectedConnection = computed(() => connectionById(selectedHop.value?.connectionId));
 const hasCredentials = computed(() => props.credentials.length > 0);
-const credentialOptions = computed(() =>
-  props.credentials.map((credential) => ({
-    label: credentialLabel(credential),
-    value: credential.id,
-  })),
-);
+const credentialOptions = computed(() => toCredentialOptions(props.credentials, t));
 const manualAuthMode = computed(() => {
   if (selectedHop.value?.savedCredentialId) return "saved";
   return selectedHop.value?.authMethod || "password";
@@ -82,13 +77,6 @@ watch(
   },
 );
 
-onBeforeUnmount(() => {
-  if (privateKeyPickerResetTimer) {
-    window.clearTimeout(privateKeyPickerResetTimer);
-    privateKeyPickerResetTimer = null;
-  }
-});
-
 function connectionById(id) {
   if (!id) return null;
   return sshConnections.value.find((connection) => connection.id === id) ?? null;
@@ -100,11 +88,6 @@ function connectionSummary(connection) {
   const user = connection.user ? `${connection.user}@` : "";
   const port = connection.port ? `:${connection.port}` : "";
   return `${user}${host}${port}`;
-}
-
-function credentialLabel(credential) {
-  if (!credential) return "";
-  return `${credential.name} · ${t(`credentials.credTypes.${credential.credType}`)}`;
 }
 
 function hopMode(hop) {
@@ -253,28 +236,9 @@ function moveHop(index, offset) {
 }
 
 async function pickPrivateKeyFile(index) {
-  if (privateKeyPickerOpen.value) return;
-  if (privateKeyPickerResetTimer) {
-    window.clearTimeout(privateKeyPickerResetTimer);
-    privateKeyPickerResetTimer = null;
-  }
-  privateKeyPickerOpen.value = true;
-  try {
-    const privateKey = await choosePrivateKey(t("credentials.fields.choosePrivateKeyTitle"));
-    if (privateKey) {
-      updateHop(index, { privateKey });
-    }
-  } finally {
-    privateKeyPickerResetTimer = window.setTimeout(() => {
-      privateKeyPickerOpen.value = false;
-      privateKeyPickerResetTimer = null;
-    }, 150);
-  }
-}
-
-function keepDialogOpenForPrivateKeyPicker(event) {
-  if (privateKeyPickerOpen.value) {
-    event.preventDefault();
+  const privateKey = await pickPrivateKey(t("credentials.fields.choosePrivateKeyTitle"));
+  if (privateKey) {
+    updateHop(index, { privateKey });
   }
 }
 </script>
@@ -536,48 +500,16 @@ function keepDialogOpenForPrivateKeyPicker(event) {
                     <span class="conn-field-label">{{
                       t("connectionDialog.fields.authMethod")
                     }}</span>
-                    <ToggleGroupRoot
+                    <CredentialModeTabs
                       :model-value="manualAuthMode"
-                      type="single"
-                      class="conn-seg-tabs"
-                      @update:model-value="
+                      :show-saved="hasCredentials"
+                      :methods="['password', 'key']"
+                      @select="
                         $event === 'saved'
                           ? selectCredential(selectedIndex, credentials[0])
                           : setManualAuthMethod(selectedIndex, $event)
                       "
-                    >
-                      <ToggleGroupItem
-                        v-if="hasCredentials"
-                        value="saved"
-                        class="conn-seg-tab"
-                      >
-                        <ShieldCheck
-                          :size="11"
-                          stroke-width="2"
-                        />
-                        {{ t("connectionDialog.authMethods.savedCredential") }}
-                      </ToggleGroupItem>
-                      <ToggleGroupItem
-                        value="password"
-                        class="conn-seg-tab"
-                      >
-                        <Lock
-                          :size="11"
-                          stroke-width="2"
-                        />
-                        {{ t("connectionDialog.authMethods.password") }}
-                      </ToggleGroupItem>
-                      <ToggleGroupItem
-                        value="key"
-                        class="conn-seg-tab"
-                      >
-                        <KeyRound
-                          :size="11"
-                          stroke-width="2"
-                        />
-                        {{ t("connectionDialog.authMethods.key") }}
-                      </ToggleGroupItem>
-                    </ToggleGroupRoot>
+                    />
                   </div>
 
                   <div class="conn-field-group">
