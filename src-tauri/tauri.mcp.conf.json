@@ -1,0 +1,15 @@
+{
+  "app": {
+    "security": {
+      "capabilities": [
+        "default",
+        {
+          "identifier": "mcp-debug",
+          "description": "Development-only access for the Tauri MCP bridge.",
+          "windows": ["main"],
+          "permissions": ["mcp-bridge:default"]
+        }
+      ]
+    }
+  }
+}

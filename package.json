@@ -14,7 +14,7 @@
     "lint:fix": "eslint . --fix && stylelint \"**/*.{scss,vue}\" --fix",
     "test": "node --test",
     "preview": "vite preview",
-    "tauri": "tauri dev",
+    "tauri": "tauri dev --features mcp-bridge --config src-tauri/tauri.mcp.conf.json",
     "release": "tauri build",
     "release:debug": "tauri build --debug"
   },

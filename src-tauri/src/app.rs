@@ -8,7 +8,6 @@ use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
 use crate::{paths::AppPaths, state::AppState, storage::Store};
 
 const MAIN_WINDOW_LABEL: &str = "main";
-const CONTEXT_MENU_WINDOW_LABEL: &str = "context-menu";
 
 static APP_SHUTDOWN_STARTED: AtomicBool = AtomicBool::new(false);
 
@@ -425,11 +424,7 @@ pub fn run() {
                 .timezone_strategy(TimezoneStrategy::UseLocal)
                 .build(),
         )
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                .with_denylist(&[CONTEXT_MENU_WINDOW_LABEL])
-                .build(),
-        )
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -578,7 +573,7 @@ fn show_desktop_error_dialog(text: &str) {
 fn show_desktop_error_dialog(_text: &str) {}
 
 fn configure_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    #[cfg(feature = "mcp-bridge")]
+    #[cfg(all(debug_assertions, feature = "mcp-bridge"))]
     let builder = builder.plugin(
         tauri_plugin_mcp_bridge::Builder::new()
             .bind_address("127.0.0.1")
@@ -626,9 +621,6 @@ async fn shutdown_application_resources<R: tauri::Runtime>(app: &tauri::AppHandl
     crate::terminal::shutdown_all_sessions(app);
     crate::proxy::shutdown_proxy(app).await;
     crate::file_service::shutdown_runtime(app).await;
-    if let Some(window) = app.get_webview_window(CONTEXT_MENU_WINDOW_LABEL) {
-        let _ = window.close();
-    }
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let _ = window.close();
     }

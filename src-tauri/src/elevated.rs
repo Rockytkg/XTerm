@@ -208,13 +208,12 @@ async fn allow_rule(rule: &ServiceRule) -> Result<(), FirewallCommandError> {
             )
             .await
         };
-        return result.map_err(|error| {
+        result.inspect_err(|error| {
             logging::event("firewall", "firewall.allow.failed")
                 .field("prefix", rule.prefix)
                 .field("detail", &error.detail)
                 .warn();
-            error
-        });
+        })
     }
 }
 

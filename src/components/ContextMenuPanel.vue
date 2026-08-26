@@ -48,6 +48,11 @@ function containsFocusedElement() {
   return !!menuRef.value?.contains(document.activeElement);
 }
 
+/** 指针移出菜单区域时清除悬停高亮（与原生菜单一致）；键盘导航不经指针事件，不受影响。 */
+function clearActive() {
+  activeIndex.value = -1;
+}
+
 function moveActive(index) {
   if (index < 0 || index === activeIndex.value) return;
   activeIndex.value = index;
@@ -108,6 +113,7 @@ defineExpose({ focus, containsFocusedElement });
     role="menu"
     tabindex="-1"
     @keydown="onKeydown"
+    @pointerleave="clearActive"
   >
     <template
       v-for="(item, index) in items"

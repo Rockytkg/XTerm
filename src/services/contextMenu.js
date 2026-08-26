@@ -415,10 +415,14 @@ export function initializeContextMenuService() {
 
   // Click-to-dismiss：在捕获阶段收起菜单外的交互，菜单根节点内的事件继续
   // 传播到按钮，以便由 Vue 的 click 处理器执行动作。
+  // 必须用 pointerdown 而不是 mousedown：Reka UI 的 DialogOverlay 会对落在自身的
+  // 左键 pointerdown 调 preventDefault（DialogOverlayImpl 的 withModifiers prevent），
+  // pointerdown 被取消后浏览器不再派发 mousedown/mouseup/click 兼容鼠标事件，
+  // 遮罩点击若靠 mousedown 监听就永远收不到，模态框关了菜单却残留。
   asyncListeners.add(
     addDomListener(
       document,
-      "mousedown",
+      "pointerdown",
       (event) => {
         if (event.button === 2) return;
         if (isContextMenuTarget(event.target)) return;
