@@ -19,6 +19,7 @@ import {
   setConnectionSavedCredential,
 } from "../services/workspace";
 import { useAppPreferences } from "../composables/useAppPreferences";
+import { useDialogExitTeardown } from "../composables/useDialogExitTeardown";
 import {
   normalizeCredentialUsages,
   useCredentialDeleteFlow,
@@ -53,8 +54,10 @@ const graphError = ref("");
 const loading = ref(false);
 const pendingRelation = ref(null);
 const pendingBulkCredentialDelete = ref(null);
+const bulkCredentialDeleteOpen = ref(false);
 const relationBusy = ref(false);
 const relationDrawMode = ref(false);
+const { scheduleExitTeardown, cancelExitTeardown } = useDialogExitTeardown();
 
 let cy = null;
 let unmounted = false;
@@ -943,10 +946,12 @@ function requestDeleteSelectedCredentialNodes(credentialsToDelete = selectedCred
       usages: credentialUsages(data.entityId),
     }));
   if (!normalized.length) return;
+  cancelExitTeardown();
   pendingBulkCredentialDelete.value = {
     credentials: normalized,
     usageCount: normalized.reduce((count, credential) => count + credential.usages.length, 0),
   };
+  bulkCredentialDeleteOpen.value = true;
 }
 
 function contextMenuItem(id, label, icon, enabled, action, options = {}) {
@@ -1263,7 +1268,11 @@ async function confirmBulkCredentialDelete() {
       }
       await deleteCredential(credential.id);
     }
-    pendingBulkCredentialDelete.value = null;
+    bulkCredentialDeleteOpen.value = false;
+    // 退出动画期间保留 pending 数据，slot 里的删除列表不会先于弹壳消失
+    scheduleExitTeardown(() => {
+      pendingBulkCredentialDelete.value = null;
+    });
     await refreshGraph();
     emit("state-changed");
     showToast({ type: "success", title: t("notifications.credentialDeleted") });
@@ -1281,6 +1290,7 @@ async function confirmBulkCredentialDelete() {
 
 function cancelBulkCredentialDelete() {
   if (credentialDeleteBusy.value) return;
+  bulkCredentialDeleteOpen.value = false;
   pendingBulkCredentialDelete.value = null;
 }
 
@@ -1755,7 +1765,7 @@ defineExpose({
     </ConfirmDialog>
 
     <ConfirmDialog
-      :open="Boolean(pendingBulkCredentialDelete)"
+      :open="bulkCredentialDeleteOpen"
       tone="danger"
       :loading="credentialDeleteBusy"
       :title="t('relationshipGraph.confirm.credentialDelete.bulkTitle')"

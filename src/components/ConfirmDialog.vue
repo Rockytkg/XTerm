@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
 } from "reka-ui";
 import { AlertTriangle, CheckCircle2, Info, LoaderCircle } from "@lucide/vue";
+import { DIALOG_EXIT_MS } from "../composables/useDialogExitTeardown";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -95,8 +96,7 @@ const toneButtonClass = computed(
 
 // 取消/ESC/遮罩路径延迟向父组件传播关闭：先让根组件进入 closed 状态播放
 // 退出动画，动画结束后才 emit update:open。这样父组件的触发数据（含 slot
-// 内容）在动画期间保持原样。时长需覆盖 --motion-duration-quick（70ms）。
-const CLOSE_PROPAGATION_DELAY = 120;
+// 内容）在动画期间保持原样。时长需覆盖退出动画（--motion-duration-quick）。
 const closing = ref(false);
 let closeTimer = null;
 const renderedOpen = computed(() => props.open && !closing.value);
@@ -132,7 +132,7 @@ function setOpen(value) {
     emit("cancel");
     // 父组件未响应关闭（未把 open 置 false）时恢复显示，避免弹窗卡在隐藏态
     closing.value = false;
-  }, CLOSE_PROPAGATION_DELAY);
+  }, DIALOG_EXIT_MS);
 }
 
 function confirm() {

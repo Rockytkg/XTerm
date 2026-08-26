@@ -1,5 +1,6 @@
 import { computed, ref } from "vue";
 import { choosePrivateKey, createCredential, updateCredential } from "../services/credentials";
+import { useDialogExitTeardown } from "./useDialogExitTeardown";
 import { createLogger } from "../utils/logger";
 
 const logger = createLogger("frontend.credentials.editor");
@@ -43,6 +44,7 @@ export function useCredentialEditor({ t, showToast }) {
   const formError = ref("");
   const passwordForm = ref(defaultPasswordForm());
   const keyForm = ref(defaultKeyForm());
+  const { scheduleExitTeardown, cancelExitTeardown } = useDialogExitTeardown();
 
   const canSave = computed(() => {
     if (addingType.value === "password") {
@@ -77,12 +79,14 @@ export function useCredentialEditor({ t, showToast }) {
   }
 
   function startAdd(type) {
+    cancelExitTeardown();
     resetEditorState();
     addingType.value = type;
     credentialDialogOpen.value = true;
   }
 
   function startEdit(credential) {
+    cancelExitTeardown();
     resetEditorState();
     addingType.value = credential.credType;
     editingCredential.value = credential;
@@ -100,14 +104,21 @@ export function useCredentialEditor({ t, showToast }) {
     };
   }
 
+  // 关闭只翻转 open；addingType/编辑目标等驱动渲染的状态延迟到退出动画
+  // 结束后重置，否则弹壳会在消失途中被重渲染（密码表单换成更高的私钥
+  // 表单、标题从"编辑"闪回"添加"）。
   function closeEditor() {
     credentialDialogOpen.value = false;
-    resetEditorState();
+    scheduleExitTeardown(resetEditorState);
   }
 
   function onCredentialDialogOpenChange(value) {
     credentialDialogOpen.value = value;
-    if (!value) resetEditorState();
+    if (value) {
+      cancelExitTeardown();
+    } else {
+      scheduleExitTeardown(resetEditorState);
+    }
   }
 
   function selectCredentialType(type) {
@@ -207,7 +218,6 @@ export function useCredentialEditor({ t, showToast }) {
     passwordForm,
     persistCredentialRequest,
     pickPrivateKeyFile,
-    resetEditorState,
     selectCredentialType,
     startAdd,
     startEdit,

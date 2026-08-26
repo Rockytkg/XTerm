@@ -9,6 +9,7 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 import AddConnectionDialog from "../components/AddConnectionDialog.vue";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 import { useRoute, useRouter } from "vue-router";
+import { useDialogExitTeardown } from "../composables/useDialogExitTeardown";
 import { useToasts } from "../composables/useToasts";
 import { createSortableCleanup } from "../utils/sortableCleanup";
 import { sortableMotion } from "../utils/motion";
@@ -35,6 +36,7 @@ const editorOpen = ref(false);
 const pendingDelete = ref(null);
 const listRef = ref(null);
 const dragging = ref(false);
+const { scheduleExitTeardown, cancelExitTeardown } = useDialogExitTeardown();
 
 const CLICK_SUPPRESS_MS = 180;
 const CONNECTION_ORDER_SEPARATOR = "\u001f";
@@ -162,7 +164,8 @@ async function onSave({ id }) {
       message: String(error),
     });
   }
-  editingConn.value = null;
+  // 保存成功后弹窗会自行关闭（update:open），编辑实例由 onEditorOpenChange
+  // 在退出动画结束后统一销毁，这里不再立即置空。
 }
 
 function onConnect(conn) {
@@ -206,6 +209,7 @@ function openConnectionEditorFromRoute() {
 
 async function openConnectionEditor(connection) {
   if (!connection) return;
+  cancelExitTeardown();
   editorOpen.value = false;
   editingConn.value = null;
   await nextTick();
@@ -216,7 +220,13 @@ async function openConnectionEditor(connection) {
 
 function onEditorOpenChange(value) {
   editorOpen.value = value;
-  if (!value) editingConn.value = null;
+  // 编辑实例由 v-if 挂载，立即置空会跳过退出动画直接卸载；延迟到动画
+  // 结束后再销毁，内容与高度在退出期间保持稳定。
+  if (!value) {
+    scheduleExitTeardown(() => {
+      editingConn.value = null;
+    });
+  }
 }
 
 async function confirmRemove() {

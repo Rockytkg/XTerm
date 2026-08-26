@@ -1,5 +1,6 @@
 import { computed, ref } from "vue";
 import { clearCredentialReferences, deleteCredential } from "../services/credentials";
+import { useDialogExitTeardown } from "./useDialogExitTeardown";
 
 export function normalizeCredentialUsages(usages, credentialId) {
   const seen = new Set();
@@ -22,7 +23,7 @@ export function useCredentialDeleteFlow({ t, showToast, getUsages, onDeleted, on
   const credentialDeleteOpen = ref(false);
   const pendingCredentialDelete = ref(null);
   const credentialDeleteBusy = ref(false);
-  let clearPendingTimer = 0;
+  const { scheduleExitTeardown, cancelExitTeardown } = useDialogExitTeardown();
 
   const pendingCredentialDeleteDescription = computed(() => {
     const pending = pendingCredentialDelete.value;
@@ -38,7 +39,7 @@ export function useCredentialDeleteFlow({ t, showToast, getUsages, onDeleted, on
 
   function requestCredentialDelete(credential = {}) {
     if (!credential.id) return;
-    window.clearTimeout(clearPendingTimer);
+    cancelExitTeardown();
     pendingCredentialDelete.value = {
       id: credential.id,
       name: credential.name || credential.title || credential.id,
@@ -49,12 +50,10 @@ export function useCredentialDeleteFlow({ t, showToast, getUsages, onDeleted, on
 
   function closeCredentialDeleteDialog() {
     credentialDeleteOpen.value = false;
-    window.clearTimeout(clearPendingTimer);
-    clearPendingTimer = window.setTimeout(() => {
-      if (!credentialDeleteOpen.value) {
-        pendingCredentialDelete.value = null;
-      }
-    }, 180);
+    // 退出动画仍在渲染确认内容，pending 数据延迟到动画结束后清空
+    scheduleExitTeardown(() => {
+      pendingCredentialDelete.value = null;
+    });
   }
 
   async function confirmCredentialDelete() {

@@ -45,6 +45,7 @@ import { sortableMotion } from "../utils/motion";
 import { loadWorkspaceBootstrap } from "../services/workspace";
 import { useAppPreferences } from "../composables/useAppPreferences";
 import { useCredentialEditor } from "../composables/useCredentialEditor";
+import { useDialogExitTeardown } from "../composables/useDialogExitTeardown";
 import {
   normalizeCredentialUsages,
   useCredentialDeleteFlow,
@@ -72,10 +73,12 @@ const connections = ref([]);
 const cleanupConfirmOpen = ref(false);
 const isCleaning = ref(false);
 const typeChangeConfirm = ref(null);
+const typeChangeDialogOpen = ref(false);
 const credentialUsages = ref([]);
 const layoutModes = Object.freeze(["graph", "cards"]);
 const listRef = ref(null);
 const dragging = ref(false);
+const { scheduleExitTeardown, cancelExitTeardown } = useDialogExitTeardown();
 
 const CREDENTIAL_ORDER_SEPARATOR = "\u001f";
 const SORTABLE_STATE_CLASSES = [
@@ -186,7 +189,9 @@ async function addCredential() {
     connections: connections.value,
   });
   if (impact.needsConfirmation) {
+    cancelExitTeardown();
     typeChangeConfirm.value = { impact, request };
+    typeChangeDialogOpen.value = true;
     return;
   }
   await persistCredentialSave(request);
@@ -210,8 +215,14 @@ async function persistCredentialSave(request) {
 
 async function resolveTypeChangeConfirm(action) {
   const pending = typeChangeConfirm.value;
-  typeChangeConfirm.value = null;
-  if (!pending || action === CREDENTIAL_TYPE_CHANGE_ACTION.CANCEL) return;
+  typeChangeDialogOpen.value = false;
+  if (!pending) return;
+  // 弹窗立即开始退出动画，impact 数据延迟清理：slot 里的受影响引用
+  // 列表若在关闭瞬间清空，弹壳会在消失途中塌掉一节高度。
+  scheduleExitTeardown(() => {
+    typeChangeConfirm.value = null;
+  });
+  if (action === CREDENTIAL_TYPE_CHANGE_ACTION.CANCEL) return;
   await persistCredentialSave({
     ...pending.request,
     mode: action,
@@ -694,7 +705,7 @@ onBeforeUnmount(() => {
     >
       <DialogPortal>
         <DialogOverlay class="dialog-overlay conn-dialog-overlay" />
-        <DialogContent class="dialog-content conn-dialog cred-dialog focus:outline-none">
+        <DialogContent class="dialog-content conn-dialog focus:outline-none">
           <header class="conn-dialog-header">
             <div
               class="conn-dialog-header-icon"
@@ -799,19 +810,17 @@ onBeforeUnmount(() => {
                   :placeholder="t('credentials.fields.namePlaceholder')"
                 >
               </label>
-              <div class="grid grid-cols-[repeat(1,minmax(0,1fr))] gap-[10px]">
-                <label class="conn-field-group min-w-0">
-                  <span class="conn-field-label">{{ t("credentials.fields.passphrase") }}</span>
-                  <input
-                    v-model="keyForm.passphrase"
-                    type="password"
-                    class="ui-input min-w-0"
-                    :name="appFieldNames.keyPassphrase"
-                    :autocomplete="NO_NATIVE_AUTOCOMPLETE"
-                    :placeholder="t('credentials.fields.passphrasePlaceholder')"
-                  >
-                </label>
-              </div>
+              <label class="conn-field-group">
+                <span class="conn-field-label">{{ t("credentials.fields.passphrase") }}</span>
+                <input
+                  v-model="keyForm.passphrase"
+                  type="password"
+                  class="ui-input"
+                  :name="appFieldNames.keyPassphrase"
+                  :autocomplete="NO_NATIVE_AUTOCOMPLETE"
+                  :placeholder="t('credentials.fields.passphrasePlaceholder')"
+                >
+              </label>
               <label class="conn-field-group">
                 <span class="conn-field-label">{{ t("credentials.fields.comment") }}</span>
                 <input
@@ -920,7 +929,7 @@ onBeforeUnmount(() => {
     />
 
     <ConfirmDialog
-      :open="!!typeChangeConfirm"
+      :open="typeChangeDialogOpen"
       tone="warning"
       :title="t('credentials.typeChangeConfirm.title')"
       :description="

@@ -15,6 +15,7 @@ import {
 import { CirclePlus, SquarePen, X } from "@lucide/vue";
 import { createCredential, loadCredentials } from "../services/credentials";
 import { invokeDebugIpc } from "../services/ipc/core";
+import { useDialogExitTeardown } from "../composables/useDialogExitTeardown";
 import { usePrivateKeyPicker } from "../composables/usePrivateKeyPicker";
 import { createConnection, getConnection, updateConnectionProfile } from "../services/workspace";
 import {
@@ -66,6 +67,7 @@ let dialogLoadToken = 0;
 
 const { pickPrivateKey, keepDialogOpen: keepDialogOpenForPrivateKeyPicker } =
   usePrivateKeyPicker();
+const { scheduleExitTeardown, cancelExitTeardown } = useDialogExitTeardown();
 
 const protocolDrafts = reactive({
   ssh: createProtocolDraft("ssh"),
@@ -154,12 +156,17 @@ watch(
   dialogOpen,
   (value) => {
     if (value) {
+      cancelExitTeardown();
       void initializeDialog();
     } else {
       dialogLoadToken += 1;
-      dialogReady.value = false;
       jumpHostEditorOpen.value = false;
       serialPortsLoading.value = false;
+      // 退出动画结束后再收起表单：立即把 dialogReady 置 false 会让弹壳在
+      // 消失途中从完整表单换成空白占位，高度骤降。
+      scheduleExitTeardown(() => {
+        dialogReady.value = false;
+      });
     }
   },
   { immediate: true },
