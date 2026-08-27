@@ -1,21 +1,20 @@
 <script setup>
 import { useI18n } from "vue-i18n";
 import { Activity, Gauge } from "@lucide/vue";
-import { formatLatency, formatPercent, formatRate } from "./performanceFormatters";
+import { formatRate } from "../../utils/formatBytes";
+import { formatLatency, formatPercent } from "./performanceFormatters";
 import { usePerformanceCharts } from "./usePerformanceCharts";
 import { usePerformanceMetrics } from "./usePerformanceMetrics";
 import { connectionCan } from "../../utils/connectionCapabilities";
 
 const props = defineProps({
-  active: { type: Boolean, default: false },
   activeConnection: { type: Object, default: null },
   history: { type: Object, default: null },
   runtimeMetrics: { type: Object, default: null },
-  latencyMs: { type: Number, default: null },
 });
 
 const { t } = useI18n();
-const { cpuPercent, detailGroups, healthItems, memoryInfo, runtimeUnavailable } =
+const { cpuPercent, detailRows, latencyMs, memoryPercent, runtimeUnavailable, statCards } =
   usePerformanceMetrics(props, t);
 const { cpuCanvasRef, memoryCanvasRef, networkCanvasRef } = usePerformanceCharts(props, t);
 </script>
@@ -26,7 +25,7 @@ const { cpuCanvasRef, memoryCanvasRef, networkCanvasRef } = usePerformanceCharts
       <div class="workspace-sidebar-section-head">
         <div class="workspace-sidebar-section-icon">
           <Gauge
-            :size="15"
+            :size="16"
             stroke-width="1.8"
           />
         </div>
@@ -53,23 +52,35 @@ const { cpuCanvasRef, memoryCanvasRef, networkCanvasRef } = usePerformanceCharts
         v-if="!runtimeUnavailable"
         class="perf-dashboard"
       >
-        <section class="perf-health-grid">
+        <section class="perf-stat-grid">
           <div
-            v-for="item in healthItems"
-            :key="item.id"
-            class="perf-health-card"
-            :class="`perf-tone-${item.tone}`"
+            v-for="card in statCards"
+            :key="card.id"
+            class="perf-stat-card"
+            :class="`perf-tone-${card.tone}`"
           >
-            <div class="perf-health-top">
-              <component
-                :is="item.icon"
-                :size="13"
-                stroke-width="1.8"
-              />
-              <span>{{ item.label }}</span>
+            <div class="perf-stat-head">
+              <span class="perf-stat-icon">
+                <component
+                  :is="card.icon"
+                  :size="12"
+                  stroke-width="1.8"
+                />
+              </span>
+              <span class="perf-stat-label">{{ card.label }}</span>
             </div>
-            <strong>{{ item.value }}</strong>
-            <small>{{ item.hint }}</small>
+            <div class="perf-stat-value">
+              {{ card.value }}
+            </div>
+            <div
+              v-if="card.meter != null"
+              class="perf-meter"
+            >
+              <span :style="{ '--perf-meter-value': `${card.meter}%` }" />
+            </div>
+            <div class="perf-stat-hint">
+              {{ card.hint }}
+            </div>
           </div>
         </section>
 
@@ -79,41 +90,40 @@ const { cpuCanvasRef, memoryCanvasRef, networkCanvasRef } = usePerformanceCharts
               <span>{{ t("overview.runtime.cpu") }}</span>
               <strong>{{ formatPercent(cpuPercent) }}</strong>
             </div>
-            <div class="perf-chart-shell">
+            <div class="perf-chart">
               <canvas ref="cpuCanvasRef" />
             </div>
           </div>
           <div class="perf-trend-card">
             <div class="perf-trend-head">
               <span>{{ t("overview.runtime.memory") }}</span>
-              <strong>{{ memoryInfo.label }}</strong>
+              <strong>{{ formatPercent(memoryPercent) }}</strong>
             </div>
-            <div class="perf-chart-shell">
+            <div class="perf-chart">
               <canvas ref="memoryCanvasRef" />
             </div>
           </div>
           <div class="perf-trend-card perf-trend-card-wide">
             <div class="perf-trend-head">
-              <span>Network</span>
-              <strong>RX {{ formatRate(runtimeMetrics?.networkRxRate) }}</strong>
+              <span>{{ t("overview.runtime.network") }}</span>
+              <strong>
+                ↓ {{ formatRate(runtimeMetrics?.networkRxRate) }} · ↑
+                {{ formatRate(runtimeMetrics?.networkTxRate) }}
+              </strong>
             </div>
-            <div class="perf-chart-shell">
+            <div class="perf-chart">
               <canvas ref="networkCanvasRef" />
             </div>
           </div>
         </section>
 
-        <section class="perf-detail-grid">
-          <div
-            v-for="group in detailGroups"
-            :key="group.id"
-            class="perf-detail-group"
-          >
-            <div class="perf-detail-title">
-              {{ group.label }}
-            </div>
+        <section class="perf-detail-card">
+          <div class="perf-detail-title">
+            {{ t("overview.runtime.details") }}
+          </div>
+          <div class="perf-detail-rows">
             <div
-              v-for="row in group.rows"
+              v-for="row in detailRows"
               :key="row[0]"
               class="perf-detail-row"
             >

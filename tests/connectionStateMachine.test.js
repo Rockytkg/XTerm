@@ -80,3 +80,38 @@ test("a normal close is not upgraded to failure by a stale worker event", () => 
   assert.strictEqual(staleFailure, closed);
   assert.equal(staleFailure.status, "closed");
 });
+
+test("closing an offline session does not flash a disconnecting (warning) state", () => {
+  const failed = reduceConnectionState(
+    { status: "connecting", phase: "connecting", error: null },
+    {
+      type: CONNECTION_EVENT.SESSION_FAILED,
+      payload: { detail: "SSH transport write failed" },
+    },
+  );
+  assert.strictEqual(
+    reduceConnectionState(failed, { type: CONNECTION_EVENT.CLOSE_REQUESTED }),
+    failed,
+  );
+
+  const closed = reduceConnectionState(
+    { status: "connected", phase: null, error: null },
+    { type: CONNECTION_EVENT.SESSION_CLOSED, payload: { detail: "remote closed" } },
+  );
+  assert.strictEqual(
+    reduceConnectionState(closed, { type: CONNECTION_EVENT.CLOSE_REQUESTED }),
+    closed,
+  );
+
+  const idle = reduceConnectionState(undefined, { type: CONNECTION_EVENT.CLOSE_REQUESTED });
+  assert.equal(idle.status, "idle");
+});
+
+test("closing a live session still transitions through disconnecting", () => {
+  const disconnecting = reduceConnectionState(
+    { status: "connected", phase: null, error: null },
+    { type: CONNECTION_EVENT.CLOSE_REQUESTED },
+  );
+  assert.equal(disconnecting.status, "disconnecting");
+  assert.equal(disconnecting.phase, "disconnecting");
+});

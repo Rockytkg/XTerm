@@ -1,17 +1,25 @@
 import { computed } from "vue";
 import { Cpu, HardDrive, MemoryStick, Network } from "@lucide/vue";
-import { formatBytes } from "../../utils/formatBytes";
+import { formatBytes, formatRate } from "../../utils/formatBytes";
 import {
   boundedPercent,
   formatDuration,
   formatInteger,
-  formatLatency,
   formatPercent,
-  formatRate,
 } from "./performanceFormatters";
+
+function usageText(used, total) {
+  return total ? `${formatBytes(used)} / ${formatBytes(total)}` : "-";
+}
 
 export function usePerformanceMetrics(props, t) {
   const runtimeUnavailable = computed(() => !!props.runtimeMetrics?.unavailable);
+
+  const latencyMs = computed(() => {
+    const value = Number(props.runtimeMetrics?.latencyMs);
+    return Number.isFinite(value) ? value : null;
+  });
+
   const cpuPercent = computed(() =>
     props.runtimeMetrics?.cpuReady === false
       ? null
@@ -19,119 +27,74 @@ export function usePerformanceMetrics(props, t) {
   );
   const memoryPercent = computed(() => boundedPercent(props.runtimeMetrics?.memoryPercent));
   const diskPercent = computed(() => boundedPercent(props.runtimeMetrics?.diskPercent));
-  const swapPercent = computed(() => boundedPercent(props.runtimeMetrics?.swapPercent));
 
-  const memoryInfo = computed(() => {
-    const total = props.runtimeMetrics?.memoryTotal;
-    const used = props.runtimeMetrics?.memoryUsed;
-    const available = props.runtimeMetrics?.memoryAvailable;
-    return {
-      label: formatPercent(memoryPercent.value),
-      used: total ? `${formatBytes(used)} / ${formatBytes(total)}` : "-",
-      available: formatBytes(available),
-    };
+  const statCards = computed(() => {
+    const metrics = props.runtimeMetrics || {};
+    return [
+      {
+        id: "cpu",
+        icon: Cpu,
+        tone: "accent",
+        label: t("overview.runtime.cpu"),
+        value: formatPercent(cpuPercent.value),
+        meter: cpuPercent.value,
+        hint: `usr ${formatPercent(metrics.cpuUserPercent)} / sys ${formatPercent(metrics.cpuSystemPercent)}`,
+      },
+      {
+        id: "memory",
+        icon: MemoryStick,
+        tone: "success",
+        label: t("overview.runtime.memory"),
+        value: formatPercent(memoryPercent.value),
+        meter: memoryPercent.value,
+        hint: usageText(metrics.memoryUsed, metrics.memoryTotal),
+      },
+      {
+        id: "disk",
+        icon: HardDrive,
+        tone: "warning",
+        label: t("overview.runtime.disk"),
+        value: formatPercent(diskPercent.value),
+        meter: diskPercent.value,
+        hint: usageText(metrics.diskUsed, metrics.diskTotal),
+      },
+      {
+        id: "network",
+        icon: Network,
+        tone: "info",
+        label: t("overview.runtime.network"),
+        value: `↓ ${formatRate(metrics.networkRxRate)}`,
+        meter: null,
+        hint: `↑ ${formatRate(metrics.networkTxRate)}`,
+      },
+    ];
   });
 
-  const diskInfo = computed(() => {
-    const total = props.runtimeMetrics?.diskTotal;
-    const used = props.runtimeMetrics?.diskUsed;
-    const available = props.runtimeMetrics?.diskAvailable;
-    return {
-      label: formatPercent(diskPercent.value),
-      used: total ? `${formatBytes(used)} / ${formatBytes(total)}` : "-",
-      available: formatBytes(available),
-    };
+  const detailRows = computed(() => {
+    const metrics = props.runtimeMetrics || {};
+    const load = String(metrics.loadAverage || "").trim();
+    return [
+      [t("overview.runtime.load"), load || "-"],
+      [t("overview.runtime.uptime"), formatDuration(metrics.uptimeSeconds)],
+      [t("overview.runtime.processes"), formatInteger(metrics.processCount)],
+      [t("overview.runtime.threads"), formatInteger(metrics.threadCount)],
+      [t("overview.runtime.available"), formatBytes(metrics.memoryAvailable)],
+      [
+        t("overview.runtime.swap"),
+        metrics.swapTotal ? usageText(metrics.swapUsed, metrics.swapTotal) : "-",
+      ],
+      [t("overview.runtime.iowait"), formatPercent(metrics.cpuIowaitPercent)],
+      [t("overview.runtime.steal"), formatPercent(metrics.cpuStealPercent)],
+      [t("overview.runtime.inodes"), formatPercent(metrics.diskInodePercent)],
+    ];
   });
-
-  const loadAverage = computed(() => {
-    const load = props.runtimeMetrics?.loadAverage;
-    return load && String(load).trim() ? String(load).trim() : "-";
-  });
-
-  const healthItems = computed(() => [
-    {
-      id: "cpu",
-      icon: Cpu,
-      label: t("overview.runtime.cpu"),
-      value: formatPercent(cpuPercent.value),
-      hint: [
-        `usr ${formatPercent(props.runtimeMetrics?.cpuUserPercent)}`,
-        `sys ${formatPercent(props.runtimeMetrics?.cpuSystemPercent)}`,
-      ].join(" / "),
-      tone: "accent",
-    },
-    {
-      id: "memory",
-      icon: MemoryStick,
-      label: t("overview.runtime.memory"),
-      value: memoryInfo.value.label,
-      hint: memoryInfo.value.used,
-      tone: "success",
-    },
-    {
-      id: "disk",
-      icon: HardDrive,
-      label: t("overview.runtime.disk"),
-      value: diskInfo.value.label,
-      hint: diskInfo.value.used,
-      tone: "warning",
-    },
-    {
-      id: "network",
-      icon: Network,
-      label: "Network",
-      value: formatRate(props.runtimeMetrics?.networkRxRate),
-      hint: `TX ${formatRate(props.runtimeMetrics?.networkTxRate)}`,
-      tone: "info",
-    },
-  ]);
-
-  const detailGroups = computed(() => [
-    {
-      id: "cpu",
-      label: t("overview.runtime.cpu"),
-      rows: [
-        ["User", formatPercent(props.runtimeMetrics?.cpuUserPercent)],
-        ["System", formatPercent(props.runtimeMetrics?.cpuSystemPercent)],
-        ["I/O wait", formatPercent(props.runtimeMetrics?.cpuIowaitPercent)],
-        ["Steal", formatPercent(props.runtimeMetrics?.cpuStealPercent)],
-      ],
-    },
-    {
-      id: "memory",
-      label: t("overview.runtime.memory"),
-      rows: [
-        ["Available", memoryInfo.value.available],
-        [
-          "Swap",
-          props.runtimeMetrics?.swapTotal
-            ? `${formatBytes(props.runtimeMetrics?.swapUsed)} / ${formatBytes(props.runtimeMetrics?.swapTotal)}`
-            : "-",
-        ],
-        ["Processes", formatInteger(props.runtimeMetrics?.processCount)],
-        ["Threads", formatInteger(props.runtimeMetrics?.threadCount)],
-      ],
-    },
-    {
-      id: "system",
-      label: "System",
-      rows: [
-        [t("overview.runtime.load"), loadAverage.value],
-        [t("overview.session.latency"), formatLatency(props.latencyMs)],
-        ["Uptime", formatDuration(props.runtimeMetrics?.uptimeSeconds)],
-        ["Inodes", formatPercent(props.runtimeMetrics?.diskInodePercent)],
-      ],
-    },
-  ]);
 
   return {
     cpuPercent,
-    detailGroups,
-    diskPercent,
-    healthItems,
-    memoryInfo,
+    detailRows,
+    latencyMs,
     memoryPercent,
     runtimeUnavailable,
-    swapPercent,
+    statCards,
   };
 }

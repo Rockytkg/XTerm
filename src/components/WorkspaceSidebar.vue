@@ -25,10 +25,6 @@ const hasActiveConnection = computed(() => !!props.activeConnection);
 const showServiceView = computed(
   () => props.activeView === "proxy" || props.activeView === "file-service",
 );
-const latencyMs = computed(() => {
-  const latency = Number(props.runtimeMetrics?.latencyMs);
-  return Number.isFinite(latency) ? latency : null;
-});
 </script>
 
 <template>
@@ -36,7 +32,6 @@ const latencyMs = computed(() => {
     class="workspace-sidebar-panel"
     :class="{
       'workspace-sidebar-panel-performance': activeView === 'performance',
-      'workspace-sidebar-panel-proxy': activeView === 'proxy',
       'workspace-sidebar-panel-file-service': activeView === 'file-service',
     }"
   >
@@ -67,10 +62,8 @@ const latencyMs = computed(() => {
 
       <WorkspaceSidebarPerformanceView
         v-if="activeView === 'performance'"
-        active
         :active-connection="activeConnection"
         :history="performanceHistory"
-        :latency-ms="latencyMs"
         :runtime-metrics="runtimeMetrics"
       />
 

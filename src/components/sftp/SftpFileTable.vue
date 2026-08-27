@@ -22,7 +22,6 @@ const props = defineProps({
   isEditingEntry: { type: Function, required: true },
   labels: { type: Object, required: true },
   loading: { type: Boolean, default: false },
-  moveDragActive: { type: Boolean, default: false },
   moveDropTargetPath: { type: String, default: "" },
   parentDirectoryEntry: { type: Object, default: null },
   selectedNames: { type: Object, required: true },

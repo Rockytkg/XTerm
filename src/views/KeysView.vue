@@ -26,7 +26,6 @@ import {
   Trash2,
   X,
 } from "@lucide/vue";
-import Sortable from "sortablejs";
 import "../styles/connection-dialog.scss";
 // Per-view import: this component renders independently from other consumers of this stylesheet.
 import "../styles/settings-tab-switcher.scss";
@@ -41,7 +40,6 @@ import {
   loadCredentials,
   reorderCredentials,
 } from "../services/credentials";
-import { sortableMotion } from "../utils/motion";
 import { loadWorkspaceBootstrap } from "../services/workspace";
 import { useAppPreferences } from "../composables/useAppPreferences";
 import { useCredentialEditor } from "../composables/useCredentialEditor";
@@ -50,13 +48,13 @@ import {
   normalizeCredentialUsages,
   useCredentialDeleteFlow,
 } from "../composables/useCredentialDeleteFlow";
+import { useSortableList } from "../composables/useSortableList";
 import { useToasts } from "../composables/useToasts";
 import { supportsSavedCredential } from "../utils/connectionProtocols";
 import {
   buildCredentialTypeChangeImpact,
   CREDENTIAL_TYPE_CHANGE_ACTION,
 } from "../utils/credentialTypeChange";
-import { createSortableCleanup } from "../utils/sortableCleanup";
 import { createLogger } from "../utils/logger";
 import { noop } from "../utils/noop";
 
@@ -77,25 +75,9 @@ const typeChangeDialogOpen = ref(false);
 const credentialUsages = ref([]);
 const layoutModes = Object.freeze(["graph", "cards"]);
 const listRef = ref(null);
-const dragging = ref(false);
 const { scheduleExitTeardown, cancelExitTeardown } = useDialogExitTeardown();
 
-const CREDENTIAL_ORDER_SEPARATOR = "\u001f";
-const SORTABLE_STATE_CLASSES = [
-  "session-card-sortable-chosen",
-  "session-card-sortable-ghost",
-  "session-card-sortable-drag",
-  "session-card-sortable-fallback",
-];
-
-let sortable = null;
 let unmounted = false;
-const sortableCleanup = createSortableCleanup({
-  classNames: SORTABLE_STATE_CLASSES,
-  onReset: () => {
-    dragging.value = false;
-  },
-});
 
 const {
   addingType,
@@ -303,15 +285,19 @@ const graphConnections = computed(() =>
   connections.value.filter((connection) => supportsSavedCredential(connection?.protocol || "ssh")),
 );
 const relationshipEdgeCount = computed(
-  () =>
-    graphConnections.value.filter(
-      (connection) =>
-        supportsSavedCredential(connection?.protocol || "ssh") && connection.savedCredentialId,
-    ).length,
+  () => graphConnections.value.filter((connection) => connection.savedCredentialId).length,
 );
 function credentialUsagesFor(credentialId) {
   return credentialUsageMap.value.get(credentialId) || [];
 }
+
+// 卡片渲染用的装饰列表：usage 预计算一次，模板不再重复查 Map。
+const credentialCards = computed(() =>
+  credentials.value.map((credential) => ({
+    ...credential,
+    usages: credentialUsagesFor(credential.id),
+  })),
+);
 
 function typeChangeUsageNames(usages) {
   return usages
@@ -324,86 +310,36 @@ function credentialIds() {
   return credentials.value.map((credential) => credential.id);
 }
 
-function sameOrder(a, b) {
-  return a.length === b.length && a.every((id, index) => id === b[index]);
-}
-
-function syncSortableOrder() {
-  if (!sortable || dragging.value) return;
-  const ids = credentialIds();
-  const domOrder = sortable.toArray().filter(Boolean);
-  sortable.option("disabled", ids.length < 2);
-  if (!sameOrder(domOrder, ids)) {
-    sortable.sort(ids, false);
-  }
-}
-
-function createSortable() {
-  const list = listRef.value;
-  if (!list || sortable || isGraphLayout.value) return;
-
-  sortable = Sortable.create(list, {
-    ...sortableMotion,
-    draggable: ".cred-card",
-    dataIdAttr: "data-id",
-    delay: 170,
-    delayOnTouchOnly: false,
-    touchStartThreshold: 4,
-    fallbackClass: "session-card-sortable-fallback",
-    fallbackTolerance: 5,
-    forceFallback: true,
-    fallbackOnBody: true,
-    scroll: true,
-    bubbleScroll: false,
-    scrollSensitivity: 48,
-    scrollSpeed: 14,
-    swapThreshold: 0.62,
-    ghostClass: "session-card-sortable-ghost",
-    chosenClass: "session-card-sortable-chosen",
-    dragClass: "session-card-sortable-drag",
-    filter: ".cred-card-actions, .cred-card-actions *",
-    preventOnFilter: false,
-    onStart() {
-      dragging.value = true;
-    },
-    async onEnd() {
-      const nextOrder = sortable.toArray().filter(Boolean);
-      sortableCleanup.resetSortableState();
-
-      if (!sameOrder(nextOrder, credentialIds())) {
-        const previousCredentials = [...credentials.value];
-        const credentialById = new Map(
-          credentials.value.map((credential) => [credential.id, credential]),
-        );
-        credentials.value = nextOrder.map((id) => credentialById.get(id)).filter(Boolean);
-        try {
-          await reorderCredentials(nextOrder);
-          await loadCredentialState();
-        } catch (error) {
-          credentials.value = previousCredentials;
-          showToast({
-            type: "error",
-            title: t("notifications.credentialOrderSaveFailed"),
-            message: String(error),
-          });
-        }
-      }
-
-      nextTick(syncSortableOrder);
-    },
-    onUnchoose() {
-      sortableCleanup.resetSortableState();
-    },
-  });
-
-  syncSortableOrder();
-}
-
-function destroySortable() {
-  sortable?.destroy();
-  sortable = null;
-  dragging.value = false;
-}
+const { dragging, sortableCleanup, createSortable, destroySortable } = useSortableList({
+  listRef,
+  ids: credentialIds,
+  draggable: ".cred-card",
+  filter: ".cred-card-actions, .cred-card-actions *",
+  delay: 170,
+  delayOnTouchOnly: false,
+  enabled: () => !isGraphLayout.value,
+  async onReorder(nextOrder) {
+    const previousCredentials = [...credentials.value];
+    const credentialById = new Map(
+      credentials.value.map((credential) => [credential.id, credential]),
+    );
+    credentials.value = nextOrder.map((id) => credentialById.get(id)).filter(Boolean);
+    try {
+      await reorderCredentials(nextOrder);
+      await loadCredentialState();
+    } catch (error) {
+      credentials.value = previousCredentials;
+      throw error;
+    }
+  },
+  onReorderError(error) {
+    showToast({
+      type: "error",
+      title: t("notifications.credentialOrderSaveFailed"),
+      message: String(error),
+    });
+  },
+});
 
 const {
   credentialDeleteOpen,
@@ -431,13 +367,6 @@ const {
 watch(
   [() => route.name, () => route.query.edit, () => credentials.value],
   openCredentialEditorFromRoute,
-);
-
-watch(
-  () => credentialIds().join(CREDENTIAL_ORDER_SEPARATOR),
-  () => {
-    nextTick(syncSortableOrder);
-  },
 );
 
 watch(isGraphLayout, async (graphLayout) => {
@@ -555,7 +484,6 @@ onBeforeUnmount(() => {
       <CredentialGraphView
         v-if="isGraphLayout"
         ref="graphView"
-        embedded
         @state-changed="refreshCredentialUsages"
       />
 
@@ -589,7 +517,7 @@ onBeforeUnmount(() => {
           :class="{ 'cred-list-dragging': dragging }"
         >
           <div
-            v-for="cred in credentials"
+            v-for="cred in credentialCards"
             :key="cred.id"
             class="cred-card"
             :data-id="cred.id"
@@ -625,13 +553,11 @@ onBeforeUnmount(() => {
                     </span>
                     <span
                       class="cred-card-badge"
-                      :class="credentialUsagesFor(cred.id).length ? 'badge-used' : 'badge-unused'"
+                      :class="cred.usages.length ? 'badge-used' : 'badge-unused'"
                     >
                       {{
-                        credentialUsagesFor(cred.id).length
-                          ? t("credentials.card.usedCount", {
-                            count: credentialUsagesFor(cred.id).length,
-                          })
+                        cred.usages.length
+                          ? t("credentials.card.usedCount", { count: cred.usages.length })
                           : t("credentials.card.unused")
                       }}
                     </span>
@@ -639,11 +565,11 @@ onBeforeUnmount(() => {
                   <div class="cred-card-compact-meta">
                     <span class="cred-card-meta-label">{{ t("credentials.card.references") }}</span>
                     <div
-                      v-if="credentialUsagesFor(cred.id).length"
+                      v-if="cred.usages.length"
                       class="cred-card-usage-list"
                     >
                       <span
-                        v-for="usage in credentialUsagesFor(cred.id)"
+                        v-for="usage in cred.usages"
                         :key="`${usage.connectionId}:${usage.relation}`"
                         class="cred-card-usage-item"
                         :title="usage.connectionName || usage.connectionId"

@@ -15,7 +15,7 @@ function normalizeShortcutKey(key) {
   return KEY_ALIASES[normalized] ?? normalized;
 }
 
-function normalizeShortcut(value) {
+export function normalizeShortcut(value) {
   return String(value || "")
     .split("+")
     .map((part) => normalizeShortcutKey(part))
@@ -24,7 +24,7 @@ function normalizeShortcut(value) {
     .join("+");
 }
 
-function eventShortcut(event) {
+export function eventShortcut(event) {
   const parts = [];
   if (event.ctrlKey) parts.push("ctrl");
   if (event.altKey) parts.push("alt");

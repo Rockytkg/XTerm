@@ -173,7 +173,9 @@ function optimizeRegexRule(rule) {
   return prefilter ? { ...rule, prefilter } : rule;
 }
 
-function buildAhoCorasick(patterns) {
+// trie 构建 + BFS fail 链对两种 matcher 完全一致，共享一份 nodes；
+// 差异只在 search 的输出形态（带 limit 的匹配列表 vs 候选规则集合）。
+function buildAhoCorasickNodes(patterns) {
   const nodes = [{ next: new Map(), fail: 0, out: [] }];
 
   function addPattern(pattern, payload) {
@@ -214,6 +216,12 @@ function buildAhoCorasick(patterns) {
     }
   }
 
+  return nodes;
+}
+
+function buildAhoCorasick(patterns) {
+  const nodes = buildAhoCorasickNodes(patterns);
+
   return {
     search(text, output, limit) {
       let state = 0;
@@ -232,45 +240,7 @@ function buildAhoCorasick(patterns) {
 }
 
 function buildRuleCandidateMatcher(patterns) {
-  const nodes = [{ next: new Map(), fail: 0, out: [] }];
-
-  function addPattern(pattern, payload) {
-    let state = 0;
-    for (let index = 0; index < pattern.length; index += 1) {
-      const ch = pattern[index];
-      const next = nodes[state].next.get(ch);
-      if (next !== undefined) {
-        state = next;
-        continue;
-      }
-      const id = nodes.length;
-      nodes.push({ next: new Map(), fail: 0, out: [] });
-      nodes[state].next.set(ch, id);
-      state = id;
-    }
-    nodes[state].out.push(payload);
-  }
-
-  for (const pattern of patterns) {
-    if (pattern?.pattern) addPattern(pattern.pattern, pattern.payload);
-  }
-
-  const queue = [];
-  for (const [, next] of nodes[0].next) {
-    nodes[next].fail = 0;
-    queue.push(next);
-  }
-  for (let qi = 0; qi < queue.length; qi += 1) {
-    const r = queue[qi];
-    for (const [ch, s] of nodes[r].next) {
-      queue.push(s);
-      let f = nodes[r].fail;
-      while (f && !nodes[f].next.has(ch)) f = nodes[f].fail;
-      const fallback = nodes[f].next.get(ch);
-      nodes[s].fail = fallback !== undefined ? fallback : 0;
-      nodes[s].out = nodes[s].out.concat(nodes[nodes[s].fail].out);
-    }
-  }
+  const nodes = buildAhoCorasickNodes(patterns);
 
   return {
     search(text, results) {

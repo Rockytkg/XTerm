@@ -3,7 +3,6 @@ const CONNECTION_STATUS = Object.freeze({
   CLOSED: "closed",
   CONNECTED: "connected",
   CONNECTING: "connecting",
-  DISCONNECTED: "disconnected",
   DISCONNECTING: "disconnecting",
   FAILED: "failed",
   IDLE: "idle",
@@ -60,7 +59,6 @@ const OFFLINE_STATUSES = new Set([
   CONNECTION_STATUS.FAILED,
   CONNECTION_STATUS.CLOSED,
   CONNECTION_STATUS.IDLE,
-  CONNECTION_STATUS.DISCONNECTED,
 ]);
 
 export function connectionRuntimeStatus(stateStatus, fallbackStatus = "offline") {
@@ -114,6 +112,9 @@ export function reduceConnectionState(previous = IDLE_CONNECTION_STATE, event) {
         error: payload.error ?? null,
       };
     case CONNECTION_EVENT.CLOSE_REQUESTED:
+      // 已离线（失败/关闭/空闲）的会话没有可断开的活连接，保持原状态收尾；
+      // 否则指示器会在会话移除前从灰色闪成黄色（disconnecting → warning）。
+      if (OFFLINE_STATUSES.has(previous?.status)) return previous;
       return {
         ...previous,
         status: CONNECTION_STATUS.DISCONNECTING,

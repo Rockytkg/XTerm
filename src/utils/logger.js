@@ -37,6 +37,12 @@ function shouldForwardToBackend(level) {
   return LOG_LEVEL_PRIORITY[level] <= LOG_LEVEL_PRIORITY[activeLogLevel];
 }
 
+// 与 ScopedLogger.emit 的门控一致；级别关闭时调用方可跳过组装日志实参
+// （如 summarizeValue 序列化），输出结果不变。
+export function isLogLevelEnabled(level) {
+  return shouldLog(level) || shouldForwardToBackend(level);
+}
+
 function stringifyDetails(details) {
   try {
     return JSON.stringify(details);

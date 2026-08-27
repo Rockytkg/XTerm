@@ -171,6 +171,10 @@ pub(crate) async fn run_runtime_metrics_monitor(
     let session = shared_ssh_session(state, &connection_id, &session_id)?;
     let monitor_interval = Duration::from_secs(2);
     let detail_sample_every = 5;
+    // 单次采样失败（通道争用、远端瞬时高负载）不应终止监控；
+    // 连续失败达到上限才判定采样不可用并退出，由前端展示不可用状态。
+    const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+    let mut consecutive_failures = 0_u32;
     let mut sample_index = 0_u64;
     let mut previous_cpu_total = None;
     let mut previous_cpu_idle = None;
@@ -204,6 +208,7 @@ pub(crate) async fn run_runtime_metrics_monitor(
         }
         match result {
             Ok(mut metrics) => {
+                consecutive_failures = 0;
                 let completed_at = Instant::now();
                 sample_index = sample_index.saturating_add(1);
                 if let (Some(total), Some(idle), Some(pt), Some(pi)) = (
@@ -267,15 +272,22 @@ pub(crate) async fn run_runtime_metrics_monitor(
                 emit_ssh_runtime_metrics(&app, metrics);
             }
             Err(error) => {
-                log::warn!(target: "ssh.auxiliary", "runtime metrics error for '{session_id}': {error}");
-                let mut metrics = empty_runtime_metrics();
-                metrics.connection_id = connection_id.clone();
-                metrics.session_id = session_id.clone();
-                metrics.sample_timestamp_ms = unix_timestamp_ms();
-                metrics.unavailable = true;
-                emit_ssh_runtime_metrics(&app, metrics);
-                state.remove_monitor_task(&session_id);
-                return Err(error);
+                consecutive_failures += 1;
+                log::warn!(
+                    target: "ssh.auxiliary",
+                    "runtime metrics sample failed for '{session_id}' ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}): {error}"
+                );
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    let mut metrics = empty_runtime_metrics();
+                    metrics.connection_id = connection_id.clone();
+                    metrics.session_id = session_id.clone();
+                    metrics.sample_timestamp_ms = unix_timestamp_ms();
+                    metrics.unavailable = true;
+                    emit_ssh_runtime_metrics(&app, metrics);
+                    state.remove_monitor_task(&session_id);
+                    return Err(error);
+                }
+                // 未达上限：保留上一份数据，等待下个周期重试。
             }
         }
         tokio::select! {

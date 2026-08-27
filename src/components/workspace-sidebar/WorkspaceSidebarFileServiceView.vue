@@ -2,11 +2,14 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { storeToRefs } from "pinia";
-import { Files, FolderOpen, RadioTower, Server, Trash2 } from "@lucide/vue";
+import { Files, FolderOpen, Server, Trash2 } from "@lucide/vue";
 import NetworkInterfaceField from "./NetworkInterfaceField.vue";
 import UiSwitch from "../UiSwitch.vue";
 import { useToasts } from "../../composables/useToasts";
-import { useNetworkInterfaceOptions } from "../../composables/useNetworkInterfaceOptions";
+import {
+  useNetworkInterfaceOptions,
+  useProxyInterfaceRefresh,
+} from "../../composables/useNetworkInterfaceOptions";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { chooseSharedDirectory } from "../../services/fileService";
 import { formatBytes } from "../../utils/formatBytes";
@@ -18,7 +21,6 @@ const workspace = useWorkspaceStore();
 const { proxyInterfaces, fileServiceConfig, fileServiceTransfers } = storeToRefs(workspace);
 const { showToast } = useToasts();
 const busy = ref(false);
-const refreshingInterfaces = ref(false);
 const savingBindIp = ref(false);
 const savingDirectory = ref(false);
 const selectedProtocol = ref("tftp");
@@ -42,6 +44,7 @@ const { interfaceOptions } = useNetworkInterfaceOptions({
   bindIp: computed(() => fileServiceConfig.value.bindIp),
   staleLabel: computed(() => t("sidebar.fileService.staleInterface")),
 });
+const { refreshingInterfaces, refreshInterfaces } = useProxyInterfaceRefresh({ workspace });
 const historyTransfers = computed(() =>
   fileServiceTransfers.value.filter((item) => item.done || item.error),
 );
@@ -69,18 +72,6 @@ function transferDirection(transfer) {
 
 function transferDirectionLabel(transfer) {
   return t(`sidebar.fileService.direction.${transfer.direction === "write" ? "write" : "read"}`);
-}
-
-async function refreshInterfaces() {
-  if (refreshingInterfaces.value) return;
-  refreshingInterfaces.value = true;
-  try {
-    await workspace.refreshProxyInterfaces();
-  } catch (error) {
-    logger.error("file_service.interfaces.refresh.failed", error);
-  } finally {
-    refreshingInterfaces.value = false;
-  }
 }
 
 async function toggleService(enabled) {
@@ -142,15 +133,15 @@ async function browseDirectory() {
 
 <template>
   <div class="workspace-sidebar-pane workspace-sidebar-pane-file-service">
-    <section class="workspace-sidebar-section file-service-summary">
+    <section class="workspace-sidebar-section">
       <div class="workspace-sidebar-section-head">
         <div class="workspace-sidebar-section-icon">
           <Server
-            :size="18"
+            :size="16"
             stroke-width="1.8"
           />
         </div>
-        <div>
+        <div class="min-w-0">
           <div class="workspace-sidebar-section-kicker">
             {{ t("sidebar.fileService.kicker") }}
           </div>
@@ -169,25 +160,30 @@ async function browseDirectory() {
           }}
         </span>
       </div>
-      <div class="workspace-sidebar-endpoint">
+      <div
+        class="workspace-sidebar-endpoint"
+        :title="`${fileServiceConfig.bindIp}:${fileServiceConfig.port}`"
+      >
         {{ fileServiceConfig.bindIp }}:{{ fileServiceConfig.port }}
       </div>
     </section>
 
-    <section class="workspace-sidebar-section file-service-controls">
-      <div class="workspace-sidebar-pref-row">
-        <div class="workspace-sidebar-pref-text">
-          <span class="workspace-sidebar-pref-label">{{ t("sidebar.fileService.power") }}</span>
-          <span class="workspace-sidebar-pref-hint">{{ t("sidebar.fileService.powerHint") }}</span>
+    <section class="workspace-sidebar-section">
+      <div class="workspace-sidebar-pref-list">
+        <div class="workspace-sidebar-pref-row">
+          <div class="workspace-sidebar-pref-text">
+            <span class="workspace-sidebar-pref-label">{{ t("sidebar.fileService.power") }}</span>
+            <span class="workspace-sidebar-pref-hint">{{
+              t("sidebar.fileService.powerHint")
+            }}</span>
+          </div>
+          <UiSwitch
+            v-model="isRunning"
+            :disabled="busy"
+          />
         </div>
-        <UiSwitch
-          v-model="isRunning"
-          :disabled="busy"
-        />
-      </div>
 
-      <div class="file-service-field">
-        <div class="workspace-sidebar-pref-head">
+        <div class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack">
           <div class="workspace-sidebar-pref-text">
             <span class="workspace-sidebar-pref-label">{{
               t("sidebar.fileService.protocol")
@@ -196,69 +192,77 @@ async function browseDirectory() {
               t("sidebar.fileService.protocolHint")
             }}</span>
           </div>
-          <RadioTower :size="16" />
-        </div>
-        <div
-          class="file-service-protocols"
-          role="radiogroup"
-        >
-          <button
-            v-for="option in protocolOptions"
-            :key="option.value"
-            type="button"
-            class="file-service-protocol"
-            :class="{ 'is-selected': selectedProtocol === option.value }"
-            :aria-pressed="selectedProtocol === option.value"
-            :disabled="busy || fileServiceConfig.running"
-            @click="selectProtocol(option.value)"
+          <div
+            class="file-service-protocols"
+            role="radiogroup"
+            :aria-label="t('sidebar.fileService.protocol')"
           >
-            {{ option.label }}
+            <button
+              v-for="option in protocolOptions"
+              :key="option.value"
+              type="button"
+              role="radio"
+              class="file-service-protocol"
+              :class="{ 'is-selected': selectedProtocol === option.value }"
+              :aria-checked="selectedProtocol === option.value"
+              :disabled="busy || fileServiceConfig.running"
+              @click="selectProtocol(option.value)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
+
+        <NetworkInterfaceField
+          :bind-ip="fileServiceConfig.bindIp"
+          :disabled="busy || savingBindIp"
+          :hint="t('sidebar.fileService.bindIpHint')"
+          :label="t('sidebar.fileService.bindIp')"
+          :options="interfaceOptions"
+          :refresh-disabled="refreshingInterfaces"
+          :refresh-label="t('sidebar.fileService.refreshInterfaces')"
+          :refreshing="refreshingInterfaces"
+          @refresh="refreshInterfaces"
+          @update:bind-ip="updateBindIp"
+        />
+
+        <div class="workspace-sidebar-pref-row">
+          <div class="workspace-sidebar-pref-text">
+            <span class="workspace-sidebar-pref-label">{{
+              t("sidebar.fileService.sharedDirectory")
+            }}</span>
+            <span
+              class="workspace-sidebar-pref-hint file-service-directory-path"
+              :title="fileServiceConfig.sharedDir || ''"
+            >
+              {{ fileServiceConfig.sharedDir || t("sidebar.fileService.noDirectory") }}
+            </span>
+          </div>
+          <button
+            type="button"
+            class="ui-icon-button shrink-0"
+            :aria-label="t('sidebar.fileService.chooseDirectory')"
+            :title="t('sidebar.fileService.chooseDirectory')"
+            :disabled="savingDirectory || busy"
+            @click="browseDirectory"
+          >
+            <FolderOpen :size="16" />
           </button>
         </div>
-      </div>
-
-      <NetworkInterfaceField
-        :bind-ip="fileServiceConfig.bindIp"
-        :disabled="busy || savingBindIp"
-        :hint="t('sidebar.fileService.bindIpHint')"
-        :label="t('sidebar.fileService.bindIp')"
-        :options="interfaceOptions"
-        :refresh-disabled="refreshingInterfaces"
-        :refresh-label="t('sidebar.fileService.refreshInterfaces')"
-        :refreshing="refreshingInterfaces"
-        @refresh="refreshInterfaces"
-        @update:bind-ip="updateBindIp"
-      />
-
-      <div class="file-service-directory">
-        <div class="workspace-sidebar-pref-text">
-          <span class="workspace-sidebar-pref-label">{{
-            t("sidebar.fileService.sharedDirectory")
-          }}</span>
-          <span class="workspace-sidebar-pref-hint file-service-directory-path">
-            {{ fileServiceConfig.sharedDir || t("sidebar.fileService.noDirectory") }}
-          </span>
-        </div>
-        <button
-          type="button"
-          class="ui-icon-button"
-          :aria-label="t('sidebar.fileService.chooseDirectory')"
-          :title="t('sidebar.fileService.chooseDirectory')"
-          :disabled="savingDirectory || busy"
-          @click="browseDirectory"
-        >
-          <FolderOpen :size="16" />
-        </button>
       </div>
     </section>
 
     <section class="workspace-sidebar-section file-service-transfers">
-      <div class="workspace-sidebar-section-head file-service-transfers-head">
-        <div>
-          <div class="workspace-sidebar-section-kicker">
-            {{ t("sidebar.fileService.transfers") }}
-          </div>
+      <div class="file-service-transfers-head">
+        <div class="workspace-sidebar-section-kicker">
+          {{ t("sidebar.fileService.transfers") }}
         </div>
+        <span
+          v-if="fileServiceTransfers.length"
+          class="file-service-transfers-count"
+        >
+          {{ fileServiceTransfers.length }}
+        </span>
         <button
           v-if="historyTransfers.length"
           type="button"
@@ -275,49 +279,41 @@ async function browseDirectory() {
         v-if="!fileServiceTransfers.length"
         class="file-service-empty-state"
       >
-        <div class="file-service-empty-icon">
-          <Files
-            :size="19"
-            stroke-width="1.7"
-          />
-        </div>
-        <div class="file-service-empty-copy">
-          <span>{{ t("sidebar.fileService.noTransfersHint") }}</span>
-        </div>
+        <Files
+          :size="20"
+          stroke-width="1.6"
+        />
+        <span>{{ t("sidebar.fileService.noTransfersHint") }}</span>
       </div>
       <div
         v-else
         class="file-service-transfer-list"
       >
-        <div class="file-service-transfer-group">
-          <div
-            v-for="transfer in fileServiceTransfers"
-            :key="transfer.id"
-            class="file-service-transfer-row"
-            :class="{
-              'is-upload': transferDirection(transfer) === 'upload',
-              'is-download': transferDirection(transfer) === 'download',
-              'is-error': transfer.error,
-            }"
-          >
-            <div class="file-service-transfer-main">
-              <div class="file-service-transfer-topline">
-                <strong :title="transfer.name">{{ transfer.name }}</strong>
-                <span class="file-service-transfer-percent">{{ transferPercent(transfer) }}%</span>
-              </div>
-              <div class="file-service-transfer-track">
-                <span :style="{ width: `${transferPercent(transfer)}%` }" />
-              </div>
-              <div class="file-service-transfer-meta">
-                <span class="file-service-transfer-direction">{{
-                  transferDirectionLabel(transfer)
-                }}</span>
-                <span class="file-service-transfer-peer">{{ transfer.peer || "-" }}</span>
-                <span class="file-service-transfer-size">{{
-                  formatBytes(transfer.transferred)
-                }}</span>
-              </div>
-            </div>
+        <div
+          v-for="transfer in fileServiceTransfers"
+          :key="transfer.id"
+          class="file-service-transfer-row"
+          :class="{
+            'is-upload': transferDirection(transfer) === 'upload',
+            'is-download': transferDirection(transfer) === 'download',
+            'is-error': transfer.error,
+          }"
+        >
+          <div class="file-service-transfer-topline">
+            <strong :title="transfer.name">{{ transfer.name }}</strong>
+            <span class="file-service-transfer-percent">{{ transferPercent(transfer) }}%</span>
+          </div>
+          <div class="file-service-transfer-track">
+            <span :style="{ width: `${transferPercent(transfer)}%` }" />
+          </div>
+          <div class="file-service-transfer-meta">
+            <span class="file-service-transfer-direction">{{
+              transferDirectionLabel(transfer)
+            }}</span>
+            <span class="file-service-transfer-peer">{{ transfer.peer || "-" }}</span>
+            <span class="file-service-transfer-size">{{
+              formatBytes(transfer.transferred)
+            }}</span>
           </div>
         </div>
       </div>

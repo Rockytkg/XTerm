@@ -744,7 +744,6 @@ function setQueueListRef(element) {
         :is-editing-entry="isEditingEntry"
         :labels="fileTableLabels"
         :loading="loading"
-        :move-drag-active="dragActive || moveDragActive"
         :move-drop-target-path="moveDropTargetPath"
         :parent-directory-entry="parentDirectoryEntry"
         :selected-names="selectedNames"

@@ -45,7 +45,9 @@ function matchPattern(buffer, pattern, apiName = "waitFor") {
     return index < 0 ? null : { index, text: pattern, groups: [] };
   }
   if (pattern instanceof RegExp) {
-    const match = normalizeRegExp(pattern).exec(buffer);
+    // waiter 注册时已归一化（normalizeRegExp 去掉 g/y），这里直接 exec，
+    // 避免每个输出 chunk 都重新 new RegExp。
+    const match = pattern.exec(buffer);
     return match ? { index: match.index, text: match[0], groups: match.slice(1) } : null;
   }
   throw new TypeError(`${apiName} pattern must be a string or RegExp`);
@@ -203,6 +205,14 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     throwIfStopped();
     return new Promise((resolve, reject) => {
       const entry = { kind: "wait", resolve, reject, timer: null, ...entryBase };
+      // RegExp 在注册时归一化一次（去掉 g/y，lastIndex 不再漂移），
+      // 挂起期间每个输出 chunk 的 checkWaiter 直接复用，不重复编译。
+      if (entry.pattern instanceof RegExp) entry.pattern = normalizeRegExp(entry.pattern);
+      if (entry.patterns) {
+        entry.patterns = entry.patterns.map((pattern) =>
+          pattern instanceof RegExp ? normalizeRegExp(pattern) : pattern,
+        );
+      }
       const timeout = Number(timeoutMs);
       // timeout<=0 表示永不超时；自定义错误信息优先，缺省走 i18n。
       addPending(entry, timeout > 0 ? timeout : null, () =>

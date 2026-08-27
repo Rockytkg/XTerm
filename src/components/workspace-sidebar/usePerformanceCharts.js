@@ -9,7 +9,8 @@ import {
   PointElement,
   Tooltip,
 } from "chart.js";
-import { formatPercent, formatRate, formatSampleTime } from "./performanceFormatters";
+import { formatRate } from "../../utils/formatBytes";
+import { formatPercent, formatSampleTime } from "./performanceFormatters";
 import { createRafThrottle } from "../../utils/schedulers";
 
 Chart.register(
@@ -207,43 +208,20 @@ export function usePerformanceCharts(props, t) {
     updateChartsFromHistory();
   }
 
-  function refreshVisibleCharts() {
-    if (!props.active) return;
-    nextTick(() => {
-      if (!Object.keys(charts).length) {
-        initCharts();
-        return;
-      }
-      charts.cpu?.resize();
-      charts.memory?.resize();
-      charts.network?.resize();
-      updateChartsFromHistory();
-    });
-  }
-
+  // 画布位于 v-if 分支内：指标不可用时会卸载重建，因此以 ref 变化作为图表生命周期信号。
+  // 组件本身仅在性能视图激活时挂载，无需额外的可见性门控。
   watch(
-    () => props.active,
-    () => refreshVisibleCharts(),
+    [cpuCanvasRef, memoryCanvasRef, networkCanvasRef],
+    (refs) => {
+      destroyCharts();
+      if (refs.every(Boolean)) nextTick(initCharts);
+    },
     { flush: "post" },
   );
 
   watch(
     () => props.history?.version,
-    () => {
-      if (props.active) scheduleChartsFromHistoryUpdate();
-    },
-    { flush: "post" },
-  );
-
-  watch(
-    [cpuCanvasRef, memoryCanvasRef, networkCanvasRef],
-    (refs) => {
-      if (!refs.every(Boolean)) {
-        destroyCharts();
-        return;
-      }
-      if (props.active) nextTick(initCharts);
-    },
+    () => scheduleChartsFromHistoryUpdate(),
     { flush: "post" },
   );
 

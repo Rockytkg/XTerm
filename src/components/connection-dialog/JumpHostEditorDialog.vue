@@ -51,6 +51,22 @@ const { pickPrivateKey, keepDialogOpen: keepDialogOpenForPrivateKeyPicker } =
   usePrivateKeyPicker();
 
 const hops = computed(() => (Array.isArray(props.jumpHosts) ? props.jumpHosts : []));
+
+// moveHop 保持 hop 对象身份做数组重排，按对象分配稳定 key，避免 v-for 用 index 作 key
+// 在上下移动后复用错误的列表项 DOM；编辑产生的替换对象会自然获得新 key。
+const hopKeys = new WeakMap();
+let nextHopKey = 0;
+
+function hopKey(hop, index) {
+  if (!hop || typeof hop !== "object") return -1 - index;
+  let key = hopKeys.get(hop);
+  if (key === undefined) {
+    nextHopKey += 1;
+    key = nextHopKey;
+    hopKeys.set(hop, key);
+  }
+  return key;
+}
 const sshConnections = computed(() =>
   props.connections.filter((connection) => {
     const protocol = (connection.protocol || "ssh").toLowerCase();
@@ -325,7 +341,7 @@ async function pickPrivateKeyFile(index) {
               >
                 <ListboxItem
                   v-for="(hop, index) in hops"
-                  :key="index"
+                  :key="hopKey(hop, index)"
                   :value="index"
                   class="conn-jump-chain-item"
                 >

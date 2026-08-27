@@ -180,11 +180,14 @@ export class TerminalOutputAddon {
 
   queue(data, { recordable = false, immediate = false } = {}) {
     if (!data) return;
-    this._segments.push({
-      data,
-      offset: 0,
-      recordable: recordable && this._isRecordingEnabled(),
-    });
+    // 无记录回调时 _consumeRecordable 永远提前返回，push 只会让 _segments 无界增长。
+    if (this._hasRecording) {
+      this._segments.push({
+        data,
+        offset: 0,
+        recordable: recordable && this._isRecordingEnabled(),
+      });
+    }
     this._buffer += data;
     if (immediate || this._buffer.length >= this._maxChars) {
       this.flush();

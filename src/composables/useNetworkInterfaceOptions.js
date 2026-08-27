@@ -1,4 +1,7 @@
-import { computed } from "vue";
+import { computed, ref } from "vue";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("frontend.workspace.network_interfaces");
 
 export function useNetworkInterfaceOptions({ interfaces, bindIp, staleLabel }) {
   const options = computed(() => {
@@ -22,4 +25,23 @@ export function useNetworkInterfaceOptions({ interfaces, bindIp, staleLabel }) {
   return {
     interfaceOptions: options,
   };
+}
+
+// 代理/文件服务视图共用的网卡列表刷新；失败只记录日志，界面保持原状由用户重试。
+export function useProxyInterfaceRefresh({ workspace }) {
+  const refreshingInterfaces = ref(false);
+
+  async function refreshInterfaces() {
+    if (refreshingInterfaces.value) return;
+    refreshingInterfaces.value = true;
+    try {
+      await workspace.refreshProxyInterfaces();
+    } catch (error) {
+      logger.error("refresh.failed", error);
+    } finally {
+      refreshingInterfaces.value = false;
+    }
+  }
+
+  return { refreshingInterfaces, refreshInterfaces };
 }

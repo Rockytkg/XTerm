@@ -14,6 +14,8 @@ import { ArrowLeft } from "@lucide/vue";
 import { editorChromeTheme, editorThemeExtension } from "../utils/editorTheme";
 import { isPrimaryModifier } from "../utils/platform";
 import { formatScriptWithCursor } from "../services/scripting/scriptSyntax.js";
+// 编辑器外框（sftp-editor*/sftp-button 类）的样式定义在 sftp.scss，组件自行引入以保证脱离 SFTP 面板时可用。
+import "../styles/sftp.scss";
 
 const props = defineProps({
   backLabel: { type: String, required: true },

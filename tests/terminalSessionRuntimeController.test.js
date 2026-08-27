@@ -82,10 +82,9 @@ test("non-presentational disconnect states release stale connection progress", (
   });
 
   controller.handleConnectionStatus("disconnecting", "disconnecting");
-  controller.handleConnectionStatus("disconnected", null);
   controller.handleConnectionStatus("idle", null);
 
-  assert.deepEqual(released, ["release", "release", "release"]);
+  assert.deepEqual(released, ["release", "release"]);
 });
 
 test("terminal input uses one monotonic sequence per active channel", async () => {

@@ -268,11 +268,6 @@ function submit() {
 </template>
 
 <style scoped>
-.scripts-required-mark {
-  color: var(--danger);
-  margin-left: 2px;
-}
-
 /* 纯文本消息按 \n 换行渲染 */
 .script-prompt-message {
   white-space: pre-wrap;

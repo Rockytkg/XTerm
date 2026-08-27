@@ -254,7 +254,7 @@ const transferMessages = computed(() => {
 });
 
 const isDisconnectedState = computed(() =>
-  ["closed", "failed", "disconnected"].includes(props.connectionState?.status),
+  ["closed", "failed"].includes(props.connectionState?.status),
 );
 
 const {
@@ -262,6 +262,7 @@ const {
   openSearchPanel,
   resetSearchState,
   runSearch,
+  searchEmpty,
   searchOpen,
   searchResultLabel,
   searchTerm,
@@ -1040,7 +1041,7 @@ onBeforeUnmount(() => {
         v-if="searchOpen"
         v-model:term="searchTerm"
         :result-label="searchResultLabel"
-        :is-empty="searchResultLabel === t('terminal.searchNoResults')"
+        :is-empty="searchEmpty"
         @run="runSearch"
         @close="closeSearchPanel"
       />

@@ -1,4 +1,4 @@
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import {
   createRemoteSftpDir,
   createRemoteSftpFile,
@@ -25,11 +25,14 @@ function remoteNameFromPath(path) {
 }
 
 function sortRemoteEntries(entries) {
-  return [...entries].sort((a, b) => {
-    const rankA = a.kind === "dir" ? 0 : 1;
-    const rankB = b.kind === "dir" ? 0 : 1;
-    return rankA - rankB || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-  });
+  // 小写 key 每条目只算一次，避免 O(N log N) 次比较里重复 toLowerCase。
+  const keyed = entries.map((entry) => ({
+    entry,
+    rank: entry.kind === "dir" ? 0 : 1,
+    nameKey: entry.name.toLowerCase(),
+  }));
+  keyed.sort((a, b) => a.rank - b.rank || a.nameKey.localeCompare(b.nameKey));
+  return keyed.map(({ entry }) => entry);
 }
 
 function sameRemoteEntry(previous, next) {
@@ -75,9 +78,11 @@ export function useSftpBrowser({
 }) {
   const remotePath = ref(".");
   const remoteParent = ref("");
-  const remoteFiles = ref([]);
+  // 大列表/集合只在整体替换时触发更新（写入点均为 .value 赋新值），
+  // 用 shallowRef 避免对成百上千个 entry 做深度响应式代理。
+  const remoteFiles = shallowRef([]);
   const remoteQuery = ref("");
-  const selectedNames = ref(new Set());
+  const selectedNames = shallowRef(new Set());
   const loading = ref(false);
   const pathLoading = ref(false);
   const errorMessage = ref("");

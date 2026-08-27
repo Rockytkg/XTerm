@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createLogger, summarizeValue } from "../../utils/logger.js";
+import { createLogger, isLogLevelEnabled, summarizeValue } from "../../utils/logger.js";
 import { createRuntimeId } from "../../utils/runtimeIds.js";
 
 const ipcLogger = createLogger("frontend.ipc");
@@ -49,28 +49,37 @@ export async function invokeDetailedIpc(command, payload, options = {}) {
     ...(options.context || {}),
   });
   const startLevel = options.level || inferStartLevel(command);
+  const successLevel = options.successLevel || startLevel;
+  const failureLevel = options.failureLevel || "error";
   const start = performance.now();
 
-  logger[startLevel]("request.start", {
-    action: options.action || command,
-    payload: resolveSummary(payload, options.summarizePayload),
-  });
+  // 级别关闭时 emit 会原样丢弃，这里提前判断以跳过 resolveSummary 的序列化开销。
+  if (isLogLevelEnabled(startLevel)) {
+    logger[startLevel]("request.start", {
+      action: options.action || command,
+      payload: resolveSummary(payload, options.summarizePayload),
+    });
+  }
 
   try {
     const result = payload === undefined ? await invoke(command) : await invoke(command, payload);
-    logger[options.successLevel || startLevel]("request.success", {
-      action: options.action || command,
-      durationMs: Math.round(performance.now() - start),
-      result: resolveSummary(result, options.summarizeResult),
-    });
+    if (isLogLevelEnabled(successLevel)) {
+      logger[successLevel]("request.success", {
+        action: options.action || command,
+        durationMs: Math.round(performance.now() - start),
+        result: resolveSummary(result, options.summarizeResult),
+      });
+    }
     return result;
   } catch (error) {
-    logger[options.failureLevel || "error"]("request.failed", {
-      action: options.action || command,
-      durationMs: Math.round(performance.now() - start),
-      error,
-      payload: resolveSummary(payload, options.summarizePayload),
-    });
+    if (isLogLevelEnabled(failureLevel)) {
+      logger[failureLevel]("request.failed", {
+        action: options.action || command,
+        durationMs: Math.round(performance.now() - start),
+        error,
+        payload: resolveSummary(payload, options.summarizePayload),
+      });
+    }
     throw error;
   }
 }

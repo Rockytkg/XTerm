@@ -1,5 +1,4 @@
 @use "./styles/tokens";
-@use "./styles/reset";
 @use "./styles/base";
 @use "./styles/compat-webkitgtk";
 @use "./styles/mixins" as *;
@@ -500,6 +499,12 @@
 
   .dialog-content[data-state="closed"] {
     animation: motion-surface-out var(--motion-duration-quick) var(--motion-ease-exit) both;
+  }
+
+  /* 脚本创建/运行弹窗共用的必填标记 */
+  .scripts-required-mark {
+    color: var(--danger);
+    margin-left: 2px;
   }
 
   :root[data-motion="off"] .dialog-overlay,

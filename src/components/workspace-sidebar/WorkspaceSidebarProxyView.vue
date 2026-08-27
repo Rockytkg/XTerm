@@ -6,7 +6,10 @@ import { Shield } from "@lucide/vue";
 import NetworkInterfaceField from "./NetworkInterfaceField.vue";
 import UiSwitch from "../UiSwitch.vue";
 import { useToasts } from "../../composables/useToasts";
-import { useNetworkInterfaceOptions } from "../../composables/useNetworkInterfaceOptions";
+import {
+  useNetworkInterfaceOptions,
+  useProxyInterfaceRefresh,
+} from "../../composables/useNetworkInterfaceOptions";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { createLogger } from "../../utils/logger";
 import { formatBytes, formatRate } from "../../utils/formatBytes";
@@ -19,13 +22,13 @@ const { showToast } = useToasts();
 
 const savingBindIp = ref(false);
 const togglingPower = ref(false);
-const refreshingInterfaces = ref(false);
 
 const { interfaceOptions } = useNetworkInterfaceOptions({
   interfaces: proxyInterfaces,
   bindIp: computed(() => proxyConfig.value.bindIp),
   staleLabel: computed(() => t("sidebar.proxy.staleInterface")),
 });
+const { refreshingInterfaces, refreshInterfaces } = useProxyInterfaceRefresh({ workspace });
 
 const powerValue = computed({
   get: () => !!proxyConfig.value.running,
@@ -49,18 +52,6 @@ const downloadRateLabel = computed(() =>
 );
 const uploadRateLabel = computed(() => formatRate(proxyStats.value?.uploadBytesPerSec || 0));
 const totalTrafficLabel = computed(() => formatBytes(totalTraffic.value));
-
-async function refreshInterfaces() {
-  if (refreshingInterfaces.value) return;
-  refreshingInterfaces.value = true;
-  try {
-    await workspace.refreshProxyInterfaces();
-  } catch (error) {
-    logger.error("proxy.interfaces.refresh.failed", error);
-  } finally {
-    refreshingInterfaces.value = false;
-  }
-}
 
 async function togglePower(enabled) {
   if (togglingPower.value) return;
@@ -116,16 +107,16 @@ async function updateBindIp(bindIp) {
 </script>
 
 <template>
-  <div class="workspace-sidebar-pane workspace-sidebar-pane-proxy">
-    <section class="workspace-sidebar-section workspace-sidebar-proxy-summary">
+  <div class="workspace-sidebar-pane">
+    <section class="workspace-sidebar-section">
       <div class="workspace-sidebar-section-head">
         <div class="workspace-sidebar-section-icon">
           <Shield
-            :size="18"
+            :size="16"
             stroke-width="1.8"
           />
         </div>
-        <div>
+        <div class="min-w-0">
           <div class="workspace-sidebar-section-kicker">
             {{ t("sidebar.proxy.kicker") }}
           </div>
@@ -142,31 +133,26 @@ async function updateBindIp(bindIp) {
       </div>
 
       <div class="workspace-sidebar-endpoint">
-        {{ t("sidebar.proxy.endpoint", { bindIp: proxyConfig.bindIp, port: proxyConfig.port }) }}
+        {{ proxyConfig.bindIp }}:{{ proxyConfig.port }}
       </div>
-    </section>
 
-    <section class="workspace-sidebar-section">
-      <div class="workspace-sidebar-section-kicker">
-        {{ t("sidebar.proxy.stats.bytes") }}
-      </div>
-      <div class="workspace-sidebar-proxy-metrics-grid">
-        <div class="workspace-sidebar-proxy-metric">
+      <div class="workspace-sidebar-metric-grid">
+        <div class="workspace-sidebar-metric">
           <span>{{ t("sidebar.proxy.stats.downloadRate") }}</span>
           <strong>{{ downloadRateLabel }}</strong>
         </div>
-        <div class="workspace-sidebar-proxy-metric">
+        <div class="workspace-sidebar-metric">
           <span>{{ t("sidebar.proxy.stats.uploadRate") }}</span>
           <strong>{{ uploadRateLabel }}</strong>
         </div>
-        <div class="workspace-sidebar-proxy-metric">
+        <div class="workspace-sidebar-metric">
           <span>{{ t("sidebar.proxy.stats.bytes") }}</span>
           <strong>{{ totalTrafficLabel }}</strong>
         </div>
       </div>
     </section>
 
-    <section class="workspace-sidebar-section workspace-sidebar-proxy-controls">
+    <section class="workspace-sidebar-section">
       <div class="workspace-sidebar-pref-list">
         <div class="workspace-sidebar-pref-row">
           <div class="workspace-sidebar-pref-text">

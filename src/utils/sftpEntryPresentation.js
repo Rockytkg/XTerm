@@ -93,6 +93,8 @@ const ARCHIVE_EXTENSIONS = new Set(["zip", "rar", "7z", "tar", "gz", "tgz", "bz2
 const DATABASE_EXTENSIONS = new Set(["db", "sqlite", "sqlite3", "mdb"]);
 const EXECUTABLE_EXTENSIONS = new Set(["exe", "msi", "app", "apk", "deb", "rpm", "bin"]);
 const KEY_EXTENSIONS = new Set(["pem", "key", "crt", "cer", "p12", "pfx", "pub"]);
+const JSON_EXTENSIONS = new Set(["json", "jsonc", "json5"]);
+const SHELL_EXTENSIONS = new Set(["sh", "bash", "zsh", "fish", "ps1", "bat", "cmd"]);
 
 function extensionOf(name) {
   const value = String(name || "");
@@ -118,8 +120,8 @@ export function iconForSftpEntry(entry) {
   if (DATABASE_EXTENSIONS.has(ext)) return Database;
   if (KEY_EXTENSIONS.has(ext)) return Shield;
   if (EXECUTABLE_EXTENSIONS.has(ext)) return Package;
-  if (["json", "jsonc", "json5"].includes(ext)) return Braces;
-  if (["sh", "bash", "zsh", "fish", "ps1", "bat", "cmd"].includes(ext)) return FileTerminal;
+  if (JSON_EXTENSIONS.has(ext)) return Braces;
+  if (SHELL_EXTENSIONS.has(ext)) return FileTerminal;
   if (DATA_EXTENSIONS.has(ext)) return ScrollText;
   if (CODE_EXTENSIONS.has(ext)) return FileCode;
   if (DOCUMENT_EXTENSIONS.has(ext) || TEXT_EXTENSIONS.has(ext)) return FileText;

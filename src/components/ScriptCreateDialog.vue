@@ -184,10 +184,3 @@ function submit() {
     </DialogPortal>
   </DialogRoot>
 </template>
-
-<style scoped>
-.scripts-required-mark {
-  color: var(--danger);
-  margin-left: 2px;
-}
-</style>

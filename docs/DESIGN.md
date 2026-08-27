@@ -18,7 +18,7 @@ XTerm 是桌面终端工作区，不是营销页或展示型网站。界面应�
 - `src/layouts/AppShell.vue`：桌面窗口壳层，负责标题栏、主导航和路由出口。
 - `SessionsView.vue`（`/sessions`）：连接列表、连接新增/编辑/删除和进入工作区。
 - `DashboardView.vue`（`/workspace`）：活动工作区，由 `src/views/workspace/` 下的终端面板（`TerminalWorkspacePane.vue`）和按连接类型出现的 SFTP 面板（`SftpWorkspacePane.vue`）组成。
-- `KeysView.vue`（`/keys`）：密码和 SSH 私钥凭证管理；`CredentialGraphView.vue`（`/credential-graph`）提供凭证关系图谱视图。
+- `KeysView.vue`（`/keys`）：密码和 SSH 私钥凭证管理，内嵌 `CredentialGraphView.vue` 凭证关系图谱视图（`/credential-graph` 重定向到 `/keys`）。
 - `ScriptsView.vue`（`/scripts`）：脚本库，管理终端自动化脚本（新建、编辑、导入导出、更新检测）。
 - `SettingsLayout.vue`（`/settings`）：设置壳层，子页面位于 `src/views/settings/`。
 

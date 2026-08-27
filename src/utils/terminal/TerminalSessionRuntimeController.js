@@ -258,9 +258,6 @@ class TerminalSessionRuntimeController {
     } else if (status === "closed") {
       this.clearChannelLocally({ recordClosing: true });
       this.writeStatus?.(TERMINAL_STATUS.CLOSED);
-    } else if (status === "disconnected") {
-      this.clearChannelLocally({ recordClosing: true });
-      this.releaseStatus?.();
     } else if (status === "disconnecting" || status === "idle") {
       this.releaseStatus?.();
     }
@@ -478,8 +475,8 @@ class TerminalSessionRuntimeController {
     this.channel = null;
     this.nextInputSequence = 1;
     this.setActiveSessionChannel?.(connectionId, null);
-    // 本地清理 channel 时同步丢弃 transport 侧残留订阅（failed/closed/
-    // disconnected 路径不会发 detach，否则会泄漏到组件卸载才回收）；
+    // 本地清理 channel 时同步丢弃 transport 侧残留订阅（failed/closed
+    // 路径不会发 detach，否则会泄漏到组件卸载才回收）；
     // deactivate 路径已发过 detach，这里是无害的空操作。
     this.transport.dropSubscription?.(resolvedSessionId, resolvedChannelId);
     this.activationKey += 1;

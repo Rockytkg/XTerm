@@ -1,20 +1,20 @@
 <script setup>
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { TerminalSquare } from "@lucide/vue";
 import { storeToRefs } from "pinia";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { streamSystemFonts } from "../../services/systemFonts";
 import UiSelect from "../../components/UiSelect.vue";
 import UiSwitch from "../../components/UiSwitch.vue";
 import FontPicker from "../../components/FontPicker.vue";
+import { useSystemFonts } from "../../composables/useSystemFonts";
+import { normalizeNumberPreference } from "../../utils/numberPreference";
 import { TERMINAL_TYPE_OPTIONS } from "../../utils/terminalSessionOptions";
 import { TERMINAL_THEME_NAMES } from "../../utils/terminalColors";
 
 const { t } = useI18n();
 const { preferences } = storeToRefs(useWorkspaceStore());
-const systemFonts = ref([]);
-let fontAbortController;
+const { systemFonts } = useSystemFonts(() => preferences.value.terminalFontFamily);
 
 const terminalThemeOptions = computed(() =>
   TERMINAL_THEME_NAMES.map((value) => ({
@@ -37,44 +37,12 @@ const terminalCursorInactiveStyleOptions = computed(() => [
   { label: t("settings.terminal.cursorInactiveStyles.none"), value: "none" },
 ]);
 
-async function loadFonts() {
-  fontAbortController?.abort();
-  const controller = new AbortController();
-  fontAbortController = controller;
-  const current = preferences.value.terminalFontFamily?.trim();
-  appendFonts([current]);
-  for await (const chunk of streamSystemFonts({ signal: controller.signal })) {
-    if (controller.signal.aborted) return;
-    appendFonts(chunk.fonts);
-    if (chunk.done) return;
-  }
-}
-
-function appendFonts(fonts) {
-  systemFonts.value = Array.from(new Set([...systemFonts.value, ...fonts].filter(Boolean))).sort(
-    (a, b) => a.localeCompare(b),
-  );
-}
-
 function normalizeTerminalScrollback() {
   const scrollback = Math.round(Number(preferences.value.terminalScrollback));
   preferences.value.terminalScrollback = Number.isFinite(scrollback)
     ? Math.min(100000, Math.max(100, scrollback))
     : 9001;
 }
-
-function normalizeNumberPreference(key, fallback, min, max, integer = false) {
-  const value = Number(preferences.value[key]);
-  if (!Number.isFinite(value)) {
-    preferences.value[key] = fallback;
-    return;
-  }
-  const clamped = Math.min(max, Math.max(min, value));
-  preferences.value[key] = integer ? Math.round(clamped) : clamped;
-}
-
-loadFonts();
-onBeforeUnmount(() => fontAbortController?.abort());
 </script>
 
 <template>
@@ -152,7 +120,7 @@ onBeforeUnmount(() => fontAbortController?.abort());
           min="8"
           max="36"
           class="ui-input ui-input-inline"
-          @change="normalizeNumberPreference('terminalFontSize', 16, 8, 36, true)"
+          @change="normalizeNumberPreference(preferences, 'terminalFontSize', 16, 8, 36, true)"
         >
       </div>
       <div class="settings-toggle">
@@ -164,7 +132,7 @@ onBeforeUnmount(() => fontAbortController?.abort());
           max="2"
           step="0.1"
           class="ui-input ui-input-inline"
-          @change="normalizeNumberPreference('terminalLineHeight', 1, 1, 2)"
+          @change="normalizeNumberPreference(preferences, 'terminalLineHeight', 1, 1, 2)"
         >
       </div>
       <div class="settings-toggle">
@@ -211,7 +179,7 @@ onBeforeUnmount(() => fontAbortController?.abort());
           min="1"
           max="10"
           class="ui-input ui-input-inline"
-          @change="normalizeNumberPreference('terminalCursorWidth', 1, 1, 10, true)"
+          @change="normalizeNumberPreference(preferences, 'terminalCursorWidth', 1, 1, 10, true)"
         >
       </div>
       <div class="settings-toggle">
@@ -226,7 +194,7 @@ onBeforeUnmount(() => fontAbortController?.abort());
           max="10"
           step="0.1"
           class="ui-input ui-input-inline"
-          @change="normalizeNumberPreference('terminalScrollSensitivity', 1, 0.1, 10)"
+          @change="normalizeNumberPreference(preferences, 'terminalScrollSensitivity', 1, 0.1, 10)"
         >
       </div>
       <div class="settings-toggle">
@@ -241,7 +209,7 @@ onBeforeUnmount(() => fontAbortController?.abort());
           max="20"
           step="0.5"
           class="ui-input ui-input-inline"
-          @change="normalizeNumberPreference('terminalFastScrollSensitivity', 5, 1, 20)"
+          @change="normalizeNumberPreference(preferences, 'terminalFastScrollSensitivity', 5, 1, 20)"
         >
       </div>
       <div class="settings-toggle">
@@ -256,7 +224,7 @@ onBeforeUnmount(() => fontAbortController?.abort());
           max="1000"
           step="50"
           class="ui-input ui-input-inline"
-          @change="normalizeNumberPreference('terminalSmoothScrollDuration', 0, 0, 1000, true)"
+          @change="normalizeNumberPreference(preferences, 'terminalSmoothScrollDuration', 0, 0, 1000, true)"
         >
       </div>
       <div class="settings-toggle">
@@ -271,7 +239,7 @@ onBeforeUnmount(() => fontAbortController?.abort());
           max="21"
           step="0.5"
           class="ui-input ui-input-inline"
-          @change="normalizeNumberPreference('terminalMinimumContrastRatio', 1, 1, 21)"
+          @change="normalizeNumberPreference(preferences, 'terminalMinimumContrastRatio', 1, 1, 21)"
         >
       </div>
       <div

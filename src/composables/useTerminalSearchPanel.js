@@ -28,6 +28,13 @@ export function useTerminalSearchPanel({
     return `${searchResult.value.resultIndex + 1}/${searchResult.value.resultCount}`;
   });
 
+  // 与 searchResultLabel 的“无结果”分支同条件，供模板作状态判据，避免比对渲染文案。
+  const searchEmpty = computed(
+    () =>
+      Boolean(searchTerm.value) &&
+      (searchResult.value.resultCount <= 0 || searchResult.value.resultIndex < 0),
+  );
+
   function setSearchResults(result) {
     searchResult.value = result;
   }
@@ -83,6 +90,7 @@ export function useTerminalSearchPanel({
     openSearchPanel,
     resetSearchState,
     runSearch,
+    searchEmpty,
     searchOpen,
     searchResultLabel,
     searchTerm,

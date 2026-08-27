@@ -1,4 +1,4 @@
-import { shortcutMatchesEvent } from "./shortcuts.js";
+import { eventShortcut, normalizeShortcut } from "./shortcuts.js";
 
 /**
  * 统一快捷键注册表：一个 target 只挂一个 keydown 监听，按注册顺序分发。
@@ -16,10 +16,15 @@ export function createShortcutRegistry({ target = null } = {}) {
 
   function handleEvent(event) {
     if (event?.type !== "keydown") return true;
+    const combo = eventShortcut(event);
     for (const entry of entries.values()) {
       if (!enabledContexts.has(entry.context)) continue;
       const shortcut = typeof entry.shortcut === "function" ? entry.shortcut() : entry.shortcut;
-      if (!shortcut || !shortcutMatchesEvent(shortcut, event)) continue;
+      if (!shortcut) continue;
+      // 字符串快捷键用 register 时缓存的归一化结果；函数 shortcut 按事件动态求值。
+      const normalized =
+        typeof entry.shortcut === "function" ? normalizeShortcut(shortcut) : entry.normalized;
+      if (normalized !== combo) continue;
       if (entry.when && !entry.when(event)) continue;
       if (entry.preventDefault !== false) event.preventDefault();
       const result = entry.run(event);
@@ -38,7 +43,9 @@ export function createShortcutRegistry({ target = null } = {}) {
     if (!id || typeof run !== "function") {
       throw new Error("Shortcut registration requires an id and a run handler.");
     }
-    entries.set(id, { id, shortcut, run, context, when, ...options });
+    // 静态快捷键的归一化结果在注册时缓存，避免每个 keydown 对每条注册项重算。
+    const normalized = typeof shortcut === "function" ? null : normalizeShortcut(shortcut);
+    entries.set(id, { id, shortcut, normalized, run, context, when, ...options });
     return () => entries.delete(id);
   }
 

@@ -141,10 +141,10 @@
     flex-shrink: 0;
     min-width: 18px;
     padding: 1px 5px;
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     background: var(--accent-light);
     color: var(--accent);
-    font-size: 0.7143em;
+    font-size: var(--font-size-xs);
     font-weight: 600;
     text-align: center;
   }
@@ -191,7 +191,7 @@
     border: none;
     background: transparent;
     color: var(--text-primary);
-    font-size: 0.8571em;
+    font-size: var(--font-size-base);
     outline: none;
   }
 
@@ -208,7 +208,7 @@
   .ui-multiselect-empty {
     padding: 14px 10px;
     color: var(--text-tertiary);
-    font-size: 0.7857em;
+    font-size: var(--font-size-sm);
     text-align: center;
   }
 

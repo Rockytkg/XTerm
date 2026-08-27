@@ -1,5 +1,3 @@
-import { formatRate as formatByteRate } from "../../utils/formatBytes";
-
 const sampleTimeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: "2-digit",
   minute: "2-digit",
@@ -38,8 +36,4 @@ export function formatSampleTime(timestampMs) {
   const timestamp = Number(timestampMs);
   if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
   return sampleTimeFormatter.format(new Date(timestamp));
-}
-
-export function formatRate(value) {
-  return formatByteRate(value);
 }

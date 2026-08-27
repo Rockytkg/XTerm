@@ -109,29 +109,20 @@ export default defineConfig({
     "ui-row-action":
       "inline-flex h-[28px] min-w-[28px] shrink-0 items-center justify-center gap-[5px] whitespace-nowrap rounded-[7px] border border-transparent bg-transparent px-[7px] text-text-tertiary transition-[background-color,color,border-color] duration-150 hover:border-border hover:bg-bg-tertiary hover:text-text-primary",
     "ui-row-action-danger": "hover:border-transparent hover:bg-danger-bg hover:text-danger",
-    // Credentials view
+    // Credentials view. 与 styles.scss / views-relationship.scss 的同名类按属性逐条
+    // 去重过（components 层在 utilities 之后，SCSS 恒胜）：这里只保留 SCSS 中没有
+    // 同名属性、当前实际生效的声明；与 SCSS 同值或被覆盖的均已删除。
     "cred-root": "flex ui-fill-block flex-col overflow-hidden bg-bg-primary",
-    "cred-content": "flex-1 min-h-0 overflow-hidden grid grid-cols-[minmax(0,1fr)]",
-    "cred-list-pane": "min-h-0 min-w-0 flex flex-col overflow-hidden",
+    "cred-content": "flex-1 grid-cols-[minmax(0,1fr)]",
+    "cred-list-pane": "min-w-0",
     "cred-file-btn":
       "inline-flex h-[24px] items-center gap-[5px] rounded-[6px] border border-border-light bg-bg-primary px-[9px] text-[0.7857em] text-text-secondary transition-[background-color,color,border-color] duration-150 hover:border-border hover:bg-bg-tertiary hover:text-text-primary",
-    "cred-list-error":
-      "mt-[12px] shrink-0 rounded-[8px] border border-danger-bg bg-danger-bg px-[12px] py-[10px] text-[0.8214em] leading-[1.4] text-danger mx-[16px]",
-    "cred-list":
-      "flex-1 min-h-0 overflow-y-auto p-[16px] grid grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))] gap-[12px] content-start",
-    "cred-card":
-      "grid grid-cols-[minmax(0,1fr)] gap-0 rounded-[8px] border border-border-light bg-bg-secondary p-[12px] cursor-grab transition-[border-color,box-shadow] duration-150 hover:border-accent hover:shadow-[var(--focus-ring)]",
-    "cred-card-main": "min-w-0 flex items-start gap-[10px]",
-    "cred-card-icon":
-      "mt-[1px] grid h-[32px] w-[32px] shrink-0 place-items-center rounded-[8px] [&>svg]:block",
-    "cred-icon-key": "bg-accent-light text-accent",
-    "cred-icon-pw": "bg-success-bg text-success",
-    "cred-card-name": "min-w-0 truncate text-[0.9286em] font-600 text-text-primary",
-    "cred-card-badge": "shrink-0 rounded-[4px] px-[6px] py-[1px] text-[0.7143em] font-700",
-    "badge-key": "bg-accent-light text-accent",
-    "badge-pw": "bg-success-bg text-success",
-    "cred-card-actions":
-      "grid grid-flow-col auto-cols-[28px] gap-[2px] justify-items-end items-center",
+    "cred-list-error": "shrink-0 leading-[1.4]",
+    "cred-list": "min-h-0",
+    "cred-card": "grid grid-cols-[minmax(0,1fr)] gap-0",
+    "cred-card-icon": "mt-[1px] place-items-center [&>svg]:block",
+    "cred-card-badge": "shrink-0",
+    "cred-card-actions": "justify-items-end",
     // SFTP panel
     "sftp-root":
       "relative ui-fill-block min-h-0 ui-fill-inline overflow-hidden bg-bg-primary p-[10px] text-text-primary grid gap-[8px] [grid-template-rows:var(--sftp-root-rows)]",

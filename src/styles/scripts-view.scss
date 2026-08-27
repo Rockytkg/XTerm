@@ -50,7 +50,7 @@
       border-bottom: 1px solid var(--border-light);
       background: color-mix(in oklch, var(--bg-tertiary) 72%, transparent);
       color: var(--text-tertiary);
-      font-size: 0.7857em;
+      font-size: var(--font-size-sm);
       font-weight: 600;
       text-align: left;
       white-space: nowrap;
@@ -85,7 +85,7 @@
       padding: 0 12px;
       border-bottom: 1px solid var(--border-light);
       color: var(--text-secondary);
-      font-size: 0.8571em;
+      font-size: var(--font-size-base);
       vertical-align: middle;
     }
 
@@ -95,7 +95,7 @@
   }
 
   .scripts-table-row {
-    transition: background-color var(--motion-duration-fast) var(--ease-default);
+    transition: background-color var(--motion-duration-quick) var(--ease-default);
 
     &:hover {
       background: color-mix(in oklch, var(--accent) 6%, transparent);
@@ -171,7 +171,7 @@
   .scripts-update-badge {
     overflow: hidden;
     padding: 1px 6px;
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     background: color-mix(in oklch, var(--warning) 17%, transparent);
     color: var(--warning);
     font-size: 0.9167em;

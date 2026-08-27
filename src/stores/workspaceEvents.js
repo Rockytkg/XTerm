@@ -1,5 +1,5 @@
 import { TERMINAL_EVENTS, observeTerminalEvent } from "../events/terminalEventBus";
-import { createLogger, summarizeValue } from "../utils/logger";
+import { createLogger, isLogLevelEnabled, summarizeValue } from "../utils/logger";
 import { toFiniteOrNull } from "./workspaceUtils";
 import { CONNECTION_EVENT, connectionEventForSessionStatus } from "./connectionStateMachine";
 
@@ -91,12 +91,15 @@ export function startWorkspaceEventListeners({
           if (!connectionId) return;
           const nextStatus = payload.state || "pending";
           const detail = payload.detail || "";
-          logger.info("session.status.changed", {
-            connectionId,
-            sessionId,
-            nextStatus,
-            payload: summarizeValue(payload),
-          });
+          // info 级别关闭时跳过 summarizeValue(payload) 的序列化开销。
+          if (isLogLevelEnabled("info")) {
+            logger.info("session.status.changed", {
+              connectionId,
+              sessionId,
+              nextStatus,
+              payload: summarizeValue(payload),
+            });
+          }
           const event = connectionEventForSessionStatus(nextStatus, detail);
           const result = event
             ? sessionRegistry.dispatchBackendConnectionEvent(sessionId, connectionId, event)

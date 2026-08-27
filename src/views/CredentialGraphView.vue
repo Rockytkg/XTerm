@@ -35,9 +35,6 @@ import {
 } from "../utils/connectionProtocols";
 import { isPrimaryModifier } from "../utils/platform";
 
-const props = defineProps({
-  embedded: { type: Boolean, default: false },
-});
 const emit = defineEmits(["state-changed"]);
 
 const { t } = useI18n();
@@ -77,9 +74,7 @@ const DRAFT_EDGE_ID = "__relationship-draft-edge";
 const SELECTION_MENU_HOLD_MS = 520;
 const SELECTION_MENU_MOVE_TOLERANCE = 10;
 
-const graphConnections = computed(() =>
-  connections.value.filter((connection) => isCredentialConnection(connection)),
-);
+const graphConnections = computed(() => connections.value);
 const graphConnectionIds = computed(
   () => new Set(graphConnections.value.map((connection) => connection.id)),
 );
@@ -87,14 +82,6 @@ const topology = computed(() => buildCredentialTopology());
 const topologyNodeMap = computed(
   () => new Map(topology.value.nodes.map((node) => [node.id, node.properties])),
 );
-const stats = computed(() => {
-  const nodes = topology.value.nodes;
-  return {
-    credentials: nodes.filter((node) => node.properties?.category === "credential").length,
-    connections: nodes.filter((node) => node.properties?.kind === "connection").length,
-    edges: topology.value.edges.length,
-  };
-});
 const pendingConfirmText = computed(() => {
   const relation = pendingRelation.value;
   if (!relation) return "";
@@ -206,7 +193,7 @@ function initGraph() {
   });
 
   bindGraphEvents();
-  renderGraph({ fit: true });
+  scheduleRenderGraph({ fit: true });
 }
 
 function graphStyles() {
@@ -569,7 +556,8 @@ function scheduleRenderGraph({ fit = false } = {}) {
 async function refreshGraph() {
   disableRelationDrawMode();
   await loadGraphState();
-  renderGraph({ fit: true });
+  // 数据变更必然触发 topology watcher，统一走 rAF 调度去重，只渲染一次
+  scheduleRenderGraph({ fit: true });
 }
 
 function nodePositions() {
@@ -851,7 +839,7 @@ function buildCredentialTopology() {
         y: nextY(counters, spacing, "connection"),
       }),
     );
-    if (isCredentialConnection(connection) && connection.savedCredentialId) {
+    if (connection.savedCredentialId) {
       usedCredentialIds.add(connection.savedCredentialId);
       edges.push(
         createEdge({
@@ -1571,38 +1559,9 @@ defineExpose({
 
 <template>
   <div
-    class="relationship-root"
-    :class="{ 'relationship-root-embedded': props.embedded }"
+    class="relationship-root relationship-root-embedded"
     @contextmenu="provideContextMenu"
   >
-    <div
-      v-if="!props.embedded"
-      class="relationship-toolbar"
-    >
-      <div class="relationship-title-group">
-        <GitBranch
-          :size="18"
-          stroke-width="1.7"
-          class="text-accent"
-        />
-        <div>
-          <h2 class="ui-page-title">
-            {{ t("relationshipGraph.title") }}
-          </h2>
-          <p class="ui-page-desc">
-            {{ t("relationshipGraph.description") }}
-          </p>
-        </div>
-      </div>
-
-      <div class="relationship-stats">
-        <span>{{ t("relationshipGraph.views.credential") }}</span>
-        <span>{{ t("relationshipGraph.stats.connections", { count: stats.connections }) }}</span>
-        <span>{{ t("relationshipGraph.stats.credentials", { count: stats.credentials }) }}</span>
-        <span>{{ t("relationshipGraph.stats.edges", { count: stats.edges }) }}</span>
-      </div>
-    </div>
-
     <div
       v-if="graphError"
       class="relationship-error"

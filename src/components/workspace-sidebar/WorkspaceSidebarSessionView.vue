@@ -1,11 +1,12 @@
 <script setup>
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { FolderTree } from "@lucide/vue";
+import { Cable, Globe2, Server } from "@lucide/vue";
 import { useToasts } from "../../composables/useToasts";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { setBackendEncodingDetection } from "../../services/terminalSessions";
 import { connectionCan } from "../../utils/connectionCapabilities";
+import { isSerialProtocol, isTelnetProtocol } from "../../utils/connectionProtocols";
 import UiSwitch from "../UiSwitch.vue";
 import UiSelect from "../UiSelect.vue";
 import {
@@ -29,6 +30,17 @@ const { showToast } = useToasts();
 
 const protocol = computed(() => props.activeConnection?.protocol);
 const protocolLabel = computed(() => protocol.value?.toUpperCase() || "—");
+// 与会话列表保持一致：串口 Cable / Telnet Globe2 / SSH Server
+const protocolIcon = computed(() => {
+  if (isSerialProtocol(protocol.value)) return Cable;
+  if (isTelnetProtocol(protocol.value)) return Globe2;
+  return Server;
+});
+const statusPillClass = computed(() => {
+  if (props.activeConnection?.status === "online") return "workspace-sidebar-status-online";
+  if (props.activeConnection?.status === "warning") return "workspace-sidebar-status-warning";
+  return "";
+});
 const isSerial = computed(() => connectionCan(props.activeConnection, "serialBaudDetection"));
 const isRemoteShell = computed(
   () =>
@@ -85,12 +97,13 @@ function handleEncodingChange(value) {
 </script>
 
 <template>
-  <div class="workspace-sidebar-pane workspace-sidebar-pane-session">
+  <div class="workspace-sidebar-pane">
     <section class="workspace-sidebar-section">
       <div class="workspace-sidebar-section-head">
         <div class="workspace-sidebar-section-icon">
-          <FolderTree
-            :size="15"
+          <component
+            :is="protocolIcon"
+            :size="16"
             stroke-width="1.8"
           />
         </div>
@@ -98,19 +111,16 @@ function handleEncodingChange(value) {
           <div class="workspace-sidebar-section-kicker">
             {{ t("overview.section") }}
           </div>
-          <div class="workspace-sidebar-section-title">
+          <div
+            class="workspace-sidebar-section-title"
+            :title="activeConnection.name"
+          >
             {{ activeConnection.name }}
           </div>
         </div>
         <span
           class="workspace-sidebar-status-pill"
-          :class="
-            activeConnection.status === 'online'
-              ? 'workspace-sidebar-status-online'
-              : activeConnection.status === 'warning'
-                ? 'workspace-sidebar-status-warning'
-                : ''
-          "
+          :class="statusPillClass"
         >
           {{ t(`status.${activeConnection.status || "offline"}`) }}
         </span>
@@ -120,26 +130,26 @@ function handleEncodingChange(value) {
         {{ protocolLabel }} · {{ activeConnection.host || activeConnection.port || "-" }}
       </div>
 
-      <div class="workspace-sidebar-hero-grid">
+      <div class="workspace-sidebar-metric-grid">
         <!-- SSH -->
         <template v-if="isRemoteShell">
-          <div class="workspace-sidebar-hero-metric">
+          <div class="workspace-sidebar-metric">
             <span>{{ t("overview.session.user") }}</span>
-            <strong class="truncate">{{ activeConnection.user || "—" }}</strong>
+            <strong :title="activeConnection.user">{{ activeConnection.user || "—" }}</strong>
           </div>
-          <div class="workspace-sidebar-hero-metric">
+          <div class="workspace-sidebar-metric">
             <span>{{ t("overview.session.path") }}</span>
-            <strong class="truncate">{{ workingDirectory || "—" }}</strong>
+            <strong :title="workingDirectory">{{ workingDirectory || "—" }}</strong>
           </div>
         </template>
 
         <!-- Serial -->
         <template v-else-if="isSerial">
-          <div class="workspace-sidebar-hero-metric">
+          <div class="workspace-sidebar-metric">
             <span>{{ t("overview.session.serialPort") }}</span>
-            <strong class="truncate">{{ serialPort }}</strong>
+            <strong>{{ serialPort }}</strong>
           </div>
-          <div class="workspace-sidebar-hero-metric">
+          <div class="workspace-sidebar-metric">
             <span>{{ t("overview.session.baudRate") }}</span>
             <strong>{{ baudRate }}</strong>
           </div>
@@ -147,16 +157,16 @@ function handleEncodingChange(value) {
 
         <!-- Telnet -->
         <template v-else>
-          <div class="workspace-sidebar-hero-metric">
+          <div class="workspace-sidebar-metric">
             <span>{{ t("overview.session.terminalType") }}</span>
             <strong>{{ terminalType }}</strong>
           </div>
           <div
             v-if="activeConnection.user"
-            class="workspace-sidebar-hero-metric"
+            class="workspace-sidebar-metric"
           >
             <span>{{ t("overview.session.user") }}</span>
-            <strong class="truncate">{{ activeConnection.user }}</strong>
+            <strong :title="activeConnection.user">{{ activeConnection.user }}</strong>
           </div>
         </template>
       </div>

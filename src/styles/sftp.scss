@@ -425,7 +425,8 @@
     white-space: nowrap;
   }
 
-  .sftp-editor-tab-dirty {
+  .sftp-editor-tab-dirty,
+  .sftp-editor-status-dot {
     inline-size: 6px;
     block-size: 6px;
     border-radius: 50%;
@@ -617,12 +618,5 @@
   .sftp-editor-status-item.is-dirty {
     color: var(--warning);
     font-weight: 600;
-  }
-
-  .sftp-editor-status-dot {
-    inline-size: 6px;
-    block-size: 6px;
-    border-radius: 50%;
-    background: var(--warning);
   }
 }

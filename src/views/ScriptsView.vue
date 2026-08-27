@@ -1,7 +1,5 @@
 <script setup>
 import "../styles/scripts-view.scss";
-// Per-view import: 脚本编辑复用共享 CodeEditor（SFTP 文件编辑器同款样式与交互）。
-import "../styles/sftp.scss";
 
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";

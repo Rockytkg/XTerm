@@ -146,7 +146,6 @@ onBeforeUnmount(() => {
         <component
           :is="Component"
           v-if="route.name !== 'workspace'"
-          :search-open-token="rightSidebarSearchToken"
         />
       </RouterView>
     </SplitterPanel>
