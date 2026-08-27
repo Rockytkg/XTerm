@@ -3,6 +3,12 @@
     container: connection-dialog / inline-size;
   }
 
+  // Keep the dialog invisible while async resources determine the final form
+  // size; otherwise centering shifts when the temporary loading shell grows.
+  .conn-dialog[data-dialog-loading="true"] {
+    visibility: hidden;
+  }
+
   .conn-jump-dialog {
     --dialog-content-z: 41;
 

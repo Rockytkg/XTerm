@@ -590,6 +590,7 @@ async function saveConnection() {
       <DialogOverlay class="dialog-overlay conn-dialog-overlay" />
       <DialogContent
         class="dialog-content conn-dialog focus:outline-none"
+        :data-dialog-loading="!dialogReady"
         @pointer-down-outside="keepDialogOpenForPrivateKeyPicker"
         @interact-outside="keepDialogOpenForPrivateKeyPicker"
       >
@@ -627,7 +628,6 @@ async function saveConnection() {
         </header>
 
         <form
-          v-if="dialogReady"
           class="conn-dialog-body"
           autocomplete="off"
           @submit.prevent="saveConnection"
@@ -697,11 +697,6 @@ async function saveConnection() {
             @update-field="updateActiveField"
           />
         </form>
-        <div
-          v-else
-          class="conn-dialog-body min-h-[280px]"
-          aria-hidden="true"
-        />
 
         <JumpHostEditorDialog
           v-if="isSSH"
