@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, ops::RangeInclusive, sync::Arc, time::Duration};
+use std::{ops::RangeInclusive, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use libunftp::{
@@ -7,14 +7,11 @@ use libunftp::{
     ServerBuilder,
 };
 use tauri::AppHandle;
-use tokio::io::copy_bidirectional;
-use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use unftp_core::auth::{AuthenticationError, Authenticator, Credentials, Principal};
 use unftp_sbe_fs::Filesystem;
 
 use crate::{
-    elevated::{self, BindSpec, BoundSocket, ServiceRule},
     file_service::{
         firewall,
         manager::SharedPassword,
@@ -32,7 +29,6 @@ const FTP_TASK_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) struct FtpRuntimeHandle {
     shutdown_tx: watch::Sender<bool>,
     pub(crate) accept_task: tauri::async_runtime::JoinHandle<()>,
-    proxy_task: tauri::async_runtime::JoinHandle<()>,
     passive_ports: RangeInclusive<u16>,
 }
 
@@ -116,42 +112,19 @@ pub(crate) async fn start_runtime(
     let root = canonical_shared_dir("FTP", &config.shared_dir).await?;
     let passive_ports = DEFAULT_FTP_PASSIVE_START..=DEFAULT_FTP_PASSIVE_END;
     let bind_addr = format!("{}:{}", config.bind_ip, config.port);
-    let external_addr: SocketAddr = bind_addr
-        .parse::<SocketAddr>()
-        .map_err(|error| error.to_string())?;
-    let internal_port = 20000 + (std::process::id() as u16 % 20000);
-    let internal_addr = SocketAddr::new(
-        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-        internal_port,
-    );
-    // 控制端口 + 被动端口段一并交给 bind helper 放行，保证每次开启只提权一次。
+    // libunftp 直接监听真实地址，确保主动模式下控制连接和数据连接看到
+    // 相同的远端 IP。防火墙规则独立管理，不再引入会丢失对端地址的代理。
     let firewall_ports = std::iter::once(config.port)
         .chain(passive_ports.clone())
         .collect::<Vec<_>>();
-    let external_listener = match elevated::bind_service_sockets(
-        ServiceRule {
-            prefix: "XTerm FTP",
-            action: "ftp.firewall.allow",
-            protocol: crate::firewall::FirewallProtocol::Tcp,
-            ports: firewall_ports,
-            all_udp: false,
-        },
-        vec![BindSpec::tcp(external_addr)],
-        None,
+    crate::firewall::allow_service_ports(
+        "XTerm FTP",
+        "ftp.firewall.allow",
+        firewall_ports,
+        crate::firewall::FirewallProtocol::Tcp,
     )
     .await
-    {
-        Ok(mut sockets) => match sockets.pop() {
-            Some(BoundSocket::Tcp(listener)) => {
-                TcpListener::from_std(listener).map_err(|e| e.to_string())?
-            }
-            _ => return Err("The FTP listener protocol was invalid.".to_string()),
-        },
-        Err(error) => {
-            let _ = firewall::remove_ftp_ports(config.port, passive_ports.clone()).await;
-            return Err(error);
-        }
-    };
+    .map_err(|error| error.user_message)?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let auth = Arc::new(PasswordAuthenticator {
         username: config.username.clone(),
@@ -187,7 +160,7 @@ pub(crate) async fn start_runtime(
         .build();
         let result = match server {
             Ok(server) => server
-                .listen(internal_addr.to_string())
+                .listen(bind_addr)
                 .await
                 .map_err(|error| error.to_string()),
             Err(error) => Err(error.to_string()),
@@ -208,31 +181,15 @@ pub(crate) async fn start_runtime(
         .field("passive_start", DEFAULT_FTP_PASSIVE_START)
         .field("passive_end", DEFAULT_FTP_PASSIVE_END)
         .info();
-    let proxy_task = tauri::async_runtime::spawn(async move {
-        loop {
-            tokio::select! {
-                accepted = external_listener.accept() => {
-                    let Ok((mut client, _)) = accepted else { break };
-                    tokio::spawn(async move {
-                        if let Ok(mut upstream) = TcpStream::connect(internal_addr).await {
-                            let _ = copy_bidirectional(&mut client, &mut upstream).await;
-                        }
-                    });
-                }
-            }
-        }
-    });
     Ok(FtpRuntimeHandle {
         shutdown_tx,
         accept_task,
-        proxy_task,
         passive_ports,
     })
 }
 
 pub(crate) async fn stop_runtime(runtime: FtpRuntimeHandle, port: u16) -> Result<(), String> {
     let _ = runtime.shutdown_tx.send(true);
-    runtime.proxy_task.abort();
     let task_result = await_runtime_task("FTP", FTP_TASK_DRAIN_TIMEOUT, runtime.accept_task).await;
     let firewall_result = firewall::remove_ftp_ports(port, runtime.passive_ports).await;
     task_result?;

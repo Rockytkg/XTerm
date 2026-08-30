@@ -1,4 +1,6 @@
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    borrow::Cow, collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration,
+};
 
 use russh::{server, Channel, ChannelId};
 use russh_sftp::{
@@ -42,7 +44,7 @@ pub(crate) async fn start_runtime(
     password: SharedPassword,
 ) -> Result<SftpRuntimeHandle, String> {
     validate_service_config("SFTP", config)?;
-    let host_key = load_or_create_host_key(state).await?;
+    let host_keys = load_or_create_host_keys(state).await?;
     let shared_dir = canonical_shared_dir("SFTP", &config.shared_dir).await?;
     let bind_addr = parse_bind_address("SFTP", &config.bind_ip, config.port)?;
     let raw_listener = elevated::bind_service_sockets(
@@ -65,10 +67,25 @@ pub(crate) async fn start_runtime(
             .map_err(|error| format!("failed to prepare SFTP server socket: {error}"))?,
         BoundSocket::Udp(_) => return Err("The SFTP listener protocol was invalid.".to_string()),
     };
+    let mut preferred = russh::Preferred::default();
+    let mut host_algorithms = preferred.key.to_vec();
+    let rsa_ssh = russh::keys::ssh_key::Algorithm::Rsa { hash: None };
+    if !host_algorithms.contains(&rsa_ssh) {
+        host_algorithms.push(rsa_ssh);
+    }
+    preferred.key = Cow::Owned(host_algorithms);
+    // Keep modern algorithms first, but interoperate with legacy switches
+    // that only implement the group1/SHA-1 exchange.
+    let mut kex = preferred.kex.to_vec();
+    if !kex.contains(&russh::kex::DH_G1_SHA1) {
+        kex.push(russh::kex::DH_G1_SHA1);
+    }
+    preferred.kex = Cow::Owned(kex);
     let mut server_config = server::Config {
         auth_rejection_time: Duration::from_secs(1),
         auth_rejection_time_initial: Some(Duration::from_millis(100)),
-        keys: vec![host_key],
+        keys: host_keys,
+        preferred,
         ..Default::default()
     };
     server_config.inactivity_timeout = Some(Duration::from_secs(300));
@@ -577,20 +594,49 @@ impl Handler for SftpSession {
     }
 }
 
-async fn load_or_create_host_key(state: &AppState) -> Result<russh::keys::PrivateKey, String> {
+async fn load_or_create_host_keys(
+    state: &AppState,
+) -> Result<Vec<russh::keys::PrivateKey>, String> {
     let path = state.paths().data_dir().join("sftp_host_key");
+    let rsa_path = state.paths().data_dir().join("sftp_host_key_rsa");
+    let mut keys = Vec::new();
     if let Ok(raw) = fs::read(&path).await {
-        return russh::keys::PrivateKey::from_openssh(raw)
-            .map_err(|error| format!("failed to parse persisted SFTP host key: {error}"));
+        keys.push(
+            russh::keys::PrivateKey::from_openssh(raw)
+                .map_err(|error| format!("failed to parse persisted SFTP host key: {error}"))?,
+        );
+    } else {
+        let key = russh::keys::PrivateKey::random(
+            &mut rand::rng(),
+            russh::keys::ssh_key::Algorithm::Ed25519,
+        )
+        .map_err(|error| format!("failed to generate SFTP host key: {error}"))?;
+        let pem = key
+            .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+            .map_err(|error| format!("failed to encode SFTP host key: {error}"))?;
+        fs::write(&path, pem.as_bytes())
+            .await
+            .map_err(|error| format!("failed to persist SFTP host key: {error}"))?;
+        keys.push(key);
     }
-    let key =
-        russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::ssh_key::Algorithm::Ed25519)
-            .map_err(|error| format!("failed to generate SFTP host key: {error}"))?;
-    let pem = key
-        .to_openssh(russh::keys::ssh_key::LineEnding::LF)
-        .map_err(|error| format!("failed to encode SFTP host key: {error}"))?;
-    fs::write(&path, pem.as_bytes())
-        .await
-        .map_err(|error| format!("failed to persist SFTP host key: {error}"))?;
-    Ok(key)
+    if let Ok(raw) = fs::read(&rsa_path).await {
+        keys.push(
+            russh::keys::PrivateKey::from_openssh(raw)
+                .map_err(|error| format!("failed to parse persisted RSA host key: {error}"))?,
+        );
+    } else {
+        let key = russh::keys::PrivateKey::random(
+            &mut rand::rng(),
+            russh::keys::ssh_key::Algorithm::Rsa { hash: None },
+        )
+        .map_err(|error| format!("failed to generate RSA host key: {error}"))?;
+        let pem = key
+            .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+            .map_err(|error| format!("failed to encode RSA host key: {error}"))?;
+        fs::write(&rsa_path, pem.as_bytes())
+            .await
+            .map_err(|error| format!("failed to persist RSA host key: {error}"))?;
+        keys.push(key);
+    }
+    Ok(keys)
 }

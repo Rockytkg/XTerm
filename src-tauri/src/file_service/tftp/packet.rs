@@ -197,7 +197,11 @@ pub(super) fn decode_transfer_packet(packet: &[u8]) -> Result<TransferPacket<'_>
             block: be16(packet, 2),
             payload: &packet[4..],
         }),
-        4 if packet.len() == 4 => Ok(TransferPacket::Ack(be16(packet, 2))),
+        // A few embedded TFTP clients pad the fixed four-byte ACK to an
+        // aligned UDP payload. Accept only zero padding for interoperability.
+        4 if packet.len() >= 4 && packet[4..].iter().all(|byte| *byte == 0) => {
+            Ok(TransferPacket::Ack(be16(packet, 2)))
+        }
         4 => Err(TransferError::illegal("malformed ACK packet")),
         5 => {
             if packet.len() < 5 || !packet.ends_with(&[0]) {
@@ -357,8 +361,12 @@ mod tests {
             TransferPacket::Ack(block) => assert_eq!(block, 7),
             _ => panic!("expected ACK packet"),
         }
-        // Trailing garbage on an ACK is rejected.
-        assert!(decode_transfer_packet(&[0, 4, 0, 7, 0]).is_err());
+        // Non-zero trailing garbage on an ACK is rejected.
+        assert!(decode_transfer_packet(&[0, 4, 0, 7, 1]).is_err());
+        assert!(matches!(
+            decode_transfer_packet(&[0, 4, 0, 7, 0, 0]).unwrap(),
+            TransferPacket::Ack(7)
+        ));
         assert!(decode_transfer_packet(&[0, 3, 0]).is_err());
     }
 
