@@ -567,12 +567,22 @@ fn emit_output_batch(
     channel_id: u64,
     max_bytes: usize,
 ) -> TerminalOutputDelivery {
-    let start_offset = delivery.delivered_offset;
-    if start_offset >= delivery.next_offset {
+    if delivery.delivered_offset >= delivery.next_offset {
         return TerminalOutputDelivery::Delivered;
     }
 
     delivery.sync_delivery_cursor();
+    // Offsets are byte-based, but a stale cursor can point into a multi-byte
+    // character (for example after replay-cache pruning). Drop the partial
+    // character and realign the cursor before taking any slices.
+    if let Some(chunk) = delivery.cache.get(delivery.delivery_cursor) {
+        let local = delivery.delivered_offset.saturating_sub(chunk.start_offset);
+        let aligned = next_char_boundary(&chunk.data, local);
+        if aligned > local {
+            delivery.delivered_offset = chunk.start_offset + aligned;
+        }
+    }
+    let start_offset = delivery.delivered_offset;
     let mut payload = String::new();
     let mut end_offset = start_offset;
     let mut encoding = "utf-8".to_string();
@@ -584,7 +594,8 @@ fn emit_output_batch(
         if chunk.end_offset <= end_offset {
             continue;
         }
-        let local_start = end_offset.saturating_sub(chunk.start_offset);
+        let local_start =
+            next_char_boundary(&chunk.data, end_offset.saturating_sub(chunk.start_offset));
         if local_start >= chunk.data.len() {
             continue;
         }
@@ -673,6 +684,14 @@ fn previous_char_boundary(text: &str, mut index: usize) -> usize {
     index
 }
 
+fn next_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
 fn send_terminal_data_payload(
     app: &AppHandle,
     session_id: &str,
@@ -708,8 +727,8 @@ enum TerminalOutputDelivery {
 #[cfg(test)]
 mod tests {
     use super::{
-        RenderGate, SessionDeliveryState, MAX_UNRENDERED_BYTES, RENDER_GATE_FAIL_OPEN_MS,
-        REPLAY_CACHE_MAX_BYTES,
+        next_char_boundary, previous_char_boundary, RenderGate, SessionDeliveryState,
+        MAX_UNRENDERED_BYTES, RENDER_GATE_FAIL_OPEN_MS, REPLAY_CACHE_MAX_BYTES,
     };
     use std::time::{Duration, Instant};
 
@@ -782,6 +801,14 @@ mod tests {
         delivery.delivered_offset = 9;
         delivery.sync_delivery_cursor();
         assert_eq!(delivery.delivery_cursor, 3);
+    }
+
+    #[test]
+    fn output_offsets_are_normalized_to_utf8_boundaries() {
+        let text = "流量审计";
+        assert_eq!(previous_char_boundary(text, 2), 0);
+        assert_eq!(next_char_boundary(text, 1), 3);
+        assert_eq!(next_char_boundary(text, 3), 3);
     }
 
     #[test]

@@ -621,9 +621,11 @@ async fn shutdown_application_resources<R: tauri::Runtime>(app: &tauri::AppHandl
     crate::terminal::shutdown_all_sessions(app);
     crate::proxy::shutdown_proxy(app).await;
     crate::file_service::shutdown_runtime(app).await;
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        let _ = window.close();
-    }
+    // The close request was deferred while resources shut down. Calling
+    // `window.close()` here can re-enter Tao's Windows runner after it has
+    // transitioned to Destroyed, which panics with "cannot move state from
+    // Destroyed". Exit the application once cleanup is complete instead.
+    app.exit(0);
 }
 
 #[cfg(not(windows))]
