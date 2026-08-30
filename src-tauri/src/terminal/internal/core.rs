@@ -832,6 +832,7 @@ pub(crate) struct ResolvedConnection {
     pub(crate) accept_host_key_once: Option<bool>,
     pub(crate) terminal_scrollback: Option<u32>,
     pub(crate) terminal_type: Option<String>,
+    pub(crate) runtime_metrics: Option<bool>,
     pub(crate) cols: Option<u32>,
     pub(crate) rows: Option<u32>,
     pub(crate) jump_hosts: Option<Vec<JumpHostHop>>,
@@ -925,6 +926,7 @@ impl ResolvedConnection {
                 .terminal_type
                 .clone()
                 .or(request.terminal_type),
+            runtime_metrics: profile.options.runtime_metrics,
             cols: request.cols,
             rows: request.rows,
             jump_hosts: profile.jump_hosts().cloned(),

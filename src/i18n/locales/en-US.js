@@ -67,6 +67,9 @@ export default {
       morePromptCleanup: "Clean More paging prompt",
       morePromptCleanupHint:
         "For legacy switches that print filler spaces after paging; disabled by default.",
+      runtimeMetrics: "Runtime metrics",
+      runtimeMetricsHint:
+        "Collect remote CPU/memory/network stats. Disable if the session drops right after connecting to single-channel devices like switches.",
       serialQuickAutoBaud: "Fast auto baud detection",
       serialQuickAutoBaudHint:
         "When baud is Auto, probe only 9600 and 115200. Disable to scan the common baud list.",

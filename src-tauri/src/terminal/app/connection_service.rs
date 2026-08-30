@@ -126,11 +126,18 @@ impl ConnectionApplicationService {
                 if let Some(scope) = open_scope.as_ref() {
                     state.finish_connection_open(open_request_id, scope);
                 }
+                // 会话选项可裁剪能力（如关闭运行时指标），响应必须返回该会话的
+                // 实际能力；用协议默认值会让前端发起后端已禁用的探测。
+                let capabilities = state
+                    .sessions()
+                    .get(&session_id)
+                    .map(|session| session.capabilities.clone())
+                    .unwrap_or_else(|| driver.capabilities());
                 Ok(ConnectionOpenResponse::Connected {
                     connection_id: resolved.id,
                     session_id,
                     protocol,
-                    capabilities: driver.capabilities(),
+                    capabilities,
                     serial_port,
                     baud_rate,
                     serial_scores,

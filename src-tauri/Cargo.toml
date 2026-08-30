@@ -40,7 +40,7 @@ hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", "tokio"] }
 if-addrs = "0.15.0"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
-russh = { version = "0.61.2", default-features = false, features = ["ring", "rsa"] }
+russh = { version = "0.61.2", default-features = false, features = ["ring", "rsa", "des"] }
 russh-sftp = "2.3"
 libunftp = { version = "0.23", default-features = false, features = ["ring"] }
 unftp-sbe-fs = "0.4"
@@ -95,3 +95,9 @@ lto = true
 opt-level = "z"
 panic = "unwind"
 strip = true
+
+# russh 使用本地补丁副本（vendor/russh，补丁内容见其 UPSTREAM.md）：放宽
+# banner / keyboard-interactive / disconnect 文本的 UTF-8 严格校验，兼容发送
+# GBK 等非 UTF-8 文本的旧交换机与服务器。升级 russh 版本时需同步移植补丁。
+[patch.crates-io]
+russh = { path = "vendor/russh" }

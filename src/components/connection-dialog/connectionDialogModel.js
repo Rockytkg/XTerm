@@ -40,6 +40,7 @@ function commonDraftFromProfile(profile, protocol) {
     encoding: options.encoding || DEFAULT_TERMINAL_ENCODING,
     backspaceSends: options.backspaceSends || BACKSPACE_SENDS.DEL,
     terminalMorePromptCleanup: options.terminalMorePromptCleanup === true,
+    runtimeMetrics: options.runtimeMetrics !== false,
   };
 }
 
@@ -154,6 +155,7 @@ export function buildConnectionProfile({
       form.backspaceSends === BACKSPACE_SENDS.DEL ? undefined : form.backspaceSends || undefined,
     terminalHighlightEnabled: form.terminalHighlightEnabled,
     terminalMorePromptCleanup: form.terminalMorePromptCleanup === true ? true : undefined,
+    runtimeMetrics: form.runtimeMetrics === false ? false : undefined,
   };
   const commonProfile = {
     id,

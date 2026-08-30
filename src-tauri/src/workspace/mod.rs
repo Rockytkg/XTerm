@@ -36,6 +36,9 @@ pub struct ConnectionProfileOptions {
     pub(crate) realtime_encoding_detection: Option<bool>,
     pub(crate) terminal_highlight_enabled: Option<bool>,
     pub(crate) terminal_more_prompt_cleanup: Option<bool>,
+    /// 运行时指标采集开关；SSH 默认开启。仅支持单通道 shell 的设备
+    ///（部分交换机）需要关闭，否则 exec 探测会触发远端断开整个会话。
+    pub(crate) runtime_metrics: Option<bool>,
 }
 
 /// Protocol-specific details for a connection profile.
@@ -210,6 +213,8 @@ pub struct ConnectionListItem {
     pub backspace_sends: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_more_prompt_cleanup: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_metrics: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -709,6 +714,7 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
         encoding: c.options.encoding,
         backspace_sends: c.options.backspace_sends,
         terminal_more_prompt_cleanup: c.options.terminal_more_prompt_cleanup,
+        runtime_metrics: c.options.runtime_metrics,
     }
 }
 
@@ -721,6 +727,7 @@ fn connection_profile_from_stored(id: String, c: StoredConnection) -> Connection
         realtime_encoding_detection: item.realtime_encoding_detection,
         terminal_highlight_enabled: item.terminal_highlight_enabled,
         terminal_more_prompt_cleanup: item.terminal_more_prompt_cleanup,
+        runtime_metrics: item.runtime_metrics,
     };
     let details = match item.protocol.as_str() {
         "ssh" => ConnectionProfileDetails::Ssh(ConnectionProfileSshDetails {
@@ -767,6 +774,7 @@ impl From<&ConnectionProfile> for StoredConnection {
             realtime_encoding_detection: c.options.realtime_encoding_detection,
             terminal_highlight_enabled: c.options.terminal_highlight_enabled,
             terminal_more_prompt_cleanup: c.options.terminal_more_prompt_cleanup,
+            runtime_metrics: c.options.runtime_metrics,
         };
 
         let details = match c.protocol.as_str() {
@@ -914,6 +922,7 @@ mod tests {
                 realtime_encoding_detection: Some(false),
                 terminal_highlight_enabled: Some(true),
                 terminal_more_prompt_cleanup: Some(true),
+                runtime_metrics: None,
             },
             details: ConnectionDetails::Telnet(TelnetConnectionDetails {
                 auth_method: Some("password".to_string()),

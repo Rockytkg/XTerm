@@ -114,6 +114,7 @@ pub struct ConnectionOptions {
     pub realtime_encoding_detection: Option<bool>,
     pub terminal_highlight_enabled: Option<bool>,
     pub terminal_more_prompt_cleanup: Option<bool>,
+    pub runtime_metrics: Option<bool>,
 }
 
 /// Protocol-specific details persisted for a connection.
@@ -206,6 +207,8 @@ impl<'de> Deserialize<'de> for StoredConnection {
                     .or_else(|| take_bool(obj, "terminalHighlightEnabled")),
                 terminal_more_prompt_cleanup: take_bool(obj, "terminal_more_prompt_cleanup")
                     .or_else(|| take_bool(obj, "terminalMorePromptCleanup")),
+                runtime_metrics: take_bool(obj, "runtime_metrics")
+                    .or_else(|| take_bool(obj, "runtimeMetrics")),
             };
 
             let details = match protocol.as_str() {

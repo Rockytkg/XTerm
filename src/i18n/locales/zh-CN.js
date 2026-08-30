@@ -66,6 +66,8 @@ export default {
       backspaceSendsHint: "DEL(^?) 为现代默认，BS(^H) 适用老设备。",
       morePromptCleanup: "清理 More 分页提示",
       morePromptCleanupHint: "兼容会在翻页后输出填充空格的老交换机；默认关闭。",
+      runtimeMetrics: "运行时指标",
+      runtimeMetricsHint: "采集远端 CPU/内存/网络数据。连接交换机等单通道设备后立即断开时请关闭。",
       serialQuickAutoBaud: "快速自动波特率检测",
       serialQuickAutoBaudHint: "波特率为自动时仅检测 9600 和 115200；关闭后检测常用波特率列表。",
       serialPort: "串口",

@@ -5,6 +5,7 @@ const CONNECTION_OPTION_FIELDS = new Set([
   "realtimeEncodingDetection",
   "terminalHighlightEnabled",
   "terminalMorePromptCleanup",
+  "runtimeMetrics",
 ]);
 
 export function mergeConnectionProfileOptions(profile, patch) {

@@ -66,6 +66,16 @@ impl ProtocolDriver for SshProtocolDriver {
         Box::pin(async move {
             let session_id = request.session_id.clone();
             let connection_id = request.connection_id.clone();
+            // 会话选项可关闭运行时指标：仅支持单通道 shell 的设备（部分交换机）
+            // 会在 exec 探测时被远端断开整个会话，此处直接忽略启动请求。
+            let metrics_enabled = state
+                .sessions()
+                .get(&session_id)
+                .map(|session| session.capabilities.metrics)
+                .unwrap_or(false);
+            if !metrics_enabled {
+                return Ok(());
+            }
             if state.monitor_task(&session_id).is_some() {
                 return Ok(());
             }

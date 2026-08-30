@@ -383,6 +383,31 @@ impl SessionApplicationService {
         )
     }
 
+    pub(crate) fn set_metrics_enabled(
+        &self,
+        state: &AppState,
+        session_id: &str,
+        enabled: bool,
+    ) -> Result<(), TerminalApiError> {
+        {
+            let mut sessions = state.sessions();
+            let session = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| TerminalApiError::invalid("session not found"))?;
+            session.capabilities.metrics = enabled;
+        }
+        // 关闭时立即停掉采样循环：目标可能是只允许单通道的设备，
+        // 继续 exec 探测会被远端断开整个会话。
+        if !enabled {
+            state.remove_monitor_task(session_id);
+        }
+        logging::event("terminal.session_service", "session.metrics_enabled")
+            .field("session_id", session_id)
+            .field("enabled", enabled)
+            .info();
+        Ok(())
+    }
+
     pub(crate) fn set_raw_output(
         &self,
         state: &AppState,

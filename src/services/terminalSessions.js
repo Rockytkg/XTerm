@@ -144,3 +144,13 @@ export function stopSshRuntimeMetrics(connectionId, sessionId) {
     },
   );
 }
+
+export function setBackendRuntimeMetricsEnabled(request) {
+  return invokeTerminal(
+    "terminal_session_set_metrics_enabled",
+    { request },
+    {
+      summarizePayload: () => ({ sessionId: request?.sessionId, enabled: request?.enabled }),
+    },
+  );
+}

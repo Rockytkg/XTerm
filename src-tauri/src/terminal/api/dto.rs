@@ -147,6 +147,13 @@ pub(crate) struct SessionSerialRedetectCommand {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct SessionMetricsEnabledCommand {
+    pub session_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SessionDetachCommand {
     pub session_id: String,
     pub channel_id: Option<u64>,

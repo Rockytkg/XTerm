@@ -5,7 +5,7 @@ import { ChevronDown, SlidersHorizontal } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import UiSwitch from "../UiSwitch.vue";
 import UiSelect from "../UiSelect.vue";
-import { isSerialProtocol } from "../../utils/connectionProtocols";
+import { isSerialProtocol, isSshProtocol } from "../../utils/connectionProtocols";
 import {
   BACKSPACE_SENDS_OPTIONS,
   TERMINAL_TYPE_OPTIONS,
@@ -21,6 +21,7 @@ const props = defineProps({
 const emit = defineEmits(["update-field", "update:open"]);
 const { t } = useI18n();
 const isSerial = computed(() => isSerialProtocol(props.protocol));
+const isSsh = computed(() => isSshProtocol(props.protocol));
 
 function updateField(field, value) {
   emit("update-field", field, value);
@@ -104,6 +105,20 @@ const encodingOptions = computed(() => createEncodingOptions(t));
         <UiSwitch
           :model-value="props.form.terminalMorePromptCleanup"
           @update:model-value="updateField('terminalMorePromptCleanup', $event)"
+        />
+      </div>
+
+      <div
+        v-if="isSsh"
+        class="conn-toggle-row"
+      >
+        <div>
+          <span class="conn-field-label">{{ t("connectionDialog.fields.runtimeMetrics") }}</span>
+          <span class="conn-field-hint">{{ t("connectionDialog.fields.runtimeMetricsHint") }}</span>
+        </div>
+        <UiSwitch
+          :model-value="props.form.runtimeMetrics"
+          @update:model-value="updateField('runtimeMetrics', $event)"
         />
       </div>
 

@@ -88,6 +88,46 @@ fn pending_ssh_connections() -> &'static Mutex<HashMap<String, SshHostKeyPending
     PENDING_SSH_HOST_KEY_CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// 在 russh 默认算法之后追加 legacy 算法，兼容仅支持 ECDH、SHA-1 系列 KEX、
+/// CBC/3DES、HMAC-SHA1 的旧交换机与服务器。列表顺序即协商优先级，
+/// 现代服务器的协商结果与 russh 默认配置完全一致，legacy 算法仅在双方没有
+/// 其他共同算法时兜底。
+/// 注：未加入 ssh-dss 主机密钥——russh 的 `dsa` feature 与 ssh-key 0.7.0-rc.10
+/// 组合编译失败（dsa 0.7.0 API 不兼容），且 1024 位 DSA 已被普遍淘汰。
+fn ssh_client_config() -> russh::client::Config {
+    let mut preferred = russh::Preferred::default();
+    preferred.kex.to_mut().extend([
+        russh::kex::ECDH_SHA2_NISTP256,
+        russh::kex::ECDH_SHA2_NISTP384,
+        russh::kex::ECDH_SHA2_NISTP521,
+        russh::kex::DH_G14_SHA1,
+        russh::kex::DH_G1_SHA1,
+        russh::kex::DH_GEX_SHA1,
+    ]);
+    preferred.cipher.to_mut().extend([
+        russh::cipher::AES_128_GCM,
+        russh::cipher::AES_128_CBC,
+        russh::cipher::AES_192_CBC,
+        russh::cipher::AES_256_CBC,
+        russh::cipher::TRIPLE_DES_CBC,
+    ]);
+    preferred
+        .mac
+        .to_mut()
+        .extend([russh::mac::HMAC_SHA1_ETM, russh::mac::HMAC_SHA1]);
+    russh::client::Config {
+        preferred,
+        // 旧设备 GEX 能提供的 DH 群上限常只有 2048 bit，下限取 russh 允许的最小值，
+        // 避免对端没有符合要求的群可用（russh 默认 min 为 3072）。
+        gex: russh::client::GexParams::new(2048, 8192, 8192).expect("valid gex params"),
+        inactivity_timeout: None,
+        keepalive_interval: Some(Duration::from_secs(30)),
+        keepalive_max: 3,
+        nodelay: true,
+        ..Default::default()
+    }
+}
+
 fn normalize_jump_port(value: Option<&str>) -> u16 {
     value
         .and_then(|port| port.trim().parse::<u16>().ok())
@@ -364,13 +404,7 @@ async fn connect_ssh_async(params: SshConnectParams) -> ConnectionResult<SshConn
     } = params;
 
     let host_key_state = Arc::new(Mutex::new(None));
-    let config = Arc::new(russh::client::Config {
-        inactivity_timeout: None,
-        keepalive_interval: Some(Duration::from_secs(30)),
-        keepalive_max: 3,
-        nodelay: true,
-        ..Default::default()
-    });
+    let config = Arc::new(ssh_client_config());
     let mut session = tokio::time::timeout(
         Duration::from_millis(CONNECT_TIMEOUT_MS),
         russh::client::connect(
@@ -446,13 +480,7 @@ async fn connect_ssh_async(params: SshConnectParams) -> ConnectionResult<SshConn
 }
 
 async fn connect_first_jump_hop(hop: ResolvedJumpHop) -> ConnectionResult<SharedSshSession> {
-    let config = Arc::new(russh::client::Config {
-        inactivity_timeout: None,
-        keepalive_interval: Some(Duration::from_secs(30)),
-        keepalive_max: 3,
-        nodelay: true,
-        ..Default::default()
-    });
+    let config = Arc::new(ssh_client_config());
     let host_key_state = Arc::new(Mutex::new(None));
     let host = hop.host.clone();
     let port = hop.port;
@@ -493,13 +521,7 @@ async fn connect_next_jump_hop(
             ))?;
         channel.into_stream()
     };
-    let config = Arc::new(russh::client::Config {
-        inactivity_timeout: None,
-        keepalive_interval: Some(Duration::from_secs(30)),
-        keepalive_max: 3,
-        nodelay: true,
-        ..Default::default()
-    });
+    let config = Arc::new(ssh_client_config());
     let host_key_state = Arc::new(Mutex::new(None));
     let mut session =
         russh::client::connect_stream(config, stream, RusshClient::new(host_key_state))
@@ -562,13 +584,7 @@ async fn connect_via_jump_chain(
     let (session, chain_sessions) = connect_jump_chain(jump_hops).await?;
 
     let host_key_state = Arc::new(Mutex::new(None));
-    let config = Arc::new(russh::client::Config {
-        inactivity_timeout: None,
-        keepalive_interval: Some(Duration::from_secs(30)),
-        keepalive_max: 3,
-        nodelay: true,
-        ..Default::default()
-    });
+    let config = Arc::new(ssh_client_config());
     let tunnel_channel =
         {
             let jump_session = session.lock().await;
@@ -923,6 +939,10 @@ impl SshConnectionFactory {
 
         let open_context = request.session_open_context(state);
         ensure_open_current(state, &request)?;
+        // 运行时指标默认开启；会话选项可关闭——仅支持单通道 shell 的设备
+        //（部分交换机）会在 exec 探测时被远端断开整个会话。
+        let mut capabilities = ConnectionCapabilities::ssh();
+        capabilities.metrics = request.runtime_metrics.unwrap_or(true);
         let shared_session = Arc::new(tokio::sync::Mutex::new(connected.session));
         let session_id = spawn_bound_session(
             app.clone(),
@@ -937,7 +957,7 @@ impl SshConnectionFactory {
                     },
                     initial_size: TerminalSize { cols, rows },
                 }),
-                capabilities: ConnectionCapabilities::ssh(),
+                capabilities,
                 codec: open_context.codec,
                 initial_data: None,
                 startup_auth: None,

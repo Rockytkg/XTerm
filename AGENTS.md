@@ -22,6 +22,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 - `src/services/`：前端到 Tauri Rust 命令的封装（`ipc/` 子目录为底层调用；`scripting/` 子目录为脚本引擎：终端桥接、运行器、弹窗交互）。组件中不要散落裸 `invoke`，应在 service 中添加明确封装。
 - `src/i18n/`：中英文案。`src/utils/`：通用工具（如 `eventBridge.js`）。
 - `src-tauri/src/`：Rust 后端。`lib.rs` 初始化状态、插件并注册 `tauri::generate_handler!`；模块包括 `terminal/`（api/app/domain/protocol 分层）、`credentials/`、`file_service/`、`tftp/`、`storage/`、`session_recording/`、`paths/`、`logging/`、`proxy/`、`firewall.rs` 等。
+- `src-tauri/vendor/`：vendored 依赖。`libtelnet/` 为 C 源码；`russh/` 为 russh 0.61.2 的本地补丁副本，经 `Cargo.toml` 的 `[patch.crates-io]` 对所有依赖方生效（补丁内容与升级注意事项见 `vendor/russh/UPSTREAM.md`，补丁点以 `PATCH(xterm)` 注释标注）。
 - 日志体系：`src-tauri/src/logging/`（`level`/`event`/`writer`/`retention`/`panic`/`commands` 子模块）。后端写日志一律用 `crate::logging::event(scope, action)` 结构化事件或带显式 `target: "<scope>"` 的 `log::<level>!`，scope 为点分逻辑名（如 `terminal.serial`），不使用默认模块路径 target；panic/启动应急路径除外。日志按日写入 `<log_dir>/YYYYMMDD.log`（无缓冲逐条 flush，保留 7 天 / 最多 14 个文件），`panic.log`、`startup-error.log` 超 4 MiB 截尾。级别持久化于 settings（`logLevel`），`log_level_set` 立即生效；嘈杂依赖 crate（russh/keyring/mio/tao）在级别低于 debug 时被钳制。前端统一用 `createLogger("frontend.<area>.<module>")` + 点分事件名（`src/utils/logger.js`），启动时经 `src/services/logging.js` 同步后端级别；生产模式 error/warn 转发到后端日志文件。日志相关 Tauri 命令：`log_level_get/set`、`log_files_list`、`log_file_tail`、`log_files_prune`、`log_dir_open`；设置页"通用"内置日志查看对话框。
 - `src-tauri/capabilities/default.json`：Tauri 2 权限能力配置。
 - `src-tauri/tauri.conf.json`：开发地址（`http://127.0.0.1:1420`）、`dist` 输出、无边框窗口（`decorations: false`）、deep-link scheme（`ssh`、`telnet`）和打包配置。
@@ -59,6 +60,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 
 - UI 状态和交互留在 `src/`；原生能力、网络连接、文件系统、加密、日志、SQLite/redb 和系统集成留在 `src-tauri/`。
 - 连接、凭证、路径、日志、会话记录等跨边界功能，需要同时维护前端 service、Rust 命令和存储行为。
+- 新增或删除会话选项开关（`ConnectionProfileOptions`）时必须同步整条链路：`storage/models.rs` 的 `ConnectionOptions`（含旧格式反序列化）→ `workspace/mod.rs` 的 `ConnectionListItem`/`ConnectionProfileOptions` 与双向映射 → 前端 `src/utils/connectionProfileOptions.js` 白名单 → 连接弹窗 `ConnectionSessionOptions.vue` → 工作区侧边栏 `WorkspaceSidebarSessionView.vue`。侧边栏开关必须实时生效（更新后端会话能力并立即启停对应功能，参考 `terminal_session_set_metrics_enabled`），不能只在下次连接时生效；会话实际能力经 open 响应的 `capabilities` 下发，不要用协议默认值代替。
 - 终端附加能力（搜索、剪贴板 OSC 52、超链接、Unicode 11、连字、进度序列）默认通过 xterm addon 加载；WebGL 渲染器有独立开关。OSC 1337 CurrentDir 用于 SFTP 跟随 shell 目录（应用不自动注入 shell 集成脚本）。
 
 ## 安全与权限

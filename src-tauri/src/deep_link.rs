@@ -204,6 +204,7 @@ impl ParsedUri {
             accept_host_key_once: None,
             terminal_scrollback: None,
             terminal_type: None,
+            runtime_metrics: None,
             cols: None,
             rows: None,
             jump_hosts: None,

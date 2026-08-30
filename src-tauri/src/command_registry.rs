@@ -47,6 +47,7 @@ macro_rules! app_invoke_handler {
             crate::terminal::api::commands::terminal_serial_redetect_baud,
             crate::terminal::api::commands::terminal_metrics_start,
             crate::terminal::api::commands::terminal_metrics_stop,
+            crate::terminal::api::commands::terminal_session_set_metrics_enabled,
             crate::terminal::api::commands::terminal_attach,
             crate::terminal::api::commands::terminal_detach,
             crate::terminal::api::commands::terminal_send_batch,

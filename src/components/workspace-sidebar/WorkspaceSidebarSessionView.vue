@@ -4,9 +4,9 @@ import { useI18n } from "vue-i18n";
 import { Cable, Globe2, Server } from "@lucide/vue";
 import { useToasts } from "../../composables/useToasts";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { setBackendEncodingDetection } from "../../services/terminalSessions";
+import { setBackendEncodingDetection, setBackendRuntimeMetricsEnabled } from "../../services/terminalSessions";
 import { connectionCan } from "../../utils/connectionCapabilities";
-import { isSerialProtocol, isTelnetProtocol } from "../../utils/connectionProtocols";
+import { isSerialProtocol, isSshProtocol, isTelnetProtocol } from "../../utils/connectionProtocols";
 import UiSwitch from "../UiSwitch.vue";
 import UiSelect from "../UiSelect.vue";
 import {
@@ -42,6 +42,7 @@ const statusPillClass = computed(() => {
   return "";
 });
 const isSerial = computed(() => connectionCan(props.activeConnection, "serialBaudDetection"));
+const isSsh = computed(() => isSshProtocol(protocol.value));
 const isRemoteShell = computed(
   () =>
     connectionCan(props.activeConnection, "metrics") ||
@@ -93,6 +94,32 @@ function handleEncodingChange(value) {
       encoding: normalized || null,
     }).catch(() => {});
   }
+}
+
+async function handleRuntimeMetricsChange(enabled) {
+  // 实时生效：先更新后端会话能力（关闭会立即停掉采样循环），再同步前端
+  // registry——指标控制器监听 capabilities.metrics 的变化自动启停采样。
+  if (backendSessionId.value) {
+    try {
+      await setBackendRuntimeMetricsEnabled({
+        sessionId: backendSessionId.value,
+        enabled,
+      });
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: t("notifications.connectionSaveFailed"),
+        message: error?.message || String(error),
+      });
+      return;
+    }
+    sessionRegistry.setConnectionCapabilities(frontendSessionId.value, {
+      ...sessionRegistry.getCapabilities(frontendSessionId.value),
+      metrics: enabled,
+    });
+  }
+  // 默认开启，仅在关闭时落库 false。
+  void persistProfileField("runtimeMetrics", enabled ? undefined : false);
 }
 </script>
 
@@ -204,6 +231,24 @@ function handleEncodingChange(value) {
           <UiSwitch
             :model-value="activeConnection?.terminalMorePromptCleanup === true"
             @update:model-value="persistProfileField('terminalMorePromptCleanup', $event)"
+          />
+        </div>
+
+        <div
+          v-if="isSsh"
+          class="workspace-sidebar-pref-row"
+        >
+          <div class="workspace-sidebar-pref-text">
+            <span class="workspace-sidebar-pref-label">{{
+              t("connectionDialog.fields.runtimeMetrics")
+            }}</span>
+            <span class="workspace-sidebar-pref-hint">{{
+              t("connectionDialog.fields.runtimeMetricsHint")
+            }}</span>
+          </div>
+          <UiSwitch
+            :model-value="activeConnection?.runtimeMetrics !== false"
+            @update:model-value="handleRuntimeMetricsChange($event)"
           />
         </div>
 

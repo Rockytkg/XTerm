@@ -144,6 +144,16 @@ pub(crate) fn terminal_metrics_stop(
 }
 
 #[tauri::command]
+pub(crate) fn terminal_session_set_metrics_enabled(
+    state: tauri::State<'_, AppState>,
+    request: SessionMetricsEnabledCommand,
+) -> Result<(), String> {
+    session_service()
+        .set_metrics_enabled(state.inner(), &request.session_id, request.enabled)
+        .map_err(api_error)
+}
+
+#[tauri::command]
 pub(crate) async fn terminal_attach(
     _app: AppHandle,
     state: tauri::State<'_, AppState>,
