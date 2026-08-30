@@ -11,17 +11,19 @@ import {
   DialogRoot,
   DialogTitle,
 } from "reka-ui";
-import { FileCode, Play } from "@lucide/vue";
+import { FileCode, Play, Square } from "@lucide/vue";
 import { useScriptExecution } from "../composables/useScriptExecution";
+import { useToasts } from "../composables/useToasts";
 import { useScriptsStore } from "../stores/scriptsStore";
 import { closeScriptRunPicker, scriptRunPickerOpen } from "../services/scripting/scriptRunPicker";
-import { SCRIPT_RUN_STATUS, scriptRuns } from "../services/scripting/scriptRunner";
+import { SCRIPT_RUN_STATUS, scriptRuns, stopScript } from "../services/scripting/scriptRunner";
 
 const { t } = useI18n();
 const router = useRouter();
 const scriptsStore = useScriptsStore();
 const { scripts } = storeToRefs(scriptsStore);
 const { runScriptOnActiveSession } = useScriptExecution();
+const { showToast } = useToasts();
 
 const sortedScripts = computed(() =>
   [...scripts.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),
@@ -44,6 +46,15 @@ function onOpenChange(open) {
 }
 
 function runScript(script) {
+  // 已在运行的脚本不允许重复启动，但仍需响应点击以关闭选择弹窗。
+  const runningRun = scriptRuns.value.find(
+    (run) => run.scriptId === script.id && run.status === SCRIPT_RUN_STATUS.RUNNING,
+  );
+  if (runningRun) {
+    closeScriptRunPicker();
+    void stopRunningScript(runningRun);
+    return;
+  }
   closeScriptRunPicker();
   void runScriptOnActiveSession(script);
 }
@@ -51,6 +62,22 @@ function runScript(script) {
 function goManageScripts() {
   closeScriptRunPicker();
   router.push({ name: "scripts" });
+}
+
+async function stopRunningScript(run) {
+  showToast({ type: "info", title: t("notifications.scriptStopping", { name: run.scriptName }) });
+  if (!stopScript(run.runId)) {
+    showToast({ type: "error", title: t("notifications.scriptStopFailed", { name: run.scriptName }) });
+    return;
+  }
+  for (let attempt = 0; attempt < 30 && run.status === SCRIPT_RUN_STATUS.RUNNING; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  if (run.status === SCRIPT_RUN_STATUS.STOPPED) {
+    showToast({ type: "success", title: t("notifications.scriptStopped", { name: run.scriptName }) });
+  } else {
+    showToast({ type: "error", title: t("notifications.scriptStopFailed", { name: run.scriptName }) });
+  }
 }
 </script>
 
@@ -95,14 +122,33 @@ function goManageScripts() {
             :key="script.id"
             type="button"
             class="script-picker-item"
-            :disabled="runningScriptIds.has(script.id)"
+            :class="{ 'is-running': runningScriptIds.has(script.id) }"
+            :title="
+              runningScriptIds.has(script.id)
+                ? t('scripts.picker.stopHint')
+                : t('scripts.picker.runHint')
+            "
             @click="runScript(script)"
           >
             <span class="script-picker-item-name">{{ script.name || t("scripts.untitled") }}</span>
-            <Play
-              :size="13"
-              stroke-width="2"
-            />
+            <span class="script-picker-item-action">
+              <span
+                v-if="runningScriptIds.has(script.id)"
+                class="script-picker-item-status"
+              >
+                {{ t("scripts.picker.running") }}
+              </span>
+              <Square
+                v-if="runningScriptIds.has(script.id)"
+                :size="13"
+                stroke-width="2.2"
+              />
+              <Play
+                v-else
+                :size="13"
+                stroke-width="2"
+              />
+            </span>
           </button>
         </div>
 
@@ -153,6 +199,29 @@ function goManageScripts() {
 .script-picker-item:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.script-picker-item.is-running {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border-light));
+  color: var(--danger);
+}
+
+.script-picker-item.is-running:hover {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-secondary));
+  color: var(--danger) !important;
+}
+
+.script-picker-item-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.script-picker-item-status {
+  font-size: 0.78em;
+  font-weight: 600;
 }
 
 .script-picker-item:disabled {
