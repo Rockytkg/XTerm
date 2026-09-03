@@ -5,8 +5,8 @@ const LOG_LEVEL_PRIORITY = Object.freeze({
   debug: 3,
   trace: 4,
 });
-const LOGGING_ENABLED = import.meta.env?.DEV === true;
-const DEFAULT_LOG_LEVEL = LOGGING_ENABLED ? "debug" : "error";
+const DEV_CONSOLE_ENABLED = import.meta.env?.DEV === true;
+const DEFAULT_LOG_LEVEL = DEV_CONSOLE_ENABLED ? "debug" : "error";
 
 let activeLogLevel = DEFAULT_LOG_LEVEL;
 let logSequence = 0;
@@ -16,7 +16,7 @@ function normalizeLogLevel(level) {
 }
 
 function shouldLog(level) {
-  return LOGGING_ENABLED && LOG_LEVEL_PRIORITY[level] <= LOG_LEVEL_PRIORITY[activeLogLevel];
+  return DEV_CONSOLE_ENABLED && LOG_LEVEL_PRIORITY[level] <= LOG_LEVEL_PRIORITY[activeLogLevel];
 }
 
 // 生产环境把 error/warn 转发到 tauri-plugin-log 的 Webview target，写入后端日志文件；
@@ -31,16 +31,21 @@ function pluginLogModule() {
 }
 
 function shouldForwardToBackend(level) {
-  if (LOGGING_ENABLED) return false;
+  if (DEV_CONSOLE_ENABLED) return false;
   if (level !== "error" && level !== "warn") return false;
   if (typeof window === "undefined") return false;
   return LOG_LEVEL_PRIORITY[level] <= LOG_LEVEL_PRIORITY[activeLogLevel];
 }
 
-// 与 ScopedLogger.emit 的门控一致；级别关闭时调用方可跳过组装日志实参
-// （如 summarizeValue 序列化），输出结果不变。
-export function isLogLevelEnabled(level) {
+// 单条日志 emit 的统一门控：console 输出或后端转发任一通即可。
+// isLogLevelEnabled 与 ScopedLogger.emit 共用；级别关闭时调用方可跳过
+// 组装日志实参（如 summarizeValue 序列化），输出结果不变。
+function isEmitEnabled(level) {
   return shouldLog(level) || shouldForwardToBackend(level);
+}
+
+export function isLogLevelEnabled(level) {
+  return isEmitEnabled(level);
 }
 
 function stringifyDetails(details) {
@@ -184,7 +189,7 @@ class ScopedLogger {
 
   emit(level, ...args) {
     const consoleEnabled = shouldLog(level);
-    if (!consoleEnabled && !shouldForwardToBackend(level)) return;
+    if (!consoleEnabled && !isEmitEnabled(level)) return;
     const { entry, message } = makeEntry(this.scope, level, this.context, args);
     if (!consoleEnabled) {
       forwardToBackendLog(level, this.scope, message, entry);
@@ -223,7 +228,3 @@ export function setGlobalLogLevel(level) {
 export function getGlobalLogLevel() {
   return activeLogLevel;
 }
-
-const rootLogger = createLogger("frontend");
-
-export default rootLogger;

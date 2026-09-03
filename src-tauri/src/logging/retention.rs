@@ -71,6 +71,25 @@ pub fn prune_daily_logs(dir: &Path) -> Result<usize, String> {
     }
 }
 
+/// Reads up to `max_bytes` from the end of `path`, aligned to the next line
+/// boundary so the tail never begins with a partial line; files without
+/// newlines fall back to the raw tail.
+pub(crate) fn read_file_tail(path: &Path, max_bytes: u64) -> std::io::Result<Vec<u8>> {
+    let mut file = fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let start = len.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start))?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail)?;
+    if start > 0 {
+        // Skip the partial first line produced by seeking into the middle.
+        if let Some(position) = tail.iter().position(|byte| *byte == b'\n') {
+            tail.drain(..=position);
+        }
+    }
+    Ok(tail)
+}
+
 /// Keeps an append-only emergency log under `max_bytes` by rewriting it with
 /// its tail. Best-effort: callers are already on a failure path, so all
 /// errors are ignored on purpose.
@@ -83,19 +102,9 @@ pub(crate) fn cap_emergency_file(path: &Path, max_bytes: u64) {
     }
     // Keep only half the budget worth of tail so the file does not sit right
     // at the cap after the next append.
-    let keep = max_bytes / 2;
-    let Ok(mut file) = fs::File::open(path) else {
+    let Ok(tail) = read_file_tail(path, max_bytes / 2) else {
         return;
     };
-    let mut tail = Vec::new();
-    if file.seek(SeekFrom::End(-(keep as i64))).is_err() || file.read_to_end(&mut tail).is_err() {
-        return;
-    }
-    // Start at the next line boundary so the kept tail does not begin with a
-    // partial line; fall back to the raw tail for files without newlines.
-    if let Some(position) = tail.iter().position(|byte| *byte == b'\n') {
-        tail.drain(..=position);
-    }
     if let Ok(mut file) = fs::File::create(path) {
         let _ = file.write_all(&tail);
     }

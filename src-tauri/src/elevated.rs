@@ -1,5 +1,7 @@
 //! 服务监听启动的统一入口：代理与各文件服务协议都先以当前用户直接 bind，
-//! 然后放行防火墙。Linux 下服务端口是特权端口（<1024）时，非 root 直接
+//! 然后放行防火墙。自行 bind 的服务（如 FTP 由 libunftp 监听）只经
+//! [`allow_service_rule`] 放行防火墙，提权由 firewall 模块内部完成，各平台
+//! 行为一致。Linux 下服务端口是特权端口（<1024）时，非 root 直接
 //! bind 必然 EACCES，根本走不到防火墙的提权分支——这是文件服务不弹提权
 //! 窗口的根因。此时改为经 pkexec 启动同二进制的 `--bind-elevated` helper，
 //! 由 helper 以 root 一次性完成防火墙放行 + socket 绑定，再通过 Unix
@@ -9,9 +11,12 @@
 use std::net::SocketAddr;
 
 use crate::{
-    firewall::{self, FirewallCommandError, FirewallProtocol},
+    firewall::{self, FirewallProtocol},
     logging,
 };
+
+#[cfg(target_os = "linux")]
+use crate::firewall::FirewallCommandError;
 
 /// 一个服务的防火墙放行描述：`prefix` 同时用作 iptables 链名来源与规则注释。
 pub(crate) struct ServiceRule {
@@ -93,18 +98,10 @@ pub(crate) async fn bind_service_sockets(
     fallback: Option<BindSpec>,
 ) -> Result<Vec<BoundSocket>, String> {
     match bind_direct(&binds, fallback.as_ref()) {
-        Ok(sockets) => match allow_rule(&rule).await {
-            Ok(()) => Ok(sockets),
-            #[cfg(target_os = "linux")]
-            Err(error) if error.requires_elevation() => {
-                // 端口已直接绑定成功（高端口），但防火墙放行仍需 root。这里改走
-                // bind helper 的「仅防火墙」模式（空 binds），避免触发已失效的
-                // `--firewall-elevated` 路径，且保证每次开启只提权一次。
-                bind_elevated(&rule, &[], None).await?;
-                Ok(sockets)
-            }
-            Err(error) => Err(error.user_message),
-        },
+        Ok(sockets) => {
+            allow_service_rule(&rule).await?;
+            Ok(sockets)
+        }
         Err(failure) => {
             #[cfg(target_os = "linux")]
             if failure.permission_denied
@@ -120,6 +117,31 @@ pub(crate) async fn bind_service_sockets(
             Err(failure.message)
         }
     }
+}
+
+/// 放行服务端口的统一入口，全平台行为一致：按规则应用防火墙放行（TFTP 等
+/// 服务附带整段 UDP 放行），权限不足时由 firewall 模块内部完成提权。需要
+/// 模块代为 bind 的服务走 [`bind_service_sockets`]；自行 bind 的服务（FTP
+/// 由 libunftp 监听）只调用本函数。防火墙失败的日志统一在此记录。
+pub(crate) async fn allow_service_rule(rule: &ServiceRule) -> Result<(), String> {
+    let result = if rule.all_udp {
+        firewall::allow_service_port_and_all_udp_ports_for_current_app(
+            rule.prefix,
+            rule.action,
+            rule.ports[0],
+        )
+        .await
+    } else {
+        firewall::allow_service_ports(rule.prefix, rule.action, rule.ports.clone(), rule.protocol)
+            .await
+    };
+    result.map_err(|error| {
+        logging::event("firewall", "firewall.allow.failed")
+            .field("prefix", rule.prefix)
+            .field("detail", &error.detail)
+            .warn();
+        error.user_message
+    })
 }
 
 /// 直接 bind：非可选点失败立即整体失败；可选点失败跳过并记录；全部可选点
@@ -182,84 +204,6 @@ fn format_bind_error(addr: SocketAddr, error: &std::io::Error) -> String {
             format!("The service could not bind to {addr} because access was denied.")
         }
         _ => format!("Failed to bind the service listener to {addr}: {error}"),
-    }
-}
-
-async fn allow_rule(rule: &ServiceRule) -> Result<(), FirewallCommandError> {
-    #[cfg(target_os = "linux")]
-    {
-        return allow_rule_linux(rule).await;
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let result = if rule.all_udp {
-            firewall::allow_service_port_and_all_udp_ports_for_current_app(
-                rule.prefix,
-                rule.action,
-                rule.ports[0],
-            )
-            .await
-        } else {
-            firewall::allow_service_ports(
-                rule.prefix,
-                rule.action,
-                rule.ports.clone(),
-                rule.protocol,
-            )
-            .await
-        };
-        result.inspect_err(|error| {
-            logging::event("firewall", "firewall.allow.failed")
-                .field("prefix", rule.prefix)
-                .field("detail", &error.detail)
-                .warn();
-        })
-    }
-}
-
-/// Linux 下只做「非提权」的防火墙放行探测：真正需要 root 时由
-/// [`bind_service_sockets`] 改走 bind helper（`--bind-elevated`）完成，避免依赖
-/// 桌面上失效的 `--firewall-elevated` 路径。这里直接调用底层实现，拿到原始
-/// 的权限错误供上层判断是否提权。
-#[cfg(target_os = "linux")]
-async fn allow_rule_linux(rule: &ServiceRule) -> Result<(), FirewallCommandError> {
-    let prefix = rule.prefix;
-    let action = rule.action;
-    let ports = rule.ports.clone();
-    let first_port = ports[0];
-    let protocol = rule.protocol;
-    let all_udp = rule.all_udp;
-    let result = tokio::task::spawn_blocking(move || {
-        if all_udp {
-            firewall::allow_port_impl(prefix, first_port, protocol)?;
-            firewall::allow_all_udp_ports_for_current_app_impl(prefix)
-        } else {
-            ports
-                .iter()
-                .try_for_each(|port| firewall::allow_port_impl(prefix, *port, protocol))
-        }
-    })
-    .await
-    .map_err(|error| {
-        FirewallCommandError::new(
-            "The firewall operation did not complete.",
-            error.to_string(),
-        )
-    })?;
-    match result {
-        Ok(()) => {
-            logging::event("firewall", action)
-                .field("port", first_port)
-                .info();
-            Ok(())
-        }
-        Err(error) => {
-            logging::event("firewall", "firewall.allow.failed")
-                .field("prefix", prefix)
-                .field("detail", &error.detail)
-                .warn();
-            Err(error)
-        }
     }
 }
 
@@ -650,6 +594,8 @@ pub(crate) fn handle_elevated_bind_helper() -> bool {
     }
 
     let Some(request) = decode_elevated_token(args).and_then(validate_elevated_bind_request) else {
+        // helper 进程在应用日志系统初始化之前运行，应急路径只能写 stderr。
+        eprintln!("elevated bind helper: rejecting invalid or expired token");
         process::exit(2);
     };
 
@@ -662,10 +608,17 @@ pub(crate) fn handle_elevated_bind_helper() -> bool {
                 detail: None,
                 protocols: sockets.iter().map(BoundSocket::protocol).collect(),
             };
-            if let Ok(mut stream) = UnixStream::connect(&request.reply.path) {
-                let _ = write_response_line(&mut stream, &response);
-                for socket in &sockets {
-                    let _ = send_fd(&stream, socket.raw_fd());
+            match UnixStream::connect(&request.reply.path) {
+                Ok(mut stream) => {
+                    if let Err(error) = write_response_line(&mut stream, &response) {
+                        eprintln!("elevated bind helper: failed to write response line: {error}");
+                    }
+                    for socket in &sockets {
+                        let _ = send_fd(&stream, socket.raw_fd());
+                    }
+                }
+                Err(error) => {
+                    eprintln!("elevated bind helper: failed to connect reply socket: {error}");
                 }
             }
             process::exit(0);
@@ -678,8 +631,15 @@ pub(crate) fn handle_elevated_bind_helper() -> bool {
                 detail: Some(error.detail.clone()),
                 protocols: Vec::new(),
             };
-            if let Ok(mut stream) = UnixStream::connect(&request.reply.path) {
-                let _ = write_response_line(&mut stream, &response);
+            match UnixStream::connect(&request.reply.path) {
+                Ok(mut stream) => {
+                    if let Err(error) = write_response_line(&mut stream, &response) {
+                        eprintln!("elevated bind helper: failed to write response line: {error}");
+                    }
+                }
+                Err(error) => {
+                    eprintln!("elevated bind helper: failed to connect reply socket: {error}");
+                }
             }
             process::exit(1);
         }
@@ -714,10 +674,6 @@ fn run_bind_helper(
         }
     }
     if sockets.is_empty() {
-        // 「仅防火墙」模式：无任何绑定点，只放行防火墙，空 socket 列表即成功。
-        if request.binds.is_empty() && request.fallback.is_none() {
-            return Ok(sockets);
-        }
         return match &request.fallback {
             Some(spec) => bind_one(spec).map(|socket| vec![socket]).map_err(|error| {
                 FirewallCommandError::new(

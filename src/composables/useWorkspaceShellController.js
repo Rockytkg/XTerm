@@ -223,6 +223,7 @@ export function useWorkspaceShellController({
       showToast({ type: "success", title: t("notifications.connectionSaved") });
       navigate("workspace");
     } catch (error) {
+      logger.error("connection.create.failed", error);
       showToast({
         type: "error",
         title: t("notifications.connectionSaveFailed"),
@@ -308,6 +309,7 @@ export function useWorkspaceShellController({
         message: wasRecording ? "" : state?.path || "",
       });
     } catch (error) {
+      logger.error("recording.toggle.failed", error);
       showToast({
         type: "error",
         title: t("notifications.sessionRecordingFailed"),

@@ -2,6 +2,9 @@ import {
   readText as readTauriClipboardText,
   writeText as writeTauriClipboardText,
 } from "@tauri-apps/plugin-clipboard-manager";
+import { createLogger } from "../../../logger";
+
+const logger = createLogger("frontend.terminal.clipboard-addon");
 
 function stripBase64Padding(value) {
   return String(value || "").replace(/=+$/u, "");
@@ -83,12 +86,12 @@ export class TauriClipboardAddon {
     if (payload === "?") {
       return readTauriClipboardText()
         .then((text) => (this._reportClipboard(selection, selection === "c" ? text : ""), true))
-        .catch(() => true);
+        .catch((error) => (logger.warn("osc52.clipboard.read.failed", error), true));
     }
 
     if (selection !== "c") return true;
     return writeTauriClipboardText(decodeText(payload))
       .then(() => true)
-      .catch(() => true);
+      .catch((error) => (logger.warn("osc52.clipboard.write.failed", error), true));
   }
 }

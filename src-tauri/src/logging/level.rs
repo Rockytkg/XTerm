@@ -54,8 +54,26 @@ pub(crate) fn log_level_name(level: LevelFilter) -> &'static str {
 
 pub fn persisted_log_level(store: &Store) -> LevelFilter {
     match SettingsRepository::log_level(store) {
-        Ok(Some(value)) => parse_log_level(&value).unwrap_or(DEFAULT_LOG_LEVEL),
-        _ => DEFAULT_LOG_LEVEL,
+        Ok(Some(value)) => match parse_log_level(&value) {
+            Ok(level) => level,
+            Err(_) => {
+                log::warn!(
+                    target: "logging.level",
+                    "unsupported persisted log level '{value}'; falling back to {}",
+                    log_level_name(DEFAULT_LOG_LEVEL)
+                );
+                DEFAULT_LOG_LEVEL
+            }
+        },
+        Ok(None) => DEFAULT_LOG_LEVEL,
+        Err(error) => {
+            log::warn!(
+                target: "logging.level",
+                "failed to read persisted log level: {error}; falling back to {}",
+                log_level_name(DEFAULT_LOG_LEVEL)
+            );
+            DEFAULT_LOG_LEVEL
+        }
     }
 }
 

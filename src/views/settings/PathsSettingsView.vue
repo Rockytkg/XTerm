@@ -66,6 +66,7 @@ async function confirmRestartApp() {
   try {
     await restartApp();
   } catch (error) {
+    logger.error("app.restart.failed", error);
     showToast({
       type: "error",
       title: t("notifications.appRestartFailed"),

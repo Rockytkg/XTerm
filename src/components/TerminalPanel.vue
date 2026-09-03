@@ -443,7 +443,9 @@ const connectionPresenter = new TerminalConnectionPresenter({
 
 terminalSessionRuntime = useTerminalSessionRuntime({
   drainOutput: () =>
-    terminalPayloadQueue.catch(() => {}).then(() => terminalOutputAddon.waitForFlush()),
+    terminalPayloadQueue
+      .catch((error) => logger.error("terminal.payload.handle.failed", error))
+      .then(() => terminalOutputAddon.waitForFlush()),
   dropOutput: () => connectionPresenter.reset(),
   getContext: () => ({
     sessionId: props.sessionId || "",
@@ -933,7 +935,7 @@ watch(
 
 function enqueueTerminalPayload(payload) {
   terminalPayloadQueue = terminalPayloadQueue
-    .catch(() => {})
+    .catch((error) => logger.error("terminal.payload.handle.failed", error))
     .then(() => handleTerminalData(payload));
 }
 

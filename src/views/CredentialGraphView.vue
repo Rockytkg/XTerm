@@ -34,6 +34,9 @@ import {
   supportsSavedCredential,
 } from "../utils/connectionProtocols";
 import { isPrimaryModifier } from "../utils/platform";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("frontend.credentials.graph");
 
 const emit = defineEmits(["state-changed"]);
 
@@ -173,6 +176,7 @@ async function loadGraphState() {
     const loadedConnections = Array.isArray(workspace?.connections) ? workspace.connections : [];
     connections.value = loadedConnections.filter((connection) => isCredentialConnection(connection));
   } catch (error) {
+    logger.error("graph.load.failed", error);
     graphError.value = String(error);
   } finally {
     loading.value = false;
@@ -1229,6 +1233,7 @@ async function confirmRelationChange() {
     emit("state-changed");
     showToast({ type: "success", title: t("relationshipGraph.toast.relationUpdated") });
   } catch (error) {
+    logger.error("graph.relation.update.failed", error);
     showToast({
       type: "error",
       title: t("relationshipGraph.toast.relationUpdateFailed"),
@@ -1265,6 +1270,7 @@ async function confirmBulkCredentialDelete() {
     emit("state-changed");
     showToast({ type: "success", title: t("notifications.credentialDeleted") });
   } catch (error) {
+    logger.error("graph.credentials.delete.failed", error);
     showToast({
       type: "error",
       title: t("notifications.credentialDeleteFailed"),

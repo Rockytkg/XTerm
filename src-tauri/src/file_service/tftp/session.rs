@@ -102,7 +102,13 @@ impl PendingUpload {
         }
         if let Err(error) = fs::rename(&self.path, target) {
             if had_target {
-                let _ = fs::rename(&backup, target);
+                // 回滚失败意味着原文件只存在于 backup 副本中，必须暴露出来。
+                if let Err(rollback_error) = fs::rename(&backup, target) {
+                    logging::event("tftp.runtime", "tftp.upload.rollback_failed")
+                        .field("path", target.display().to_string())
+                        .field("error", rollback_error.to_string())
+                        .error();
+                }
             }
             return Err(format!(
                 "failed to commit uploaded file '{}': {error}",

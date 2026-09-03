@@ -8,7 +8,7 @@ import {
 } from "../src/utils/logger.js";
 
 // node --test 环境下 import.meta.env 为 undefined，logger 处于生产模式
-// （LOGGING_ENABLED=false），console 输出关闭，error/warn 仅在存在
+// （DEV_CONSOLE_ENABLED=false），console 输出关闭，error/warn 仅在存在
 // window 时转发后端——此处验证纯函数与级别门控逻辑。
 
 test("setGlobalLogLevel accepts known levels", () => {

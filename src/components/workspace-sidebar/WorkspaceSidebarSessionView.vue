@@ -6,6 +6,7 @@ import { useToasts } from "../../composables/useToasts";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { setBackendEncodingDetection, setBackendRuntimeMetricsEnabled } from "../../services/terminalSessions";
 import { connectionCan } from "../../utils/connectionCapabilities";
+import { createLogger } from "../../utils/logger";
 import { isSerialProtocol, isSshProtocol, isTelnetProtocol } from "../../utils/connectionProtocols";
 import UiSwitch from "../UiSwitch.vue";
 import UiSelect from "../UiSelect.vue";
@@ -27,6 +28,7 @@ const props = defineProps({
 const { t } = useI18n();
 const { updateConnection, sessionRegistry } = useWorkspaceStore();
 const { showToast } = useToasts();
+const logger = createLogger("frontend.workspace.sidebar-session");
 
 const protocol = computed(() => props.activeConnection?.protocol);
 const protocolLabel = computed(() => protocol.value?.toUpperCase() || "—");
@@ -74,6 +76,7 @@ async function persistProfileField(field, value) {
   try {
     await updateConnection(profileConnectionId.value, { [field]: value });
   } catch (error) {
+    logger.warn("sidebar-session.profile.persist.failed", error);
     showToast({
       type: "error",
       title: t("notifications.connectionSaveFailed"),
@@ -92,7 +95,7 @@ function handleEncodingChange(value) {
       channelId,
       enabled: !normalized,
       encoding: normalized || null,
-    }).catch(() => {});
+    }).catch((error) => logger.warn("sidebar-session.encoding-detection.update.failed", error));
   }
 }
 
@@ -106,6 +109,7 @@ async function handleRuntimeMetricsChange(enabled) {
         enabled,
       });
     } catch (error) {
+      logger.warn("sidebar-session.runtime-metrics.toggle.failed", error);
       showToast({
         type: "error",
         title: t("notifications.connectionSaveFailed"),

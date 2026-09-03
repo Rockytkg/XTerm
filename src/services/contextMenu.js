@@ -12,6 +12,9 @@ import {
   normalizeContextMenuItems,
 } from "../utils/contextMenu";
 import { isMacPlatform, isPrimaryModifier } from "../utils/platform";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("frontend.context_menu.service");
 
 const { maxHeight: MENU_MAX_HEIGHT, width: MENU_WIDTH } = CONTEXT_MENU_LAYOUT;
 
@@ -495,7 +498,11 @@ export async function openContextMenu(
   const pasteItem = nextItems.find((item) => item.id === "global-paste" && item.enabled);
   if (pasteItem) {
     const token = ++openToken;
-    const clipboardText = await readClipboardText().catch(() => "");
+    const clipboardText = await readClipboardText().catch((error) => {
+      // 读取失败时按无文本处理（禁用“粘贴”），只记录日志不打断菜单打开。
+      logger.warn("context-menu.clipboard.read.failed", error);
+      return "";
+    });
     if (token !== openToken) return;
     pasteItem.enabled = !!clipboardText;
   }

@@ -158,6 +158,7 @@ class TauriTerminalTransport {
       await sendPromise;
       batch.resolve?.();
     } catch (error) {
+      this.logger?.warn("terminal.batch.send.failed", error);
       batch.reject?.(error);
     }
   }

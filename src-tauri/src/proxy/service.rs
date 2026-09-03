@@ -89,7 +89,12 @@ impl<'a> ProxyService<'a> {
     }
 
     async fn restart(&self, port: u16, bind_ip: String) -> Result<ProxyConfig, String> {
-        let _ = self.stop_runtime().await;
+        if let Err(error) = self.stop_runtime().await {
+            log::warn!(
+                target: "proxy.service",
+                "failed to stop proxy runtime before restart: {error}"
+            );
+        }
         self.apply(port, bind_ip).await
     }
 
@@ -99,12 +104,21 @@ impl<'a> ProxyService<'a> {
         self.persist_settings(Some(port), Some(&bind_ip))?;
 
         if self.state.proxy().runtime.is_some() {
-            let _ = self.stop_runtime().await;
+            if let Err(error) = self.stop_runtime().await {
+                log::warn!(
+                    target: "proxy.service",
+                    "failed to stop existing proxy runtime: {error}"
+                );
+            }
         }
 
         let runtime = match start_runtime(self.app.clone(), port, bind_ip.clone()).await {
             Ok(runtime) => runtime,
             Err(error) => {
+                log::error!(
+                    target: "proxy.service",
+                    "failed to start proxy runtime on {bind_ip}:{port}: {error}"
+                );
                 let mut manager = self.state.proxy();
                 manager.config.bind_ip = bind_ip;
                 manager.config.port = port;

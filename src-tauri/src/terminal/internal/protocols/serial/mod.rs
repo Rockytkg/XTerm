@@ -929,7 +929,7 @@ async fn open_serial_port_with_busy_retry(
                 if serial_port_error_is_busy(&error)
                     && started_at.elapsed() + BUSY_RETRY_INTERVAL <= BUSY_RETRY_BUDGET =>
             {
-                log::info!(
+                log::debug!(
                     target: "terminal.serial",
                     "serial port '{port_name}' is busy; retrying open"
                 );

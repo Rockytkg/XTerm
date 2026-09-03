@@ -168,32 +168,35 @@ pub(crate) struct FileServiceSettings {
     pub(crate) config: FileServiceConfig,
 }
 
+/// Reads a single setting, logging a read failure (key only, never the
+/// value) and returning `None` so the caller falls back to its default.
+fn setting_value_or(store: &impl SettingsRepository, key: &str) -> Option<String> {
+    match store.setting_value(key) {
+        Ok(value) => value,
+        Err(error) => {
+            log::warn!(
+                target: "file_service.settings",
+                "failed to read setting '{key}': {error}; falling back to default"
+            );
+            None
+        }
+    }
+}
+
 impl FileServiceSettings {
     pub(crate) fn from_store(store: &impl SettingsRepository) -> Self {
-        let bind_ip = store
-            .setting_value(FILE_SERVICE_BIND_IP_KEY)
-            .ok()
-            .flatten()
+        let bind_ip = setting_value_or(store, FILE_SERVICE_BIND_IP_KEY)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_FILE_SERVICE_BIND_IP.to_string());
-        let protocol = store
-            .setting_value(FILE_SERVICE_PROTOCOL_KEY)
-            .ok()
-            .flatten()
+        let protocol = setting_value_or(store, FILE_SERVICE_PROTOCOL_KEY)
             .filter(|value| value == "tftp" || value == "ftp" || value == "sftp")
             .unwrap_or_else(|| "tftp".to_string());
-        let username = store
-            .setting_value(FILE_SERVICE_USERNAME_KEY)
-            .ok()
-            .flatten()
+        let username = setting_value_or(store, FILE_SERVICE_USERNAME_KEY)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "admin".to_string());
         let password =
             super::password::resolve_password(store, &super::password::KeyringPasswordVault);
-        let shared_dir = store
-            .setting_value(FILE_SERVICE_SHARED_DIR_KEY)
-            .ok()
-            .flatten()
+        let shared_dir = setting_value_or(store, FILE_SERVICE_SHARED_DIR_KEY)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(default_shared_dir);
         let port = default_port(&protocol);

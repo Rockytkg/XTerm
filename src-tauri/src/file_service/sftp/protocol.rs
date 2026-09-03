@@ -247,6 +247,11 @@ impl server::Handler for SshSession {
         if user == self.username && password == *self.password.read() {
             Ok(server::Auth::Accept)
         } else {
+            // 审计拒绝事件：只记用户名与来源地址，绝不记口令。
+            logging::event("sftp.runtime", "sftp.auth.rejected")
+                .field("username", user)
+                .field("peer", self.peer.to_string())
+                .info();
             Ok(server::Auth::Reject {
                 proceed_with_methods: None,
                 partial_success: false,

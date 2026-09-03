@@ -1,6 +1,9 @@
 import { computed, ref } from "vue";
 import { clearCredentialReferences, deleteCredential } from "../services/credentials";
+import { createLogger } from "../utils/logger";
 import { useDialogExitTeardown } from "./useDialogExitTeardown";
+
+const logger = createLogger("frontend.credentials.delete_flow");
 
 export function normalizeCredentialUsages(usages, credentialId) {
   const seen = new Set();
@@ -69,6 +72,7 @@ export function useCredentialDeleteFlow({ t, showToast, getUsages, onDeleted, on
       await onDeleted?.(pending);
       showToast?.({ type: "success", title: t("notifications.credentialDeleted") });
     } catch (error) {
+      logger.error("credential.delete.failed", error);
       await onFailed?.(error, pending);
       showToast?.({
         type: "error",

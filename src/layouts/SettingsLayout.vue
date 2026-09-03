@@ -18,6 +18,7 @@ import { TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useToasts } from "../composables/useToasts";
 import { restartApp } from "../services/appInfo";
+import { createLogger } from "../utils/logger";
 import { createPanelTransitionHooks, motionEnabled } from "../utils/motion";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 import GeneralSettingsView from "../views/settings/GeneralSettingsView.vue";
@@ -36,6 +37,7 @@ const { t } = useI18n();
 const workspace = useWorkspaceStore();
 const { preferences, resetPreferences } = workspace;
 const { showToast } = useToasts();
+const logger = createLogger("frontend.settings.layout");
 
 const activeSection = ref("general");
 const resetConfirmOpen = ref(false);
@@ -85,6 +87,7 @@ async function confirmResetPreferences() {
     restartConfirmOpen.value = true;
     showToast({ type: "success", title: t("notifications.preferencesReset") });
   } catch (error) {
+    logger.error("settings.preferences.reset.failed", error);
     showToast({
       type: "error",
       title: t("notifications.preferencesResetFailed"),
@@ -97,6 +100,7 @@ async function confirmRestartApp() {
   try {
     await restartApp();
   } catch (error) {
+    logger.error("settings.app.restart.failed", error);
     showToast({
       type: "error",
       title: t("notifications.appRestartFailed"),

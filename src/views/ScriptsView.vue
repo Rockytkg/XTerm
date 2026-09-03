@@ -17,6 +17,9 @@ import { exportScriptFile, pickScriptFile } from "../services/scripting/scriptFi
 import { useScriptsStore } from "../stores/scriptsStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { resolveEditorTheme } from "../utils/editorTheme";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("frontend.scripts.view");
 
 const { t } = useI18n();
 const { showToast } = useToasts();
@@ -105,6 +108,7 @@ async function saveScriptsNow() {
     showToast({ type: "success", title: t("notifications.scriptSaved") });
     return true;
   } catch (error) {
+    logger.error("scripts.save.failed", error);
     showToast({
       type: "error",
       title: t("notifications.scriptSaveFailed"),
@@ -169,6 +173,7 @@ async function importScript() {
     if (!file) return;
     scriptsStore.importScript(file.name, file.code);
   } catch (error) {
+    logger.error("scripts.import.failed", error);
     showToast({
       type: "error",
       title: t("notifications.scriptFileReadFailed"),
@@ -192,6 +197,7 @@ async function exportScript(script) {
       message: path,
     });
   } catch (error) {
+    logger.error("scripts.export.failed", error);
     showToast({
       type: "error",
       title: t("notifications.scriptExportFailed"),
@@ -220,6 +226,7 @@ async function applyUpdate(script) {
       title: t("notifications.scriptUpdateApplied", { name: script.name }),
     });
   } catch (error) {
+    logger.error("scripts.update.apply.failed", error);
     showToast({
       type: "error",
       title: t("notifications.scriptUpdateFailed"),

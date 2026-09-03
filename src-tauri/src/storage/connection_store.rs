@@ -93,6 +93,17 @@ impl Store {
             .field("connection_id", id)
             .field("protocol", &c.protocol)
             .info();
+        let result = self.insert_connection_record(id, c);
+        if let Err(error) = &result {
+            logging::event("storage.connection_store", "connection.insert.failed")
+                .field("connection_id", id)
+                .field("error", error)
+                .error();
+        }
+        result
+    }
+
+    fn insert_connection_record(&mut self, id: &str, c: &StoredConnection) -> Result<(), String> {
         let write_txn = self
             .database
             .begin_write()
@@ -137,6 +148,24 @@ impl Store {
             .field("connection_id", id)
             .field("protocol", &c.protocol)
             .info();
+        let updated = match self.update_connection_record(id, c) {
+            Ok(updated) => updated,
+            Err(error) => {
+                logging::event("storage.connection_store", "connection.update.failed")
+                    .field("connection_id", id)
+                    .field("error", &error)
+                    .error();
+                return Err(error);
+            }
+        };
+        logging::event("storage.connection_store", "connection.update.success")
+            .field("connection_id", id)
+            .field("updated", updated)
+            .debug();
+        Ok(updated)
+    }
+
+    fn update_connection_record(&self, id: &str, c: &StoredConnection) -> Result<bool, String> {
         let write_txn = self
             .database
             .begin_write()
@@ -168,10 +197,6 @@ impl Store {
         write_txn
             .commit()
             .map_err(|error| format!("failed to commit connection '{id}': {error}"))?;
-        logging::event("storage.connection_store", "connection.update.success")
-            .field("connection_id", id)
-            .field("updated", updated)
-            .debug();
         Ok(updated)
     }
 

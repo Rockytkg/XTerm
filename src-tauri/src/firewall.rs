@@ -63,14 +63,6 @@ impl FirewallCommandError {
             detail: detail.into(),
         }
     }
-
-    /// 该错误是否意味着「需要管理员权限」——用于让调用方决定是否改走提权
-    /// helper，而不是把这个原始错误直接抛给用户。仅 Linux 的 bind helper
-    /// 需要据此判断是否改走 `--bind-elevated`。
-    #[cfg(target_os = "linux")]
-    pub(crate) fn requires_elevation(&self) -> bool {
-        firewall_error_requires_elevation(&self.detail)
-    }
 }
 
 struct FirewallTaskRequest {
@@ -108,7 +100,6 @@ impl FirewallTaskRequest {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
 pub(crate) async fn allow_service_ports(
     prefix: &'static str,
     action: &'static str,
@@ -130,7 +121,6 @@ pub(crate) async fn allow_service_ports(
     .await
 }
 
-#[cfg(not(target_os = "linux"))]
 pub(crate) async fn allow_service_port_and_all_udp_ports_for_current_app(
     prefix: &'static str,
     action: &'static str,
@@ -249,11 +239,23 @@ where
                 request.all_ports,
             )
         }
-        Ok(Err(error)) => Err(error),
-        Err(error) => Err(FirewallCommandError::new(
-            "The firewall operation did not complete.",
-            error.to_string(),
-        )),
+        Ok(Err(error)) => {
+            logging::event("firewall", request.action)
+                .field("port", request.ports[0])
+                .field("error", &error.detail)
+                .error();
+            Err(error)
+        }
+        Err(error) => {
+            logging::event("firewall", request.action)
+                .field("port", request.ports[0])
+                .field("error", error.to_string())
+                .error();
+            Err(FirewallCommandError::new(
+                "The firewall operation did not complete.",
+                error.to_string(),
+            ))
+        }
     }
 }
 
@@ -269,7 +271,6 @@ fn firewall_error_requires_elevation(detail: &str) -> bool {
         || lower.contains("authorization failed")
 }
 
-#[cfg(not(target_os = "linux"))]
 fn allow_ports_impl(
     prefix: &'static str,
     ports: &[u16],
@@ -376,22 +377,22 @@ pub(crate) fn handle_elevated_helper() -> bool {
             .ports
             .iter()
             .try_for_each(|port| {
-                allow_port_direct(&request.rule.prefix, *port, request.rule.protocol)
+                allow_port_impl(&request.rule.prefix, *port, request.rule.protocol)
             })
-            .and_then(|_| allow_all_udp_ports_for_current_app_direct(&request.rule.prefix)),
+            .and_then(|_| allow_all_udp_ports_for_current_app_impl(&request.rule.prefix)),
         FirewallOperation::Allow => request.rule.ports.iter().try_for_each(|port| {
-            allow_port_direct(&request.rule.prefix, *port, request.rule.protocol)
+            allow_port_impl(&request.rule.prefix, *port, request.rule.protocol)
         }),
         FirewallOperation::Remove if request.rule.all_ports => request
             .rule
             .ports
             .iter()
             .try_for_each(|port| {
-                remove_port_rule_direct(&request.rule.prefix, *port, request.rule.protocol)
+                remove_port_rule_impl(&request.rule.prefix, *port, request.rule.protocol)
             })
-            .and_then(|_| remove_all_udp_ports_for_current_app_rule_direct(&request.rule.prefix)),
+            .and_then(|_| remove_all_udp_ports_for_current_app_rule_impl(&request.rule.prefix)),
         FirewallOperation::Remove => request.rule.ports.iter().try_for_each(|port| {
-            remove_port_rule_direct(&request.rule.prefix, *port, request.rule.protocol)
+            remove_port_rule_impl(&request.rule.prefix, *port, request.rule.protocol)
         }),
     };
     let ok = result.is_ok();
@@ -705,24 +706,6 @@ fn accept_with_timeout(
 
 #[cfg(windows)]
 fn allow_port_impl(
-    prefix: &'static str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    allow_port_windows_direct(prefix, port, protocol)
-}
-
-#[cfg(windows)]
-fn allow_port_direct(
-    prefix: &str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    allow_port_windows_direct(prefix, port, protocol)
-}
-
-#[cfg(windows)]
-fn allow_port_windows_direct(
     prefix: &str,
     port: u16,
     protocol: FirewallProtocol,
@@ -761,14 +744,7 @@ fn all_udp_ports_rule_name(prefix: &str) -> String {
 }
 
 #[cfg(windows)]
-fn allow_all_udp_ports_for_current_app_impl(
-    prefix: &'static str,
-) -> Result<(), FirewallCommandError> {
-    allow_all_udp_ports_for_current_app_direct(prefix)
-}
-
-#[cfg(windows)]
-fn allow_all_udp_ports_for_current_app_direct(prefix: &str) -> Result<(), FirewallCommandError> {
+fn allow_all_udp_ports_for_current_app_impl(prefix: &str) -> Result<(), FirewallCommandError> {
     use windows_firewall::{
         add_rule_or_update, remove_rule, rule_exists, Action, Direction, FirewallRule, Port,
         Profile, Protocol,
@@ -804,24 +780,10 @@ fn allow_all_udp_ports_for_current_app_direct(prefix: &str) -> Result<(), Firewa
 
 #[cfg(windows)]
 fn remove_port_rule_impl(
-    prefix: &'static str,
-    port: u16,
-    _protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    remove_port_rule_windows_direct(prefix, port)
-}
-
-#[cfg(windows)]
-fn remove_port_rule_direct(
     prefix: &str,
     port: u16,
     _protocol: FirewallProtocol,
 ) -> Result<(), FirewallCommandError> {
-    remove_port_rule_windows_direct(prefix, port)
-}
-
-#[cfg(windows)]
-fn remove_port_rule_windows_direct(prefix: &str, port: u16) -> Result<(), FirewallCommandError> {
     use windows_firewall::{remove_rule, rule_exists};
 
     let name = rule_name(prefix, port);
@@ -837,13 +799,6 @@ fn remove_port_rule_windows_direct(prefix: &str, port: u16) -> Result<(), Firewa
 
 #[cfg(windows)]
 fn remove_all_udp_ports_for_current_app_rule_impl(
-    prefix: &'static str,
-) -> Result<(), FirewallCommandError> {
-    remove_all_udp_ports_for_current_app_rule_direct(prefix)
-}
-
-#[cfg(windows)]
-fn remove_all_udp_ports_for_current_app_rule_direct(
     prefix: &str,
 ) -> Result<(), FirewallCommandError> {
     use windows_firewall::{remove_rule, rule_exists};
@@ -863,11 +818,6 @@ fn remove_all_udp_ports_for_current_app_rule_direct(
 pub(crate) fn allow_all_udp_ports_for_current_app_impl(
     prefix: &str,
 ) -> Result<(), FirewallCommandError> {
-    allow_all_udp_ports_for_current_app_direct(prefix)
-}
-
-#[cfg(target_os = "linux")]
-fn allow_all_udp_ports_for_current_app_direct(prefix: &str) -> Result<(), FirewallCommandError> {
     let ipt = iptables::new(false).map_err(|error| {
         FirewallCommandError::new(
             "Unable to initialize the Linux firewall integration.",
@@ -881,13 +831,6 @@ fn allow_all_udp_ports_for_current_app_direct(prefix: &str) -> Result<(), Firewa
 
 #[cfg(target_os = "linux")]
 fn remove_all_udp_ports_for_current_app_rule_impl(
-    prefix: &'static str,
-) -> Result<(), FirewallCommandError> {
-    remove_all_udp_ports_for_current_app_rule_direct(prefix)
-}
-
-#[cfg(target_os = "linux")]
-fn remove_all_udp_ports_for_current_app_rule_direct(
     prefix: &str,
 ) -> Result<(), FirewallCommandError> {
     // 同上：非 root 无法可靠判断规则是否存在，直接声明需要提权。
@@ -938,24 +881,6 @@ fn map_windows_error(
     FirewallCommandError::new(user_message, detail)
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn allow_port_impl(
-    prefix: &str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    allow_port_linux_direct(prefix, port, protocol)
-}
-
-#[cfg(target_os = "linux")]
-fn allow_port_direct(
-    prefix: &str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    allow_port_linux_direct(prefix, port, protocol)
-}
-
 /// 幂等地追加一条规则：已存在则视为成功。iptables 的 `append_unique` 在规则
 /// 已存在时会返回错误，导致「停止未删除规则 + 再次开启」时报出
 /// “Unable to add the Linux firewall rule.”，这里用先查后加的方式规避。
@@ -978,7 +903,7 @@ fn append_rule_if_absent(
 }
 
 #[cfg(target_os = "linux")]
-fn allow_port_linux_direct(
+pub(crate) fn allow_port_impl(
     prefix: &str,
     port: u16,
     protocol: FirewallProtocol,
@@ -997,24 +922,6 @@ fn allow_port_linux_direct(
 
 #[cfg(target_os = "linux")]
 fn remove_port_rule_impl(
-    prefix: &'static str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    remove_port_rule_linux_direct(prefix, port, protocol)
-}
-
-#[cfg(target_os = "linux")]
-fn remove_port_rule_direct(
-    prefix: &str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    remove_port_rule_linux_direct(prefix, port, protocol)
-}
-
-#[cfg(target_os = "linux")]
-fn remove_port_rule_linux_direct(
     prefix: &str,
     port: u16,
     protocol: FirewallProtocol,
@@ -1167,24 +1074,6 @@ fn accept_all_udp_rule(prefix: &str) -> String {
 
 #[cfg(target_os = "macos")]
 fn allow_port_impl(
-    prefix: &'static str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    allow_port_macos_direct(prefix, port, protocol)
-}
-
-#[cfg(target_os = "macos")]
-fn allow_port_direct(
-    prefix: &str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    allow_port_macos_direct(prefix, port, protocol)
-}
-
-#[cfg(target_os = "macos")]
-fn allow_port_macos_direct(
     prefix: &str,
     port: u16,
     protocol: FirewallProtocol,
@@ -1231,24 +1120,6 @@ fn allow_port_macos_direct(
 
 #[cfg(target_os = "macos")]
 fn remove_port_rule_impl(
-    prefix: &'static str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    remove_port_rule_macos_direct(prefix, port, protocol)
-}
-
-#[cfg(target_os = "macos")]
-fn remove_port_rule_direct(
-    prefix: &str,
-    port: u16,
-    protocol: FirewallProtocol,
-) -> Result<(), FirewallCommandError> {
-    remove_port_rule_macos_direct(prefix, port, protocol)
-}
-
-#[cfg(target_os = "macos")]
-fn remove_port_rule_macos_direct(
     prefix: &str,
     _port: u16,
     _protocol: FirewallProtocol,
@@ -1256,10 +1127,19 @@ fn remove_port_rule_macos_direct(
     use pfctl::{AnchorKind, PfCtl, RulesetKind};
 
     let mut pf = PfCtl::new().map_err(map_pfctl_init_error)?;
-    if pf.flush_rules(prefix, RulesetKind::Filter).is_err() {
+    if let Err(error) = pf.flush_rules(prefix, RulesetKind::Filter) {
+        log::warn!(
+            target: "firewall",
+            "failed to flush macOS firewall rules for anchor '{prefix}': {error}"
+        );
         return Ok(());
     }
-    let _ = pf.try_remove_anchor(prefix, AnchorKind::Filter);
+    if let Err(error) = pf.try_remove_anchor(prefix, AnchorKind::Filter) {
+        log::warn!(
+            target: "firewall",
+            "failed to remove macOS firewall anchor '{prefix}': {error}"
+        );
+    }
     Ok(())
 }
 
@@ -1267,14 +1147,7 @@ fn remove_port_rule_macos_direct(
 // enough. Mirrors the Windows/Linux behaviour by appending a blanket inbound
 // UDP allow rule to the service anchor.
 #[cfg(target_os = "macos")]
-fn allow_all_udp_ports_for_current_app_impl(
-    prefix: &'static str,
-) -> Result<(), FirewallCommandError> {
-    allow_all_udp_ports_for_current_app_direct(prefix)
-}
-
-#[cfg(target_os = "macos")]
-fn allow_all_udp_ports_for_current_app_direct(prefix: &str) -> Result<(), FirewallCommandError> {
+fn allow_all_udp_ports_for_current_app_impl(prefix: &str) -> Result<(), FirewallCommandError> {
     use pfctl::{AnchorKind, Endpoint, FilterRuleAction, FilterRuleBuilder, PfCtl, Port, Proto};
 
     let mut pf = PfCtl::new().map_err(map_pfctl_init_error)?;
@@ -1282,7 +1155,7 @@ fn allow_all_udp_ports_for_current_app_direct(prefix: &str) -> Result<(), Firewa
         "Unable to enable Packet Filter for the firewall rule.",
     ))?;
     // Do not flush here: the service-port rule for the same anchor was added
-    // by `allow_port_macos_direct` right before this call.
+    // by `allow_port_impl` right before this call.
     pf.try_add_anchor(prefix, AnchorKind::Filter)
         .map_err(map_pfctl_runtime_error(
             "Unable to create the macOS firewall anchor.",
@@ -1307,20 +1180,13 @@ fn allow_all_udp_ports_for_current_app_direct(prefix: &str) -> Result<(), Firewa
     ))
 }
 
-#[cfg(target_os = "macos")]
-fn remove_all_udp_ports_for_current_app_rule_impl(
-    prefix: &'static str,
-) -> Result<(), FirewallCommandError> {
-    remove_all_udp_ports_for_current_app_rule_direct(prefix)
-}
-
 // PF anchors cannot drop a single labelled rule; the anchor is per-service,
 // so flushing it removes the blanket UDP rule together with the port rule.
 #[cfg(target_os = "macos")]
-fn remove_all_udp_ports_for_current_app_rule_direct(
+fn remove_all_udp_ports_for_current_app_rule_impl(
     prefix: &str,
 ) -> Result<(), FirewallCommandError> {
-    remove_port_rule_macos_direct(prefix, 0, FirewallProtocol::Udp)
+    remove_port_rule_impl(prefix, 0, FirewallProtocol::Udp)
 }
 
 #[cfg(target_os = "macos")]
@@ -1349,10 +1215,9 @@ fn map_pfctl_runtime_error(
     }
 }
 
-#[cfg(any(windows, unix))]
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn allow_port_impl(
-    _prefix: &'static str,
+    _prefix: &str,
     _port: u16,
     _protocol: FirewallProtocol,
 ) -> Result<(), FirewallCommandError> {
@@ -1364,7 +1229,7 @@ fn allow_port_impl(
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn remove_port_rule_impl(
-    _prefix: &'static str,
+    _prefix: &str,
     _port: u16,
     _protocol: FirewallProtocol,
 ) -> Result<(), FirewallCommandError> {

@@ -4,9 +4,12 @@ import { storeToRefs } from "pinia";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useToasts } from "./useToasts";
 import { invokeIpc } from "../services/ipc/core";
+import { createLogger } from "../utils/logger";
 import { normalizeHighlightMatchType } from "../utils/terminalPanelHelpers";
 import { createRuntimeId } from "../utils/runtimeIds";
 import { TERMINAL_THEME_NAMES } from "../utils/terminalColors";
+
+const logger = createLogger("frontend.terminal.highlight_schemes");
 
 const DEFAULT_RULE_COLOR = "#fbbf24";
 
@@ -79,6 +82,7 @@ export function useHighlightSchemes() {
       schemes.value = imported;
       showToast({ type: "success", title: t("notifications.highlightSchemesImported") });
     } catch (error) {
+      logger.error("highlight-schemes.import.failed", error);
       showToast({
         type: "error",
         title: t("notifications.highlightSchemesImportFailed"),
@@ -93,6 +97,7 @@ export function useHighlightSchemes() {
       if (!savedPath) return;
       showToast({ type: "success", title: t("notifications.highlightSchemesExported") });
     } catch (error) {
+      logger.error("highlight-schemes.export.failed", error);
       showToast({
         type: "error",
         title: t("notifications.highlightSchemesExportFailed"),

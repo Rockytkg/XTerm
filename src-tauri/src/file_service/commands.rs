@@ -39,10 +39,24 @@ pub(crate) async fn start_file_service(
     bind_ip: String,
     shared_dir: String,
 ) -> Result<FileServicePublicConfig, String> {
-    FileServiceService::new(app, state.inner())
+    match FileServiceService::new(app, state.inner())
         .start(protocol, bind_ip, shared_dir)
         .await
-        .map(public)
+    {
+        Ok(config) => {
+            logging::event("file_service.commands", "file_service.start.success")
+                .field("protocol", &config.protocol)
+                .field("port", config.port)
+                .info();
+            Ok(public(config))
+        }
+        Err(error) => {
+            logging::event("file_service.commands", "file_service.start.failed")
+                .field("error", &error)
+                .error();
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -50,10 +64,18 @@ pub(crate) async fn stop(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<FileServicePublicConfig, String> {
-    FileServiceService::new(app, state.inner())
-        .stop()
-        .await
-        .map(public)
+    match FileServiceService::new(app, state.inner()).stop().await {
+        Ok(config) => {
+            logging::event("file_service.commands", "file_service.stop.success").info();
+            Ok(public(config))
+        }
+        Err(error) => {
+            logging::event("file_service.commands", "file_service.stop.failed")
+                .field("error", &error)
+                .error();
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]

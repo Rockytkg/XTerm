@@ -1,3 +1,7 @@
+import { createLogger } from "../../../logger";
+
+const logger = createLogger("frontend.terminal.output-addon");
+
 const scheduleFrame =
   globalThis.requestAnimationFrame?.bind(globalThis) ?? ((callback) => setTimeout(callback, 16));
 const cancelFrame =
@@ -218,7 +222,9 @@ export class TerminalOutputAddon {
     this._writeLock = this._writeLock
       .catch(() => {})
       .then(() => this._writeOutput(output, generation));
-    this._writeLock.finally(() => this._resolveFlushWaiters()).catch(() => {});
+    this._writeLock
+      .finally(() => this._resolveFlushWaiters())
+      .catch((error) => logger.error("terminal-output.write.failed", error));
   };
 
   waitForFlush() {

@@ -12,6 +12,7 @@ use unftp_core::auth::{AuthenticationError, Authenticator, Credentials, Principa
 use unftp_sbe_fs::Filesystem;
 
 use crate::{
+    elevated::{self, ServiceRule},
     file_service::{
         firewall,
         manager::SharedPassword,
@@ -45,12 +46,19 @@ impl Authenticator for PasswordAuthenticator {
         username: &str,
         credentials: &Credentials,
     ) -> Result<Principal, AuthenticationError> {
+        // 审计拒绝事件：只记用户名，绝不记口令。
         if username != self.username {
+            logging::event("ftp.runtime", "ftp.auth.rejected")
+                .field("username", username)
+                .info();
             return Err(AuthenticationError::BadUser);
         }
         let provided = credentials.password.as_deref().unwrap_or("");
         let expected = self.password.read().clone();
         if !passwords_equal(provided, &expected) {
+            logging::event("ftp.runtime", "ftp.auth.rejected")
+                .field("username", username)
+                .info();
             return Err(AuthenticationError::BadPassword);
         }
         Ok(Principal {
@@ -117,14 +125,14 @@ pub(crate) async fn start_runtime(
     let firewall_ports = std::iter::once(config.port)
         .chain(passive_ports.clone())
         .collect::<Vec<_>>();
-    crate::firewall::allow_service_ports(
-        "XTerm FTP",
-        "ftp.firewall.allow",
-        firewall_ports,
-        crate::firewall::FirewallProtocol::Tcp,
-    )
-    .await
-    .map_err(|error| error.user_message)?;
+    elevated::allow_service_rule(&ServiceRule {
+        prefix: "XTerm FTP",
+        action: "ftp.firewall.allow",
+        protocol: crate::firewall::FirewallProtocol::Tcp,
+        ports: firewall_ports,
+        all_udp: false,
+    })
+    .await?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let auth = Arc::new(PasswordAuthenticator {
         username: config.username.clone(),

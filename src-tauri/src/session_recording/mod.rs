@@ -231,28 +231,10 @@ fn ensure_txt_extension(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
-    };
+    use std::fs;
 
     use super::{append_recording, rotated_path};
-
-    static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    /// Unique temporary directory per test so the shared writer pool never
-    /// leaks state between cases.
-    fn test_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "xterm-session-recording-test-{}-{}-{}",
-            name,
-            std::process::id(),
-            TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&dir).expect("failed to create test directory");
-        dir
-    }
+    use crate::logging::test_support::temp_test_dir;
 
     /// Regression: appends must be visible on disk immediately, without any
     /// flush or close. The old `BufWriter` pool kept chunks smaller than 8 KiB
@@ -260,7 +242,7 @@ mod tests {
     /// appeared as empty files.
     #[test]
     fn appended_content_is_on_disk_without_flush_or_close() {
-        let dir = test_dir("immediate");
+        let dir = temp_test_dir("immediate");
         let path = dir.join("session.txt");
 
         append_recording(&path, b"tiny chunk", 1024).unwrap();
@@ -271,7 +253,7 @@ mod tests {
 
     #[test]
     fn rotation_moves_previous_content_to_dot_1_and_continues_in_a_fresh_file() {
-        let dir = test_dir("rotate");
+        let dir = temp_test_dir("rotate");
         let path = dir.join("session.txt");
         let max = 10;
 
@@ -295,7 +277,7 @@ mod tests {
 
     #[test]
     fn second_rotation_replaces_the_previous_dot_1_file() {
-        let dir = test_dir("rotate-twice");
+        let dir = temp_test_dir("rotate-twice");
         let path = dir.join("session.txt");
         let max = 4;
 
@@ -310,7 +292,7 @@ mod tests {
 
     #[test]
     fn existing_file_size_counts_toward_the_rotation_limit() {
-        let dir = test_dir("existing");
+        let dir = temp_test_dir("existing");
         let path = dir.join("session.txt");
         fs::write(&path, b"0123456789").unwrap();
 
@@ -323,7 +305,7 @@ mod tests {
 
     #[test]
     fn append_creates_missing_file() {
-        let dir = test_dir("create");
+        let dir = temp_test_dir("create");
         let path = dir.join("new.txt");
 
         append_recording(&path, b"hello", 1024).unwrap();

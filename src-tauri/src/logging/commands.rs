@@ -1,6 +1,5 @@
 use std::{
     fs,
-    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -49,24 +48,8 @@ fn validated_log_path(dir: &Path, name: &str) -> Result<PathBuf, String> {
 }
 
 fn read_tail(path: &Path, max_bytes: u64) -> Result<String, String> {
-    let mut file =
-        fs::File::open(path).map_err(|error| format!("failed to open log file: {error}"))?;
-    let len = file
-        .metadata()
-        .map_err(|error| format!("failed to stat log file: {error}"))?
-        .len();
-    let start = len.saturating_sub(max_bytes);
-    file.seek(SeekFrom::Start(start))
-        .map_err(|error| format!("failed to seek log file: {error}"))?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)
+    let buffer = super::retention::read_file_tail(path, max_bytes)
         .map_err(|error| format!("failed to read log file: {error}"))?;
-    if start > 0 {
-        // Skip the partial first line produced by seeking into the middle.
-        if let Some(position) = buffer.iter().position(|byte| *byte == b'\n') {
-            buffer.drain(..=position);
-        }
-    }
     Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 

@@ -927,7 +927,13 @@ impl SshConnectionFactory {
         };
 
         if trust_host_key {
-            let _ = save_host_key(state, &request.id, &connected.fingerprint);
+            if let Err(error) = save_host_key(state, &request.id, &connected.fingerprint) {
+                log::error!(
+                    target: "ssh.connect",
+                    "failed to persist trusted SSH host key for connection {}: {error}",
+                    request.id
+                );
+            }
         } else if accept_host_key_once {
             state.trust_host_key_once_for_connection(
                 &request.id,
