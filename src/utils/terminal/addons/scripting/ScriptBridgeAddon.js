@@ -58,6 +58,11 @@ export class ScriptBridgeAddon {
     return lines.join("\n");
   }
 
+  // 快捷按钮等终端外 UI 触发输入后，把焦点交还给终端。
+  focus() {
+    this._terminal?.focus();
+  }
+
   notifyOutput(data) {
     if (!data || !this._outputListeners.size) return;
     for (const listener of [...this._outputListeners]) listener(data);

@@ -63,7 +63,11 @@ function updateToast(id, patch) {
   if (nextToast) {
     clearToastRemovalTimer(id);
     scheduleDismiss(id, nextToast.duration);
+    return;
   }
+  // 原 toast 已被用户手动关闭并移出列表：结果提示（成功/失败）不能因此丢失，
+  // 按 patch 内容重建一条新提示。
+  showToast({ id, ...patch });
 }
 
 function dismissToast(id) {

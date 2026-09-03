@@ -26,6 +26,7 @@ XTerm 是桌面终端工作区，不是营销页或展示型网站。界面应�
 
 - `TerminalPanel.vue`：使用 XTerm.js 和 `src/utils/terminal/addons/` 下的 addon 实现真实终端体验。
 - `SftpPanel.vue`：SSH 会话下的远程文件管理和传输反馈。
+- `ShellStatusBar.vue`：状态栏，展示连接状态、远端目录、延迟等指标；左侧快捷按钮（`QuickButtonDialog.vue` 配置、右键菜单管理）可一键发送文本或运行脚本，发送内容支持 `\n` 等转义序列与 `\d<毫秒>` 暂停标记，配置以 JSON 存入 settings 表 `quickButtons` 键（与 `userScripts` 同一模式，不新增存储表）。
 
 ## 视觉语言
 
@@ -230,6 +231,26 @@ SFTP 只在 SSH 会话可用时出现。
 - 后端只保留业务相关职责，例如把支持的 URI 解析为工作区可消费的临时连接对象。
 
 ## 变更历史
+
+### 2026-09-01 - 快捷按钮发送内容支持暂停标记
+
+**变更内容**: 状态栏快捷按钮"发送内容"新增 `\d<毫秒>` 暂停标记：`splitTerminalSendContent` 在转义展开前把内容切成 text/delay 段，状态栏按序发送文本、以 `setTimeout` 等待 delay 段；`\\d500` 经反斜杠转义后仍发送字面 `\d500`。编辑弹窗占位提示与 SCRIPTING.md 同步补充语法说明。
+
+**变更理由**: 设备命令常需要逐条下发并等待回显（如进配置模式前停几百毫秒），此前只能靠完整脚本实现，快捷按钮缺少轻量的分段发送能力。
+
+**影响范围**: `src/utils/terminalEscapes.js`、`src/layouts/shell/ShellStatusBar.vue`、`src/i18n/locales/zh-CN.js`、`src/i18n/locales/en-US.js`、`tests/quickButtons.test.js`、`docs/SCRIPTING.md`、`docs/DESIGN.md`。
+
+**决策依据**: 暂停解析必须在 `expandTerminalEscapes` 之前对原文进行，才能区分 `\d500`（暂停）与 `\\d500`（字面文本）；沿用快捷按钮既有的反斜杠转义语法族，不引入新的标记风格。
+
+### 2026-08-31 - 状态栏快捷按钮
+
+**变更内容**: 状态栏左侧新增可配置快捷按钮：点击向当前会话发送文本（支持 `\n`、`\x1b` 等转义序列）或运行脚本库中的脚本；右键菜单新建/编辑/删除，编辑弹窗复用 `conn-dialog` 体系与 `UiSelect`，删除经 `ConfirmDialog` 确认。
+
+**变更理由**: 高频命令与脚本需要比"打开脚本选择器"更短的触发路径；按钮配置整体作为 JSON 存入 settings 表 `quickButtons` 键，避免扩展后端 `AppPreferences` 快照链路。
+
+**影响范围**: `src/layouts/shell/ShellStatusBar.vue`、`src/components/QuickButtonDialog.vue`、`src/composables/useQuickButtons.js`、`src/utils/quickButtons.js`、`src/utils/terminalEscapes.js`。
+
+**决策依据**: 用户自定义列表沿用 `userScripts` 的 settings key-value 存储模式；发送文本经 `ScriptBridgeAddon.send` 走正常输入链路，与脚本引擎的输入语义一致。
 
 ### 2026-07-14 - 终端会话生命周期与异步资源归属重构
 

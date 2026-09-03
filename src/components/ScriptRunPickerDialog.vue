@@ -13,17 +13,15 @@ import {
 } from "reka-ui";
 import { FileCode, Play, Square } from "@lucide/vue";
 import { useScriptExecution } from "../composables/useScriptExecution";
-import { useToasts } from "../composables/useToasts";
 import { useScriptsStore } from "../stores/scriptsStore";
 import { closeScriptRunPicker, scriptRunPickerOpen } from "../services/scripting/scriptRunPicker";
-import { SCRIPT_RUN_STATUS, scriptRuns, stopScript } from "../services/scripting/scriptRunner";
+import { SCRIPT_RUN_STATUS, scriptRuns } from "../services/scripting/scriptRunner";
 
 const { t } = useI18n();
 const router = useRouter();
 const scriptsStore = useScriptsStore();
 const { scripts } = storeToRefs(scriptsStore);
-const { runScriptOnActiveSession } = useScriptExecution();
-const { showToast } = useToasts();
+const { runScriptOnActiveSession, stopScriptRun } = useScriptExecution();
 
 const sortedScripts = computed(() =>
   [...scripts.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),
@@ -52,7 +50,7 @@ function runScript(script) {
   );
   if (runningRun) {
     closeScriptRunPicker();
-    void stopRunningScript(runningRun);
+    void stopScriptRun(runningRun);
     return;
   }
   closeScriptRunPicker();
@@ -62,22 +60,6 @@ function runScript(script) {
 function goManageScripts() {
   closeScriptRunPicker();
   router.push({ name: "scripts" });
-}
-
-async function stopRunningScript(run) {
-  showToast({ type: "info", title: t("notifications.scriptStopping", { name: run.scriptName }) });
-  if (!stopScript(run.runId)) {
-    showToast({ type: "error", title: t("notifications.scriptStopFailed", { name: run.scriptName }) });
-    return;
-  }
-  for (let attempt = 0; attempt < 30 && run.status === SCRIPT_RUN_STATUS.RUNNING; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  if (run.status === SCRIPT_RUN_STATUS.STOPPED) {
-    showToast({ type: "success", title: t("notifications.scriptStopped", { name: run.scriptName }) });
-  } else {
-    showToast({ type: "error", title: t("notifications.scriptStopFailed", { name: run.scriptName }) });
-  }
 }
 </script>
 
