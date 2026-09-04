@@ -140,41 +140,32 @@ async function applyPreferenceSideEffects(source) {
   });
 }
 
-function getThemeTransitionMetrics(event) {
+/**
+ * 在根元素上记录扩散原点（视口百分比）。
+ *
+ * 原点必须用百分比而非 px：View Transition 的根快照伪元素在部分 webview
+ * （已实测：Windows WebView2 有头模式、DPR=2）中以物理像素为坐标系，px 长度
+ * 会被按 DPR 缩放，导致圆心偏移到按钮之外；百分比相对参考盒解析，两种坐标
+ * 解释下都指向同一位置。半径同理，在 keyframes 中用固定百分比表达。
+ */
+function setThemeTransitionOrigin(event) {
   const root = document.documentElement;
   const source = event?.currentTarget ?? event?.target;
   const rect =
     source && typeof source.getBoundingClientRect === "function"
       ? source.getBoundingClientRect()
       : null;
-  const viewportInline = window.innerWidth || root.clientWidth;
-  const viewportBlock = window.innerHeight || root.clientHeight;
-  const x = rect ? rect.left + rect.width / 2 : viewportInline;
-  const y = rect ? rect.top + rect.height / 2 : 0;
-  const radius = Math.ceil(
-    Math.hypot(Math.max(x, viewportInline - x), Math.max(y, viewportBlock - y)),
-  );
+  const x = rect ? (100 * (rect.left + rect.width / 2)) / window.innerWidth : 100;
+  const y = rect ? (100 * (rect.top + rect.height / 2)) / window.innerHeight : 0;
 
-  return { radius, x, y };
+  root.style.setProperty("--theme-transition-x", `${x}%`);
+  root.style.setProperty("--theme-transition-y", `${y}%`);
 }
 
-function prepareThemeTransition(event) {
-  const root = document.documentElement;
-  const { radius, x, y } = getThemeTransitionMetrics(event);
-
-  root.style.setProperty("--theme-transition-x", `${x}px`);
-  root.style.setProperty("--theme-transition-y", `${y}px`);
-  root.style.setProperty("--theme-transition-radius", `${radius}px`);
-}
-
-function finishThemeTransition() {
-  const root = document.documentElement;
-
-  root.classList.remove(THEME_TRANSITION_CLASS);
-  root.style.removeProperty("--theme-transition-x");
-  root.style.removeProperty("--theme-transition-y");
-  root.style.removeProperty("--theme-transition-radius");
-  themeTransitionActive = false;
+function clearThemeTransitionOrigin() {
+  const rootStyle = document.documentElement.style;
+  rootStyle.removeProperty("--theme-transition-x");
+  rootStyle.removeProperty("--theme-transition-y");
 }
 
 async function hydratePreferences() {
@@ -331,7 +322,7 @@ export function useAppPreferences() {
     }
 
     themeTransitionActive = true;
-    prepareThemeTransition(event);
+    setThemeTransitionOrigin(event);
     runViewTransition(
       async () => {
         preferences.theme = next;
@@ -340,8 +331,11 @@ export function useAppPreferences() {
       },
       { className: THEME_TRANSITION_CLASS },
     )
-      .finally(finishThemeTransition)
-      .catch(() => {});
+      .catch(noop)
+      .finally(() => {
+        clearThemeTransitionOrigin();
+        themeTransitionActive = false;
+      });
   }
 
   function resetPreferences() {

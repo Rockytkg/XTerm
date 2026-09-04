@@ -369,9 +369,9 @@
     }
 
     to {
-      clip-path: circle(
-        var(--theme-transition-radius) at var(--theme-transition-x) var(--theme-transition-y)
-      );
+      /* 百分比半径的参考边长为 sqrt(w²+h²)/√2，150% 超过对角线所需的 ≈141%，
+         保证任意原点都能覆盖全屏；不用 px —— 见 setThemeTransitionOrigin 的说明。 */
+      clip-path: circle(150% at var(--theme-transition-x) var(--theme-transition-y));
     }
   }
 

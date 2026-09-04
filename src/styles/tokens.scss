@@ -115,7 +115,10 @@
     --ease-default: var(--motion-ease);
     --route-transition-duration: var(--motion-duration-base);
     --panel-transition-duration: var(--motion-duration-base);
-    --theme-transition-duration: var(--motion-duration-slow);
+
+    /* 全屏径向扩散需要比面板过渡更长的时长才能被感知；且首帧前的快照捕获会
+       消耗一部分动画预算，过短会显得"没有扩散过程"。 */
+    --theme-transition-duration: 300ms;
 
     /* --- Root Defaults --- */
     color: var(--text-primary);
