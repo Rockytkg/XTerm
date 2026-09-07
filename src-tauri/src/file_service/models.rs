@@ -1,13 +1,4 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -240,18 +231,12 @@ struct TransferState {
 
 #[derive(Debug)]
 pub(crate) struct TransferRegistry {
-    active_transfers: AtomicU64,
-    completed_transfers: AtomicU64,
-    failed_transfers: AtomicU64,
     transfers: parking_lot::Mutex<HashMap<String, TransferState>>,
 }
 
 impl TransferRegistry {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
-            active_transfers: AtomicU64::new(0),
-            completed_transfers: AtomicU64::new(0),
-            failed_transfers: AtomicU64::new(0),
             transfers: parking_lot::Mutex::new(HashMap::new()),
         })
     }
@@ -265,7 +250,7 @@ impl TransferRegistry {
         total: u64,
     ) {
         let now = crate::unix_timestamp_millis();
-        let replaced = self.transfers.lock().insert(
+        self.transfers.lock().insert(
             transfer_id.to_string(),
             TransferState {
                 direction: direction.to_string(),
@@ -277,9 +262,6 @@ impl TransferRegistry {
                 ..Default::default()
             },
         );
-        if replaced.is_none() {
-            self.active_transfers.fetch_add(1, Ordering::Relaxed);
-        }
     }
 
     pub(crate) fn record_progress(
@@ -303,13 +285,7 @@ impl TransferRegistry {
         error: Option<String>,
     ) -> Option<FileTransferEvent> {
         let mut transfer = self.transfers.lock().remove(transfer_id)?;
-        self.active_transfers.fetch_sub(1, Ordering::Relaxed);
         transfer.updated_at_ms = crate::unix_timestamp_millis();
-        if error.is_some() {
-            self.failed_transfers.fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.completed_transfers.fetch_add(1, Ordering::Relaxed);
-        }
         if transfer.total < transfer.transferred {
             transfer.total = transfer.transferred;
         }

@@ -56,17 +56,6 @@ pub(crate) async fn terminal_connection_authenticate(
 }
 
 #[tauri::command]
-pub(crate) fn terminal_connection_close(
-    app: AppHandle,
-    state: tauri::State<'_, AppState>,
-    request: ConnectionCloseCommand,
-) -> Result<(), String> {
-    connection_service()
-        .close(app, state.inner(), &request.connection_id)
-        .map_err(api_error)
-}
-
-#[tauri::command]
 pub(crate) fn terminal_connection_open_cancel(
     state: tauri::State<'_, AppState>,
     request: ConnectionOpenCancelCommand,
@@ -211,14 +200,15 @@ pub(crate) async fn terminal_detach(
     state: tauri::State<'_, AppState>,
     request: SessionDetachCommand,
 ) -> Result<(), String> {
-    session_service()
+    let result = session_service()
         .deactivate(state.inner(), &request.session_id, request.channel_id)
-        .await
-        .map_err(api_error)?;
+        .await;
+    // The output subscription must be released even when the worker is already
+    // gone; otherwise a failed deactivate leaks the reserved subscription.
     if let Some(subscription_id) = request.subscription_id {
         state.release_terminal_output_subscription(&request.session_id, subscription_id);
     }
-    Ok(())
+    result.map(|_| ()).map_err(api_error)
 }
 
 async fn cleanup_failed_attach(

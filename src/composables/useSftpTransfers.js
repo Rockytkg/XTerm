@@ -17,6 +17,7 @@ import {
 import { createLogger } from "../utils/logger";
 import { createDebounced, createRafThrottle } from "../utils/schedulers";
 import { formatRate } from "../utils/formatBytes";
+import { showToast } from "./useToasts";
 
 const logger = createLogger("frontend.sftp.transfers");
 
@@ -191,7 +192,13 @@ export function useSftpTransfers({
         applyTransferProgress(pending);
       }
     } catch (error) {
+      // 启动失败时条目从未入列，仅写日志用户毫无感知；补一条错误 toast。
       logger.error("transfer.run.failed", error);
+      showToast({
+        type: "error",
+        title: t("sftp.failed"),
+        message: `${item.name}: ${error?.message || String(error)}`,
+      });
     }
   }
 
@@ -406,10 +413,10 @@ export function useSftpTransfers({
 
     if (payload.error) {
       const canceled = payload.status === "canceled" || payload.error === "canceled";
+      // 失败/取消不标 100%：进度保留实际值，避免误显示为已完成。
       updateTransferItem(item.id, {
         status: canceled ? "canceled" : "failed",
         error: payload.error,
-        progress: 100,
         speed: canceled ? t("sftp.canceled") : t("sftp.failed"),
       });
       return true;

@@ -61,8 +61,23 @@ export function useSftpDialogStates({ t }) {
     conflictDialog.value = createConflictDialogState();
   }
 
+  // 新请求替换对话框状态前，必须先 resolve 旧 Promise，否则旧调用方永久悬挂；
+  // 取消口径与 onBeforeUnmount 的清理保持一致。
+  function resolvePendingDirtyEditorDialog() {
+    if (dirtyEditorDialog.value.open) {
+      resolveDirtyEditorAction(dirtyEditorDialog.value.kind === "overwrite" ? false : "cancel");
+    }
+  }
+
+  function resolvePendingConflictDialog() {
+    if (conflictDialog.value.open) {
+      resolveConflictAction(conflictDialog.value.kind === "rename" ? "cancel" : "skip");
+    }
+  }
+
   function requestDirtyEditorAction(payload) {
     return new Promise((resolve) => {
+      resolvePendingDirtyEditorDialog();
       dirtyEditorDialog.value = {
         count: payload.count || payload.tabs?.length || 0,
         kind: payload.kind || "close",
@@ -75,6 +90,7 @@ export function useSftpDialogStates({ t }) {
 
   function requestOverwriteEditorAction(payload) {
     return new Promise((resolve) => {
+      resolvePendingDirtyEditorDialog();
       dirtyEditorDialog.value = {
         count: 0,
         kind: "overwrite",
@@ -87,6 +103,7 @@ export function useSftpDialogStates({ t }) {
 
   function requestUploadConflictAction(payload) {
     return new Promise((resolve) => {
+      resolvePendingConflictDialog();
       conflictDialog.value = {
         description: t("sftp.uploadOverwriteMessage", {
           name: payload.name || payload.entry?.name || "",
@@ -102,6 +119,7 @@ export function useSftpDialogStates({ t }) {
 
   function requestRenameConflictAction(payload) {
     return new Promise((resolve) => {
+      resolvePendingConflictDialog();
       conflictDialog.value = {
         description: t("sftp.renameConflictMessage", {
           name: payload.name || payload.entry?.name || "",

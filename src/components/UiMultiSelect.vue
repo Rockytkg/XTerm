@@ -48,6 +48,11 @@ const filteredOptions = computed(() => {
 function updateValue(value) {
   emit("update:modelValue", Array.isArray(value) ? value : []);
 }
+
+// 关闭弹层时清空过滤词，避免下次打开残留上次的搜索状态
+function onPopoverOpenChange(open) {
+  if (!open) searchTerm.value = "";
+}
 </script>
 
 <template>
@@ -55,7 +60,7 @@ function updateValue(value) {
     class="ui-select-custom"
     :class="$attrs.class"
   >
-    <PopoverRoot>
+    <PopoverRoot @update:open="onPopoverOpenChange">
       <PopoverTrigger as-child>
         <button
           type="button"

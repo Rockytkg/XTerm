@@ -484,12 +484,23 @@ async fn connect_first_jump_hop(hop: ResolvedJumpHop) -> ConnectionResult<Shared
     let host_key_state = Arc::new(Mutex::new(None));
     let host = hop.host.clone();
     let port = hop.port;
-    let mut session = russh::client::connect(
-        config,
-        (hop.host.as_str(), hop.port),
-        RusshClient::new(host_key_state),
+    let mut session = tokio::time::timeout(
+        Duration::from_millis(CONNECT_TIMEOUT_MS),
+        russh::client::connect(
+            config,
+            (hop.host.as_str(), hop.port),
+            RusshClient::new(host_key_state),
+        ),
     )
     .await
+    .map_err(|_| {
+        ConnectionError::with_args(
+            "ssh_connect_timeout",
+            format!("jump_host={host}:{port}; connect timeout"),
+            serde_json::json!({ "host": host, "port": port }),
+            true,
+        )
+    })?
     .map_err(|error| {
         ConnectionError::with_args(
             "ssh_jump_host_connect_failed",
@@ -523,17 +534,27 @@ async fn connect_next_jump_hop(
     };
     let config = Arc::new(ssh_client_config());
     let host_key_state = Arc::new(Mutex::new(None));
-    let mut session =
-        russh::client::connect_stream(config, stream, RusshClient::new(host_key_state))
-            .await
-            .map_err(|error| {
-                ConnectionError::with_args(
-                    "ssh_jump_host_connect_failed",
-                    format!("jump_host={host}:{port}; via_chain=true; {error}"),
-                    serde_json::json!({ "host": host, "port": port, "detail": error.to_string() }),
-                    false,
-                )
-            })?;
+    let mut session = tokio::time::timeout(
+        Duration::from_millis(CONNECT_TIMEOUT_MS),
+        russh::client::connect_stream(config, stream, RusshClient::new(host_key_state)),
+    )
+    .await
+    .map_err(|_| {
+        ConnectionError::with_args(
+            "ssh_connect_timeout",
+            format!("jump_host={host}:{port}; via_chain=true; connect timeout"),
+            serde_json::json!({ "host": host, "port": port }),
+            true,
+        )
+    })?
+    .map_err(|error| {
+        ConnectionError::with_args(
+            "ssh_jump_host_connect_failed",
+            format!("jump_host={host}:{port}; via_chain=true; {error}"),
+            serde_json::json!({ "host": host, "port": port, "detail": error.to_string() }),
+            false,
+        )
+    })?;
     authenticate_russh_session(&mut session, &hop.username, hop.auth).await?;
     Ok(Arc::new(tokio::sync::Mutex::new(session)))
 }
@@ -600,12 +621,23 @@ async fn connect_via_jump_chain(
             channel.into_stream()
         };
 
-    let mut session = russh::client::connect_stream(
-        config,
-        tunnel_channel,
-        RusshClient::new(host_key_state.clone()),
+    let mut session = tokio::time::timeout(
+        Duration::from_millis(CONNECT_TIMEOUT_MS),
+        russh::client::connect_stream(
+            config,
+            tunnel_channel,
+            RusshClient::new(host_key_state.clone()),
+        ),
     )
     .await
+    .map_err(|_| {
+        ConnectionError::with_args(
+            "ssh_connect_timeout",
+            format!("target={host}:{port}; jump_chain={chain_label}; connect timeout"),
+            serde_json::json!({ "host": host, "port": port, "chainLabel": chain_label }),
+            true,
+        )
+    })?
     .map_err(|error| ConnectionError::with_args(
         "ssh_connect_failed",
         format!("target={host}:{port}; jump_chain={chain_label}; {error}"),

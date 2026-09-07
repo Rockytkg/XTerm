@@ -65,6 +65,13 @@ function normalizeJumpHost(hop = {}) {
   };
 }
 
+// 非数字端口（Number("abc") 为 NaN）不能序列化成 "NaN"，回退为缺省端口语义
+function serializeOptionalPort(value) {
+  if (!value) return undefined;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? String(numeric) : undefined;
+}
+
 // Shared "name · type" options for saved-credential pickers across the
 // connection dialog and the jump-host editor.
 export function toCredentialOptions(credentials, t) {
@@ -219,7 +226,7 @@ export function buildConnectionProfile({
               }
               return {
                 host: hop.host?.trim?.() || "",
-                port: hop.port ? String(Number(hop.port)) : undefined,
+                port: serializeOptionalPort(hop.port),
                 user: hop.user?.trim?.() || undefined,
                 authMethod: hop.authMethod || undefined,
                 savedCredentialId: hop.savedCredentialId || undefined,

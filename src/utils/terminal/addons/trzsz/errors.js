@@ -29,10 +29,6 @@ export class TransferError extends Error {
     return this.type === "fail" || this.type === "FAIL";
   }
 
-  isStopAndDelete() {
-    return this.type === "fail" && this.message === "Stopped and deleted";
-  }
-
   static message(error) {
     if (error instanceof TransferError && !error.isTraceBack()) return error.message;
     return error?.stack ? error.stack.replace("TrzszError: ", "") : String(error);

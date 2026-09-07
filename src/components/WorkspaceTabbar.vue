@@ -4,6 +4,7 @@ import { Plus, X } from "@lucide/vue";
 import { TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import ConnectDialog from "./ConnectDialog.vue";
 import AppTooltip from "./AppTooltip.vue";
+import { startHoverMarquee, stopHoverMarquee } from "./MarqueeText.vue";
 import { useWorkspaceTabDragSort } from "../composables/useWorkspaceTabDragSort";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import "../styles/tabbar.scss";
@@ -85,27 +86,23 @@ function closeTab(e, id) {
 }
 
 // ── Marquee scroll on hover ──
-const MARQUEE_SPEED = 20; // px/s — lower = gentler scroll
-
 function onLabelMouseEnter(e) {
   if (dragging.value) return;
   const label = e.currentTarget;
-  const track = label.firstElementChild;
+  const track = label?.firstElementChild;
   if (!track) return;
 
   // Only Copy1 is visible (Copy2 is display:none), so scrollWidth == one copy width
-  if (track.scrollWidth <= label.clientWidth) return;
-
-  const duration = Math.max(3, (track.scrollWidth + 20) / MARQUEE_SPEED);
-  track.style.setProperty("--marquee-duration", `${duration}s`);
-  track.classList.add("is-overflow");
+  startHoverMarquee(label, {
+    width: track.scrollWidth,
+    speed: 20,
+    minDuration: 3,
+    gap: 20,
+  });
 }
 
 function onLabelMouseLeave(e) {
-  const track = e.currentTarget.firstElementChild;
-  if (!track) return;
-  track.classList.remove("is-overflow");
-  track.style.removeProperty("--marquee-duration");
+  stopHoverMarquee(e.currentTarget);
 }
 
 function openConnectDialog() {

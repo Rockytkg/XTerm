@@ -3,7 +3,10 @@ import { useI18n } from "vue-i18n";
 import { storeToRefs } from "pinia";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useToasts } from "./useToasts";
-import { invokeIpc } from "../services/ipc/core";
+import {
+  exportTerminalHighlightScheme,
+  importTerminalHighlightSchemes,
+} from "../services/highlightSchemes";
 import { createLogger } from "../utils/logger";
 import { normalizeHighlightMatchType } from "../utils/terminalPanelHelpers";
 import { createRuntimeId } from "../utils/runtimeIds";
@@ -77,7 +80,7 @@ export function useHighlightSchemes() {
 
   async function importSchemes() {
     try {
-      const imported = await invokeIpc("terminal_highlight_schemes_import");
+      const imported = await importTerminalHighlightSchemes();
       if (!imported) return;
       schemes.value = imported;
       showToast({ type: "success", title: t("notifications.highlightSchemesImported") });
@@ -93,7 +96,7 @@ export function useHighlightSchemes() {
 
   async function exportScheme(schemeId) {
     try {
-      const savedPath = await invokeIpc("terminal_highlight_schemes_export", { schemeId });
+      const savedPath = await exportTerminalHighlightScheme(schemeId);
       if (!savedPath) return;
       showToast({ type: "success", title: t("notifications.highlightSchemesExported") });
     } catch (error) {

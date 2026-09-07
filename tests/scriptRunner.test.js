@@ -17,6 +17,7 @@ import {
   resolveScriptPrompt,
   scriptPrompt,
 } from "../src/services/scripting/scriptPromptController.js";
+import { i18n } from "../src/i18n/index.js";
 
 const TARGET = "test-session";
 
@@ -301,6 +302,21 @@ test("sleep and log complete the run", async () => {
   assert.equal(run.logs[0].text, 'done {"ok":true}');
 });
 
+test("sleep and read clamp negative durations instead of hanging forever", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "s7d",
+      name: "negative-durations",
+      code: `await xterm.sleep(-500); const text = await xterm.read(-100); xterm.log("ok", JSON.stringify(text));`,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.equal(run.logs[0].text, 'ok ""');
+});
+
 test("standard JavaScript language and Promise features remain available", async () => {
   setup();
   const run = await runScript(
@@ -352,6 +368,30 @@ test("stopScript rejects pending waits and marks the run stopped", async () => {
   assert.equal(run.status, SCRIPT_RUN_STATUS.STOPPED);
 });
 
+test("stopScript still stops a running script evicted from the run history", async () => {
+  setup();
+  const runPromise = runScript(
+    {
+      id: "s8c",
+      name: "stop-evicted",
+      code: `await xterm.waitFor("never", 0);`,
+    },
+    testContext(),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const evicted = latestRun();
+  // 模拟 MAX_RUN_HISTORY 截断：记录被挤出列表，但运行与停止句柄仍在。
+  scriptRuns.value = scriptRuns.value.filter((item) => item.runId !== evicted.runId);
+  assert.equal(stopScript(evicted.runId), true);
+  const run = await runPromise;
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.STOPPED);
+});
+
+test("stopScript returns false for unknown run ids", () => {
+  assert.equal(stopScript("no-such-run"), false);
+});
+
 test("stopping a script removes its active prompt and releases the promise", async () => {
   setup();
   const runPromise = runScript(
@@ -397,7 +437,7 @@ test("run fails fast when the target session has no script bridge", async () => 
     testContext(),
   );
   assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
-  assert.match(run.error, /not available/);
+  assert.match(run.error, new RegExp(i18n.global.t("scripts.errors.targetUnavailable")));
 });
 
 test("syntax errors fail before script execution", async () => {
@@ -588,5 +628,5 @@ test("recording api fails fast when no recording controller is registered", asyn
   );
   teardown();
   assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
-  assert.match(run.error, /recording is not available/);
+  assert.match(run.error, new RegExp(i18n.global.t("scripts.errors.recordingUnavailable")));
 });

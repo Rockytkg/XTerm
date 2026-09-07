@@ -34,8 +34,3 @@ export function isWebKitGtkUserAgent(userAgent) {
   const ua = String(userAgent || "");
   return isLinuxUserAgent(ua) && /AppleWebKit/.test(ua) && !/Chrome|Chromium|Edg\//.test(ua);
 }
-
-export function isWebKitGtkPlatform() {
-  if (typeof navigator === "undefined") return false;
-  return isWebKitGtkUserAgent(navigator.userAgent);
-}

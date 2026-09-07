@@ -218,6 +218,20 @@ impl Store {
             let mut table = write_txn
                 .open_table(CREDENTIALS)
                 .map_err(|error| format!("failed to open credentials table: {error}"))?;
+            // The id is derived from the credential content: editing A into an
+            // exact copy of B would insert over B's row and then delete A,
+            // silently destroying B. Refuse the collision instead.
+            if previous_id != id
+                && table
+                    .get(id)
+                    .map_err(|error| format!("failed to read credential '{id}': {error}"))?
+                    .is_some()
+            {
+                return Err(format!(
+                    "credential_duplicate: updating credential '{previous_id}' would overwrite \
+                     existing credential '{id}' with identical content"
+                ));
+            }
             let existing_position = table
                 .get(previous_id)
                 .map_err(|error| format!("failed to read credential '{previous_id}': {error}"))?
@@ -653,6 +667,30 @@ mod tests {
             .map(|record| record.id)
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["id-a2", "id-b"]);
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn update_to_identical_content_is_rejected() {
+        let (store, dir) = temp_store();
+        store
+            .insert_credential("id-a", &password_credential("a"))
+            .unwrap();
+        store
+            .insert_credential("id-b", &password_credential("b"))
+            .unwrap();
+
+        // Editing A into an exact copy of B collides on the content-derived id.
+        let error = store
+            .update_credential("id-a", "id-b", &password_credential("b"))
+            .expect_err("duplicate content must be rejected");
+        assert!(error.contains("credential_duplicate"), "{error}");
+
+        // Both records survive untouched.
+        assert_eq!(store.credential_by_id("id-a").unwrap().unwrap().name, "a");
+        assert_eq!(store.credential_by_id("id-b").unwrap().unwrap().name, "b");
 
         drop(store);
         let _ = std::fs::remove_dir_all(dir);

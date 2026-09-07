@@ -195,6 +195,8 @@ export function createSshConnectionFlow({
         }) ?? false
       );
     }
+    // 非凭证弹窗的失败路径没有别的清理点，明文凭证不能滞留到关 tab。
+    pendingCredentials.delete(frontendSessionId);
     return false;
   }
 
@@ -293,7 +295,20 @@ export function createSshConnectionFlow({
 
     try {
       if (await maybeRequestTypeChangeConfirmation(prompt, input, persistence)) return true;
-      await persistCredentialPrompt(prompt, input, persistence);
+      const persisted = await persistCredentialPrompt(prompt, input, persistence);
+      if (!persisted) {
+        // 会话实例已消失（用户已关掉 tab）：弹窗已被 answerPrompt 关闭，
+        // 但不能再继续重连；按失败口径补发状态机事件并返回 false。
+        logger.warn("credential_prompt.submit_aborted", {
+          connectionId,
+          reason: "session-gone",
+        });
+        dispatchConnectionEvent(eventTargetForPrompt(prompt), {
+          type: CONNECTION_EVENT.OPEN_FAILED,
+          payload: { error: prompt.error },
+        });
+        return false;
+      }
       return true;
     } catch (error) {
       logger.error("credential_prompt.submit_failed", error);

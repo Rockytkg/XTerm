@@ -63,6 +63,7 @@ router.beforeResolve((to, from) => {
         await nextTick();
       },
       { className: ROUTE_TRANSITION_CLASS },
-    ).catch(() => {});
+      // startViewTransition 同步抛错时 update 不会执行，catch 里兜底放行避免守卫悬挂
+    ).catch(() => resolve(true));
   });
 });

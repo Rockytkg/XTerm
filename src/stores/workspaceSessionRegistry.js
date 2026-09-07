@@ -248,9 +248,11 @@ export function createWorkspaceSessionRegistry({ onRetireBackendSession } = {}) 
 
   function setActiveSessionChannel(frontendSessionId, channelId) {
     if (!frontendSessionId) return;
-    const nextChannelId = Number(channelId);
     const previous = getActiveSessionChannelId(frontendSessionId);
-    const normalized = Number.isFinite(nextChannelId) ? nextChannelId : null;
+    // 后端 channel id 从 1 起分配；Number(null)===0 会通过有限性检查，
+    // 因此只接受真正的有限 number，其余一律视为清除。
+    const normalized =
+      typeof channelId === "number" && Number.isFinite(channelId) ? channelId : null;
     if (previous === normalized) return;
     patchRecord(frontendSessionId, { activeChannelId: normalized });
   }

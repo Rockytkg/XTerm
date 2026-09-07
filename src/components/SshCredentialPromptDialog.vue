@@ -18,6 +18,9 @@ import { choosePrivateKey } from "../services/credentials";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import { appFieldNames, NO_NATIVE_AUTOCOMPLETE } from "../utils/autocomplete";
 import { CREDENTIAL_TYPE_CHANGE_ACTION } from "../utils/credentialTypeChange";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("frontend.ssh_credential_prompt.dialog");
 
 const props = defineProps({
   prompt: { type: Object, required: true },
@@ -110,6 +113,9 @@ async function pickPrivateKey() {
       form.privateKey = key;
       error.value = "";
     }
+  } catch (pickError) {
+    logger.warn("ssh_credential_prompt.private_key.pick_failed", pickError);
+    error.value = String(pickError);
   } finally {
     window.setTimeout(() => {
       pickerBusy.value = false;

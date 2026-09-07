@@ -125,6 +125,21 @@ pub(crate) fn is_explicit_password(password: &str) -> bool {
     password != DEFAULT_FILE_SERVICE_PASSWORD
 }
 
+/// 恒定时间比较，避免口令校验在首个不匹配字节处提前返回而泄露时序信息。
+/// 长度不等时直接失败（长度本身不视为秘密）。FTP 与 SFTP 服务端共用。
+pub(crate) fn passwords_equal(provided: &str, expected: &str) -> bool {
+    let provided = provided.as_bytes();
+    let expected = expected.as_bytes();
+    if provided.len() != expected.len() {
+        return false;
+    }
+    provided
+        .iter()
+        .zip(expected.iter())
+        .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+        == 0
+}
+
 fn clear_legacy_setting(store: &impl SettingsRepository) {
     match store.setting_value(FILE_SERVICE_PASSWORD_KEY) {
         Ok(Some(_)) => {
@@ -152,7 +167,7 @@ mod tests {
     use parking_lot::Mutex;
 
     use super::{
-        is_explicit_password, resolve_password, set_password, PasswordVault,
+        is_explicit_password, passwords_equal, resolve_password, set_password, PasswordVault,
         DEFAULT_FILE_SERVICE_PASSWORD,
     };
     use crate::{
@@ -318,5 +333,13 @@ mod tests {
         assert_eq!(resolved, "s3cret");
         assert_eq!(vault.read().unwrap().as_deref(), Some("s3cret"));
         assert!(is_explicit_password("s3cret"));
+    }
+
+    #[test]
+    fn password_comparison_matches_only_identical_passwords() {
+        assert!(passwords_equal("s3cret", "s3cret"));
+        assert!(!passwords_equal("s3cret", "s3creT"));
+        assert!(!passwords_equal("s3cret", "s3cret-longer"));
+        assert!(!passwords_equal("", "s3cret"));
     }
 }

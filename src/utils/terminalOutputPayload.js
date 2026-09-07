@@ -1,3 +1,7 @@
+import { createLogger } from "./logger.js";
+
+const logger = createLogger("frontend.terminal.output-payload");
+
 const utf8Encoder = new TextEncoder();
 
 function isTerminalOutputChannelAccepted(payload, state = {}) {
@@ -94,7 +98,6 @@ export function createTerminalOutputByteDecoder() {
   return {
     decode(dataBase64, encoding = "utf-8") {
       const bytes = decodeBase64Bytes(dataBase64);
-      if (!bytes) return "";
       const nextEncoding = String(encoding || "utf-8").toLowerCase();
       if (!decoder || activeEncoding !== nextEncoding) {
         decoder = createTextDecoder(nextEncoding);
@@ -136,7 +139,7 @@ function normalizeTextOutput(rawData, range, state) {
   };
 }
 
-function normalizeBytesOutput(rawBase64, range, state) {
+function normalizeBytesOutput(rawBase64, range, state, encoding) {
   if (!range || isStaleRange(range, state)) return null;
   const { cursor, sameSession } = cursorState(state);
   const trimBytes = sameSession ? Math.max(0, cursor - range.startOffset) : 0;
@@ -149,8 +152,17 @@ function normalizeBytesOutput(rawBase64, range, state) {
       endOffset: range.endOffset,
     };
   }
+  const normalizedEncoding = String(encoding || "utf-8").toLowerCase();
+  if (normalizedEncoding !== "utf-8" && normalizedEncoding !== "utf8") {
+    // 防御性日志：非 UTF-8 编码下 offset 是文本字节坐标，与原始字节坐标不一致，
+    // 下面的裁剪可能错位。后端已保证 raw 批次对齐 chunk 边界，走到这里说明
+    // 存在未覆盖的路径，留日志便于将来定位（裁剪行为本身不变）。
+    logger.warn("output-payload.bytes.trim_non_utf8", {
+      encoding: normalizedEncoding,
+      trimBytes,
+    });
+  }
   const bytes = decodeBase64Bytes(rawBase64);
-  if (!bytes) return null;
   const visibleBytes = bytes.subarray(Math.min(trimBytes, bytes.length));
   return {
     dataBase64: encodeBase64Bytes(visibleBytes),
@@ -171,7 +183,7 @@ function normalizeTerminalOutputPayload(payload, state = {}) {
   }
 
   if (!rawData && rawBase64) {
-    return normalizeBytesOutput(rawBase64, outputRange(payload), state);
+    return normalizeBytesOutput(rawBase64, outputRange(payload), state, payload?.encoding);
   }
 
   return normalizeTextOutput(rawData, outputRange(payload), state);

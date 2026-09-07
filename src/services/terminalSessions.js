@@ -3,10 +3,6 @@ import { createLogger, summarizeValue } from "../utils/logger";
 
 const terminalLogger = createLogger("frontend.terminal.service");
 
-function summarizeTerminalResult(value) {
-  return summarizeValue(value);
-}
-
 function invokeTerminal(command, payload = {}, options = {}) {
   return invokeDetailedIpc(command, payload, {
     scope: terminalLogger,
@@ -14,7 +10,7 @@ function invokeTerminal(command, payload = {}, options = {}) {
     successLevel: options.successLevel || "debug",
     failureLevel: options.failureLevel || "error",
     summarizePayload: options.summarizePayload || (() => summarizeValue(payload)),
-    summarizeResult: options.summarizeResult || summarizeTerminalResult,
+    summarizeResult: options.summarizeResult || summarizeValue,
   });
 }
 
@@ -63,16 +59,6 @@ export function authenticateBackendConnection(connectionId, options = {}) {
           ? { authMethod: request.sshCredential.authMethod }
           : undefined,
       }),
-    },
-  );
-}
-
-export function closeBackendConnection(connectionId) {
-  return invokeTerminal(
-    "terminal_connection_close",
-    { request: { connectionId } },
-    {
-      summarizePayload: () => ({ connectionId }),
     },
   );
 }

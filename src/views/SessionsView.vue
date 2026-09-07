@@ -77,11 +77,14 @@ async function onSave({ id }) {
       await refreshConnectionList();
       showToast({ type: "success", title: t("notifications.connectionSaved") });
     } else {
-      refreshConnectionList().catch(noop);
-      if (connectTo(id)) {
-        showToast({ type: "success", title: t("notifications.connectionSaved") });
-        router.push({ name: "workspace" });
+      // 必须先等目录刷新完成，否则 connectTo 在新 id 尚未入库时静默失败
+      await refreshConnectionList();
+      if (!connectTo(id)) {
+        showToast({ type: "error", title: t("notifications.connectionSaveFailed") });
+        return;
       }
+      showToast({ type: "success", title: t("notifications.connectionSaved") });
+      router.push({ name: "workspace" });
     }
   } catch (error) {
     showToast({
@@ -161,7 +164,18 @@ async function confirmRemove() {
     pendingDelete.value = null;
     return;
   }
-  await removeConnection(pendingDelete.value.id);
+  try {
+    await removeConnection(pendingDelete.value.id);
+  } catch (error) {
+    // 失败时保留 pendingDelete，确认框保持打开，由用户重试或取消
+    logger.error("connection.delete.failed", error);
+    showToast({
+      type: "error",
+      title: t("notifications.connectionDeleteFailed"),
+      message: String(error),
+    });
+    return;
+  }
   pendingDelete.value = null;
   showToast({ type: "success", title: t("notifications.connectionDeleted") });
 }

@@ -2,7 +2,6 @@ import { onScopeDispose, ref } from "vue";
 import { defineStore } from "pinia";
 import { createLogger } from "../utils/logger";
 import { createRuntimeId } from "../utils/runtimeIds";
-import { invokeDetailedIpc } from "../services/ipc/core";
 import { getSetting, setPreference } from "../services/preferences";
 import { fetchScriptText } from "../services/scripting/scriptFileLoader";
 import { DEFAULT_SCRIPT_BODY } from "../services/scripting/scriptTemplate";
@@ -68,11 +67,7 @@ export const useScriptsStore = defineStore("scripts", () => {
 
   async function loadScriptsOnce() {
     try {
-      const raw = await invokeDetailedIpc(
-        "setting_get",
-        { key: SCRIPTS_SETTING_KEY },
-        { level: "debug", successLevel: "debug" },
-      );
+      const raw = await getSetting(SCRIPTS_SETTING_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         scripts.value = Array.isArray(parsed) ? parsed.map(normalizeScript).filter(Boolean) : [];
@@ -84,7 +79,8 @@ export const useScriptsStore = defineStore("scripts", () => {
     }
     await Promise.all([loadAuthorProfile(), loadUpdateInterval()]);
     loaded.value = true;
-    scheduleUpdateChecks();
+    // 仅首次加载后静默检查一轮，不阻塞界面；此后改间隔只重排定时器。
+    scheduleUpdateChecks({ immediate: true });
   }
 
   async function loadAuthorProfile() {
@@ -133,7 +129,7 @@ export const useScriptsStore = defineStore("scripts", () => {
     );
   }
 
-  function scheduleUpdateChecks() {
+  function scheduleUpdateChecks({ immediate = false } = {}) {
     if (updateTimer) {
       clearInterval(updateTimer);
       updateTimer = null;
@@ -143,8 +139,7 @@ export const useScriptsStore = defineStore("scripts", () => {
       () => void checkAllUpdates(),
       updateIntervalHours.value * 3600 * 1000,
     );
-    // 启动时先静默检查一轮，不阻塞界面。
-    void checkAllUpdates();
+    if (immediate) void checkAllUpdates();
   }
 
   function persistNow() {
@@ -155,12 +150,7 @@ export const useScriptsStore = defineStore("scripts", () => {
     const value = JSON.stringify(scripts.value);
     const request = persistChain
       .catch(() => {})
-      .then(() =>
-        invokeDetailedIpc("setting_set", {
-          key: SCRIPTS_SETTING_KEY,
-          value,
-        }),
-      );
+      .then(() => setPreference(SCRIPTS_SETTING_KEY, value));
     persistChain = request;
     return request;
   }

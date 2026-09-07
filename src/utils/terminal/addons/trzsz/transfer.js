@@ -310,9 +310,14 @@ export class TrzszTransfer {
     progress?.onSize?.(size);
     await this._recvFileData(file, size, binary, codes, timeout, progress);
     const digest = await file.getDigest();
-    await file.closeFile?.();
     const expected = await this._recvBinary("MD5");
-    if (!bytesEqual(digest, expected)) throw new TransferError("Check MD5 failed");
+    if (!bytesEqual(digest, expected)) {
+      // closeFile 的 finishDownload 会消费 transfer，必须先中止删除再抛错，
+      // 否则校验失败留下的损坏文件无法清理（上游 trzsz.js 同样先删后抛）
+      await file.deleteFile?.();
+      throw new TransferError("Check MD5 failed");
+    }
+    await file.closeFile?.();
     this._sendBinary("SUCC", digest);
     progress?.onDone?.();
     return file.getLocalName();

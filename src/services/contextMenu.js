@@ -144,19 +144,34 @@ function insertTextIntoTarget(target, text, context) {
   }
 }
 
+// 剪贴板 IPC 失败（权限拒绝、webview 异常等）只记录日志：动作经菜单事件
+// 派发，Promise 无人 await，不 catch 会变成 unhandled rejection。
 async function copySelection(context) {
-  await writeClipboardText(context.selectedText);
+  await writeClipboardText(context.selectedText).catch((error) => {
+    logger.warn("context-menu.clipboard.write.failed", error);
+  });
 }
 
 async function cutSelection(context) {
   if (!context.editableTarget || !context.selectedText) return;
-  await writeClipboardText(context.selectedText);
+  const written = await writeClipboardText(context.selectedText).then(
+    () => true,
+    (error) => {
+      // 写入失败时不删除选区，避免“剪切”变成“删除”丢数据。
+      logger.warn("context-menu.clipboard.write.failed", error);
+      return false;
+    },
+  );
+  if (!written) return;
   insertTextIntoTarget(context.editableTarget, "", context);
 }
 
 async function pasteIntoTarget(context) {
   if (!context.editableTarget) return;
-  const text = await readClipboardText();
+  const text = await readClipboardText().catch((error) => {
+    logger.warn("context-menu.clipboard.read.failed", error);
+    return "";
+  });
   if (!text) return;
   insertTextIntoTarget(context.editableTarget, text, context);
 }

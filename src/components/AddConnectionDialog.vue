@@ -14,7 +14,7 @@ import {
 } from "reka-ui";
 import { CirclePlus, SquarePen, X } from "@lucide/vue";
 import { createCredential, loadCredentials } from "../services/credentials";
-import { invokeDebugIpc } from "../services/ipc/core";
+import { listSerialPorts } from "../services/system";
 import { useDialogExitTeardown } from "../composables/useDialogExitTeardown";
 import { usePrivateKeyPicker } from "../composables/usePrivateKeyPicker";
 import { createConnection, getConnection, updateConnectionProfile } from "../services/workspace";
@@ -512,7 +512,7 @@ async function loadSerialPortsForProtocol(protocol, token) {
   if (!isSerialProtocol(protocol)) return;
   serialPortsLoading.value = true;
   try {
-    let ports = await invokeDebugIpc("serial_list_ports");
+    let ports = await listSerialPorts();
     if (!isCurrentDialogLoad(token) || activeProtocol.value !== protocol) return;
     ports = Array.isArray(ports) ? ports : [];
     const serialPort = protocolDrafts.serial.serialPort;

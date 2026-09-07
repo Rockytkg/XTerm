@@ -11,7 +11,7 @@ import { useI18n } from "vue-i18n";
 import { useWorkspacePerformanceHistory } from "../composables/useWorkspacePerformanceHistory";
 import { useWorkspaceShellController } from "../composables/useWorkspaceShellController";
 import { dismissContextMenu } from "../services/contextMenu";
-import { invokeIpc } from "../services/ipc/core";
+import { openDevTools } from "../services/system";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { createAsyncListenerRegistry } from "../utils/asyncListeners";
 import { blurActiveElement } from "../utils/focusGuards";
@@ -86,7 +86,7 @@ globalShortcuts.register({
   id: "open-devtools",
   shortcut: () => preferences.value.openDevToolsShortcut,
   run: () => {
-    invokeIpc("open_devtools").catch((error) => {
+    openDevTools().catch((error) => {
       logger.error("devtools.open.failed", error);
     });
   },

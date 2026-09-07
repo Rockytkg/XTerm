@@ -117,7 +117,7 @@ export function createScriptExecutorHost(options) {
     try {
       return createWorkerHost(options);
     } catch (error) {
-      hostLogger.warn("script worker unavailable, falling back to direct execution:", error);
+      hostLogger.warn("worker.unavailable.fallback", error);
     }
   }
   return createDirectHost(options);

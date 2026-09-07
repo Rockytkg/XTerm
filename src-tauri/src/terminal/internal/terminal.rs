@@ -175,16 +175,14 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
     if let Some(data) = initial_data {
         let startup_auth_payload =
             prepare_startup_auth_write(&mut session_loop.startup_auth, &data);
-        if !emit_terminal_data(
+        emit_terminal_data(
             &session_loop.app,
             &session_loop.session_id,
             &mut session_loop.delivery,
             data,
             "utf-8".to_string(),
             None,
-        ) {
-            return;
-        }
+        );
         send_startup_auth_payload(&session_loop.transport_tx, startup_auth_payload);
     }
 
@@ -210,13 +208,11 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
                 }
             }
             SessionLoopEvent::LiveFlush => {
-                if !drain_live_output(
+                drain_live_output(
                     &session_loop.app,
                     &session_loop.session_id,
                     &mut session_loop.delivery,
-                ) {
-                    return;
-                }
+                );
             }
             SessionLoopEvent::CommandChannelClosed => {
                 finish_session_worker(
@@ -238,22 +234,19 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
             }
         }
 
-        if !drain_terminal_replay(
+        drain_terminal_replay(
             &session_loop.app,
             &session_loop.session_id,
             &mut session_loop.delivery,
-        ) {
-            return;
-        }
+        );
         if session_loop.delivery.replay_channel_id.is_none()
             && should_flush_live_output(&session_loop.delivery)
-            && !drain_live_output(
+        {
+            drain_live_output(
                 &session_loop.app,
                 &session_loop.session_id,
                 &mut session_loop.delivery,
-            )
-        {
-            return;
+            );
         }
     }
 }
@@ -270,21 +263,23 @@ async fn handle_session_command(
             session_loop.delivery.replay_channel_id = (session_loop.delivery.delivered_offset
                 < session_loop.delivery.next_offset)
                 .then_some(channel_id);
+            // Re-arm raw output on the fresh channel: the frontend does not
+            // resend SetRawOutput after a re-attach.
+            session_loop.delivery.raw_output_channel_id = session_loop
+                .delivery
+                .raw_output_enabled
+                .then_some(channel_id);
             session_loop.delivery.note_channel_activated();
             let _ = reply.send(Ok(()));
             true
         }
         SessionCommand::Deactivate { channel_id, reply } => {
-            if (channel_id.is_none() || session_loop.delivery.active_channel_id == channel_id)
-                && !drain_live_output(
+            if channel_id.is_none() || session_loop.delivery.active_channel_id == channel_id {
+                drain_live_output(
                     &session_loop.app,
                     &session_loop.session_id,
                     &mut session_loop.delivery,
-                )
-            {
-                return false;
-            }
-            if channel_id.is_none() || session_loop.delivery.active_channel_id == channel_id {
+                );
                 session_loop.delivery.active_channel_id = None;
                 session_loop.delivery.output_ready_channel_id = None;
                 session_loop.delivery.replay_channel_id = None;
@@ -332,11 +327,13 @@ async fn handle_session_command(
                 &session_loop.app,
                 &session_loop.session_id,
                 &mut session_loop.delivery,
-            ) && drain_live_output(
+            );
+            drain_live_output(
                 &session_loop.app,
                 &session_loop.session_id,
                 &mut session_loop.delivery,
-            )
+            );
+            true
         }
         SessionCommand::RenderedOffset { channel_id, offset } => {
             // Ignore reports from stale channels; a reattached frontend starts
@@ -433,13 +430,12 @@ fn handle_raw_output_command(
     if channel_id.is_some() && session_loop.delivery.active_channel_id != channel_id {
         return true;
     }
-    if !drain_live_output(
+    drain_live_output(
         &session_loop.app,
         &session_loop.session_id,
         &mut session_loop.delivery,
-    ) {
-        return false;
-    }
+    );
+    session_loop.delivery.raw_output_enabled = enabled;
     session_loop.delivery.raw_output_channel_id =
         enabled.then_some(channel_id).flatten().or_else(|| {
             enabled
@@ -455,7 +451,7 @@ fn handle_session_capability_command(
 ) -> bool {
     match command {
         SessionCapabilityCommand::RedetectSerialBaud { reply } => {
-            let _ = flush_terminal_output(
+            flush_terminal_output(
                 &session_loop.app,
                 &session_loop.session_id,
                 session_loop.codec,
@@ -508,19 +504,16 @@ fn handle_worker_event(
             );
             let startup_auth_payload =
                 prepare_startup_auth_write(&mut session_loop.startup_auth, &payload.data);
-            if emit_terminal_data(
+            emit_terminal_data(
                 &session_loop.app,
                 &session_loop.session_id,
                 &mut session_loop.delivery,
                 payload.data,
                 payload.encoding,
                 Some(payload.raw_bytes),
-            ) {
-                send_startup_auth_payload(&session_loop.transport_tx, startup_auth_payload);
-                WorkerEventOutcome::Continue
-            } else {
-                WorkerEventOutcome::Stop
-            }
+            );
+            send_startup_auth_payload(&session_loop.transport_tx, startup_auth_payload);
+            WorkerEventOutcome::Continue
         }
         SessionWorkerEvent::Closed(reason) => {
             finish_session_worker(session_loop, SessionLifecycle::Closed, reason, true);
@@ -559,7 +552,7 @@ fn finish_session_worker(
     if close_transport {
         close_transport_silently(&session_loop.transport_tx);
     }
-    let _ = flush_terminal_output(
+    flush_terminal_output(
         &session_loop.app,
         &session_loop.session_id,
         session_loop.codec,
@@ -762,6 +755,11 @@ fn update_connection_status_after_session_end(
     if state.current_connection_open_scope(connection_id).is_some() {
         return;
     }
+    // Deep-link (transient) connections have no persisted profile; once their
+    // last session is gone, drop the resolved copy (it may hold inline
+    // passwords) instead of keeping it for the app's whole lifetime. This is
+    // a no-op for workspace profile connections.
+    state.forget_transient_connection(connection_id);
 
     let Some(protocol) = state
         .connection_runtime(connection_id)

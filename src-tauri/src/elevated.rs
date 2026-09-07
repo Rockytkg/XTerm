@@ -195,7 +195,7 @@ fn bind_one(spec: &BindSpec) -> std::io::Result<BoundSocket> {
     Ok(socket)
 }
 
-fn format_bind_error(addr: SocketAddr, error: &std::io::Error) -> String {
+pub(crate) fn format_bind_error(addr: SocketAddr, error: &std::io::Error) -> String {
     match error.kind() {
         std::io::ErrorKind::AddrInUse => {
             format!("Port {} is already in use on {}.", addr.port(), addr.ip())

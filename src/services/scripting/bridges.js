@@ -29,7 +29,7 @@ export function publishTerminalOutput(frontendSessionId, data) {
   try {
     getScriptBridge(frontendSessionId)?.notifyOutput(data);
   } catch (error) {
-    bridgeLogger.warn("script bridge output listener failed:", error);
+    bridgeLogger.warn("output.listener.failed", error);
   }
 }
 

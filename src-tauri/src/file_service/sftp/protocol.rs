@@ -24,6 +24,7 @@ use crate::{
             await_runtime_task, canonical_shared_dir, emit_file_transfer, parse_bind_address,
             validate_service_config, FileServiceConfig, TransferRegistry,
         },
+        password::passwords_equal,
     },
     logging,
     state::AppState,
@@ -244,7 +245,8 @@ impl server::Handler for SshSession {
         user: &str,
         password: &str,
     ) -> Result<server::Auth, Self::Error> {
-        if user == self.username && password == *self.password.read() {
+        let expected = self.password.read().clone();
+        if user == self.username && passwords_equal(password, &expected) {
             Ok(server::Auth::Accept)
         } else {
             // 审计拒绝事件：只记用户名与来源地址，绝不记口令。
@@ -530,6 +532,10 @@ impl Handler for SftpSession {
                 emit_file_transfer(&self.app, event);
             }
         }
+        // opendir handles live in `dirs`/`completed_dirs`; without removing
+        // them here they would accumulate for the lifetime of the connection.
+        self.dirs.remove(&handle);
+        self.completed_dirs.remove(&handle);
         Ok(Self::status(id, StatusCode::Ok, "Ok"))
     }
 
@@ -602,8 +608,12 @@ impl Handler for SftpSession {
 async fn load_or_create_host_keys(
     state: &AppState,
 ) -> Result<Vec<russh::keys::PrivateKey>, String> {
-    let path = state.paths().data_dir().join("sftp_host_key");
-    let rsa_path = state.paths().data_dir().join("sftp_host_key_rsa");
+    // Host keys are the server's stable device fingerprint: keep them in the
+    // startup data dir so hot-replaced path settings do not silently
+    // regenerate them (changing the fingerprint) before restart.
+    let data_dir = state.startup_paths().data_dir().to_path_buf();
+    let path = data_dir.join("sftp_host_key");
+    let rsa_path = data_dir.join("sftp_host_key_rsa");
     let mut keys = Vec::new();
     if let Ok(raw) = fs::read(&path).await {
         keys.push(
@@ -622,6 +632,7 @@ async fn load_or_create_host_keys(
         fs::write(&path, pem.as_bytes())
             .await
             .map_err(|error| format!("failed to persist SFTP host key: {error}"))?;
+        restrict_key_permissions(&path).await;
         keys.push(key);
     }
     if let Ok(raw) = fs::read(&rsa_path).await {
@@ -641,7 +652,27 @@ async fn load_or_create_host_keys(
         fs::write(&rsa_path, pem.as_bytes())
             .await
             .map_err(|error| format!("failed to persist RSA host key: {error}"))?;
+        restrict_key_permissions(&rsa_path).await;
         keys.push(key);
     }
     Ok(keys)
 }
+
+/// Host keys are private key material: on Unix they must not be readable by
+/// other users (`fs::write` creates them 0644). Failure is only logged —
+/// refusing to start over chmod would break hosts whose filesystem does not
+/// support Unix permissions.
+#[cfg(unix)]
+async fn restrict_key_permissions(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Err(error) = fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await {
+        logging::event("sftp.runtime", "sftp.host_key.permissions_failed")
+            .field("path", path.display().to_string())
+            .field("error", error.to_string())
+            .warn();
+    }
+}
+
+#[cfg(not(unix))]
+async fn restrict_key_permissions(_path: &std::path::Path) {}

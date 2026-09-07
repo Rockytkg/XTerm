@@ -106,22 +106,25 @@ fn decode(raw: &str) -> String {
     if !raw.contains('%') && !raw.contains('+') {
         return raw.to_owned();
     }
-    let mut out = String::with_capacity(raw.len());
-    let mut chars = raw.bytes();
-    while let Some(b) = chars.next() {
+    // Percent escapes are byte-level: decode into a byte buffer first and only
+    // then interpret it as UTF-8, so multi-byte sequences like %E4%B8%AD
+    // ("中") survive. Pushing each decoded byte as a `char` would mojibake it.
+    let mut out = Vec::with_capacity(raw.len());
+    let mut bytes = raw.bytes();
+    while let Some(b) = bytes.next() {
         match b {
             b'%' => {
-                let hi = chars.next().and_then(hex);
-                let lo = chars.next().and_then(hex);
+                let hi = bytes.next().and_then(hex);
+                let lo = bytes.next().and_then(hex);
                 if let (Some(hi), Some(lo)) = (hi, lo) {
-                    out.push((hi << 4 | lo) as char);
+                    out.push(hi << 4 | lo);
                 }
             }
-            b'+' => out.push(' '),
-            _ => out.push(b as char),
+            b'+' => out.push(b' '),
+            _ => out.push(b),
         }
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[inline]
@@ -264,4 +267,30 @@ fn format_endpoint_name(user: Option<&str>, host: &str, port: u16) -> String {
         None => host.to_string(),
     };
     format!("{authority}:{port}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode, parse_uri};
+
+    #[test]
+    fn percent_decoding_reassembles_multibyte_utf8() {
+        // Regression: decoding each escaped byte into its own `char` turned
+        // %E4%B8%AD into "ä¸­" instead of "中".
+        assert_eq!(decode("%E4%B8%AD"), "中");
+        assert_eq!(decode("user%40name"), "user@name");
+        assert_eq!(decode("a+b"), "a b");
+        assert_eq!(decode("plain"), "plain");
+        // Incomplete escapes are dropped; surrounding text survives.
+        assert_eq!(decode("a%2"), "a");
+    }
+
+    #[test]
+    fn parse_uri_decodes_non_ascii_user_and_password() {
+        let parsed = parse_uri("ssh://%E4%B8%AD:%E5%AF%86%E7%A0%81@example.com:2222").unwrap();
+        assert_eq!(parsed.user.as_deref(), Some("中"));
+        assert_eq!(parsed.password.as_deref(), Some("密码"));
+        assert_eq!(parsed.host, "example.com");
+        assert_eq!(parsed.port, 2222);
+    }
 }

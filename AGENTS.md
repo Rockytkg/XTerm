@@ -41,7 +41,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 - `pnpm lint`：ESLint（`--max-warnings=0`）+ Stylelint + `cargo clippy -- -D warnings`。
 - `pnpm format` / `pnpm format:check`：Prettier（js/scss）+ ESLint/Stylelint fix + `cargo fmt`。
 - `pnpm check`：`format:check` + `lint` + `test` 一键检查。
-- `pnpm tauri dev`：启动 Tauri 桌面开发环境（自动执行 `pnpm dev`）。
+- `pnpm tauri dev`（或 `pnpm tauri`）：启动 Tauri 桌面开发环境（自动执行 `pnpm dev`）。`tauri` 脚本以 `-- --` 结尾：pnpm 追加的多余参数（如 `pnpm tauri dev` 中的 `dev`）会落为应用参数而非 runner 参数——runner 参数会被 tauri CLI 插到 `cargo run` 之后、cargo flags 之前，导致后续 `--features` 等被 cargo 吞掉、编译失败。
 - `pnpm release`（即 `tauri build`）/ `pnpm release:debug`：构建生产/调试桌面包。
 - `cd src-tauri && cargo check`：快速检查 Rust 后端。
 

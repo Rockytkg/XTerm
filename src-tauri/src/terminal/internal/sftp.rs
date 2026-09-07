@@ -4,7 +4,10 @@ use std::{
     collections::HashMap,
     io::SeekFrom,
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, OnceLock,
+    },
     time::{Duration, Instant, UNIX_EPOCH},
 };
 
@@ -37,6 +40,9 @@ const SFTP_TRANSFER_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 static SFTP_TRANSFER_STORE: OnceLock<Mutex<SftpTransferStore>> = OnceLock::new();
 static SFTP_TRANSFER_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+/// Process-local monotonic sequence for transfer records; `transfer_id` is a
+/// random UUID and carries no ordering, so list sorting uses this instead.
+static SFTP_TRANSFER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn sftp_transfer_store() -> &'static Mutex<SftpTransferStore> {
     SFTP_TRANSFER_STORE.get_or_init(|| Mutex::new(SftpTransferStore::default()))
@@ -70,6 +76,16 @@ impl SftpTransferControl {
         let mut state = self.state.lock().await;
         if matches!(*state, SftpTransferRuntimeState::Running) {
             *state = SftpTransferRuntimeState::PauseRequested;
+        }
+    }
+
+    /// Undo a pending pause before the transfer task reaches its next
+    /// checkpoint; once the task has already observed the pause and exited,
+    /// the registry no longer holds this control and resume respawns instead.
+    async fn cancel_pause(&self) {
+        let mut state = self.state.lock().await;
+        if matches!(*state, SftpTransferRuntimeState::PauseRequested) {
+            *state = SftpTransferRuntimeState::Running;
         }
     }
 
@@ -178,6 +194,7 @@ impl SftpTransferStatus {
 #[derive(Clone, Debug)]
 struct SftpTransferRecord {
     transfer_id: String,
+    sequence: u64,
     connection_id: String,
     session_id: String,
     direction: SftpTransferDirection,
@@ -305,16 +322,18 @@ impl SftpTransferStore {
     }
 
     fn list(&self, connection_id: &str, session_id: &str) -> Vec<SftpTransferItem> {
-        let mut items: Vec<_> = self
+        let mut entries: Vec<_> = self
             .entries
             .values()
             .filter(|entry| {
                 entry.record.connection_id == connection_id && entry.record.session_id == session_id
             })
-            .map(|entry| entry.record.to_item(entry.control.is_some()))
             .collect();
-        items.sort_by(|a, b| b.transfer_id.cmp(&a.transfer_id));
-        items
+        entries.sort_by(|a, b| b.record.sequence.cmp(&a.record.sequence));
+        entries
+            .into_iter()
+            .map(|entry| entry.record.to_item(entry.control.is_some()))
+            .collect()
     }
 
     fn controls_for_session(&self, session_id: &str) -> Vec<Arc<SftpTransferControl>> {
@@ -448,7 +467,12 @@ pub(super) async fn resume_sftp_transfer_task(
     _state: &AppState,
     transfer_id: &str,
 ) -> Result<(), String> {
-    if sftp_transfer_store().lock().control(transfer_id).is_ok() {
+    let running_control = sftp_transfer_store().lock().control(transfer_id).ok();
+    if let Some(control) = running_control {
+        // The task is still alive: a pause may have been requested but not yet
+        // observed at the next chunk checkpoint. Flip it back to running so the
+        // resume click is not swallowed while the task drains its current chunk.
+        control.cancel_pause().await;
         return Ok(());
     }
     let mut record = sftp_transfer_store().lock().record(transfer_id)?;
@@ -577,6 +601,7 @@ async fn prepare_sftp_transfer_record(
             .transfer_id
             .clone()
             .unwrap_or_else(crate::ids::new_id),
+        sequence: SFTP_TRANSFER_SEQUENCE.fetch_add(1, Ordering::Relaxed),
         connection_id: request.connection_id.clone(),
         session_id: request.session_id.clone(),
         direction,

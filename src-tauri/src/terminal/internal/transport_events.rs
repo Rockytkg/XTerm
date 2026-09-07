@@ -41,9 +41,11 @@ pub(super) fn resolve_unsupported_transport_capability(
 ) -> Result<TransportCommandOutcome, String> {
     match command {
         TransportCapabilityCommand::RedetectSerialBaud { reply, .. } => {
-            let _ = reply.send(Err(
-                "serial baud redetect is only supported for serial sessions".to_string(),
-            ));
+            let _ = reply.send(Err(super::core::ConnectionError::new(
+                "unsupported_capability",
+                "serial baud redetect is only supported for serial sessions",
+                false,
+            )));
             Ok(TransportCommandOutcome::Continue)
         }
     }

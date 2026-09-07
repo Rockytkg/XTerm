@@ -120,7 +120,7 @@ pub(crate) async fn start_runtime(
 }
 
 pub(crate) async fn stop_runtime<R: tauri::Runtime>(
-    app: &AppHandle<R>,
+    _app: &AppHandle<R>,
     runtime: TftpRuntimeHandle,
     port: u16,
 ) -> Result<(), String> {
@@ -128,7 +128,7 @@ pub(crate) async fn stop_runtime<R: tauri::Runtime>(
     for task in runtime.accept_tasks {
         await_runtime_task("tftp.accept", task).await;
     }
-    firewall::remove_tftp_port_rule(app, port)
+    firewall::remove_tftp_port_rule(port)
         .await
         .map_err(|error| error.user_message.clone())?;
     Ok(())

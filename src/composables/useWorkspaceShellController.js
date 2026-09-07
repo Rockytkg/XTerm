@@ -275,6 +275,8 @@ export function useWorkspaceShellController({
   }
 
   function redetectActiveSerialBaud() {
+    // 已有待确认的检测：再次触发会覆盖 pending 记录，使旧 loading toast 悬挂到兜底超时。
+    if (pendingSerialRedetect.value) return;
     const connectionId = activeConnectionInfo.value?.connectionId || activeConnection.value;
     const started = reconnectSerialAutoBaud(connectionId);
     if (!started) {

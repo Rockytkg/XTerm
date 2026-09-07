@@ -177,10 +177,11 @@ async function hydratePreferences() {
     logger.error("hydrate.failed", error);
     throw error;
   }
+  saved = saved || {};
   delete saved.terminalInitialCols;
   delete saved.terminalInitialRows;
   delete saved.terminalFontScale;
-  const normalized = { ...(saved || {}) };
+  const normalized = { ...saved };
   preferencesLoaded = false;
   preferenceWatchersPaused = true;
   try {

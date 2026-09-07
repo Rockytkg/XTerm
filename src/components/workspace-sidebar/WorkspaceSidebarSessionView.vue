@@ -90,12 +90,16 @@ function handleEncodingChange(value) {
   void persistProfileField("encoding", normalized);
   if (backendSessionId.value) {
     const channelId = sessionRegistry.getActiveSessionChannelId(frontendSessionId.value);
-    setBackendEncodingDetection({
-      sessionId: backendSessionId.value,
-      channelId,
-      enabled: !normalized,
-      encoding: normalized || null,
-    }).catch((error) => logger.warn("sidebar-session.encoding-detection.update.failed", error));
+    // 后台挂起的会话 channel 已清空（channelId 为 null），按 channel 的命令无从投递；
+    // profile 字段已持久化，会话恢复前台时按最新 profile 生效。
+    if (channelId != null) {
+      setBackendEncodingDetection({
+        sessionId: backendSessionId.value,
+        channelId,
+        enabled: !normalized,
+        encoding: normalized || null,
+      }).catch((error) => logger.warn("sidebar-session.encoding-detection.update.failed", error));
+    }
   }
 }
 

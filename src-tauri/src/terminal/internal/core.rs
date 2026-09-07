@@ -64,8 +64,7 @@ pub(super) const WRITE_STALL_TIMEOUT: Duration = Duration::from_secs(8);
 
 pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
 
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, Default)]
 pub struct ConnectionOpenRequest {
     pub(crate) connection_id: String,
     pub(crate) open_request_id: Option<String>,
@@ -694,7 +693,7 @@ pub(super) type SessionTransport = Box<dyn SessionTransportRuntime>;
 
 pub(crate) enum SessionCapabilityCommand {
     RedetectSerialBaud {
-        reply: tokio::sync::oneshot::Sender<Result<SerialRedetectResult, String>>,
+        reply: tokio::sync::oneshot::Sender<Result<SerialRedetectResult, ConnectionError>>,
     },
 }
 
@@ -724,7 +723,7 @@ pub(super) enum TransportCommandOutcome {
 pub(super) enum TransportCapabilityCommand {
     RedetectSerialBaud {
         encoding: Option<String>,
-        reply: tokio::sync::oneshot::Sender<Result<SerialRedetectResult, String>>,
+        reply: tokio::sync::oneshot::Sender<Result<SerialRedetectResult, ConnectionError>>,
     },
 }
 
@@ -939,9 +938,14 @@ impl ResolvedConnection {
         self.trust_host_key = request.trust_host_key;
         self.accept_host_key_once = request.accept_host_key_once;
         self.terminal_scrollback = request.terminal_scrollback;
-        self.terminal_type = request.terminal_type;
-        self.encoding = request.encoding;
-        self.realtime_encoding_detection = request.realtime_encoding_detection;
+        // None means "not specified by this request" (e.g. authenticate replay
+        // carries no terminal parameters); keep the transient connection's
+        // original values instead of silently discarding them.
+        self.terminal_type = request.terminal_type.or(self.terminal_type);
+        self.encoding = request.encoding.or(self.encoding);
+        self.realtime_encoding_detection = request
+            .realtime_encoding_detection
+            .or(self.realtime_encoding_detection);
         self.cols = request.cols;
         self.rows = request.rows;
         self.apply_ssh_credential_override(request.ssh_credential);

@@ -49,7 +49,7 @@ function appendRunLog(run, ...args) {
 
 function errorMessage(error) {
   if (error instanceof Error) return error.message || error.name;
-  return String(error || "Unknown script error");
+  return String(error || i18n.global.t("scripts.errors.unknownError"));
 }
 
 /**
@@ -100,13 +100,13 @@ export async function runScript(script, context) {
       try {
         await cleanup();
       } catch (cleanupError) {
-        runnerLogger.warn("script cleanup failed:", cleanupError);
+        runnerLogger.warn("run.cleanup.failed", cleanupError);
       }
     }
   };
 
   if (!run.targetSessionId || !getScriptBridge(run.targetSessionId)) {
-    await finish(SCRIPT_RUN_STATUS.ERROR, "target session is not available");
+    await finish(SCRIPT_RUN_STATUS.ERROR, i18n.global.t("scripts.errors.targetUnavailable"));
     return run;
   }
 
@@ -125,7 +125,7 @@ export async function runScript(script, context) {
       trackTask: runtime.trackTask,
       log,
     });
-    runnerLogger.info("script started", { script: run.scriptName, target: run.targetLabel });
+    runnerLogger.info("run.started", { script: run.scriptName, target: run.targetLabel });
 
     const host = createScriptExecutorHost({
       code: script?.code || "",
@@ -152,7 +152,7 @@ export async function runScript(script, context) {
     ) {
       await finish(SCRIPT_RUN_STATUS.STOPPED);
     } else {
-      runnerLogger.warn("script failed:", error);
+      runnerLogger.warn("run.failed", error);
       await finish(SCRIPT_RUN_STATUS.ERROR, errorMessage(error));
     }
   }
@@ -160,8 +160,12 @@ export async function runScript(script, context) {
 }
 
 export function stopScript(runId) {
-  const run = scriptRuns.value.find((item) => item.runId === runId) || null;
-  if (!run || run.status !== SCRIPT_RUN_STATUS.RUNNING) return false;
-  runControls.get(runId)?.stop();
+  // 停止句柄以 runControls 为准：运行记录被 MAX_RUN_HISTORY 截断挤出列表后，
+  // 仍在运行的脚本必须仍可停止。
+  const control = runControls.get(runId);
+  if (!control) return false;
+  const run = scriptRuns.value.find((item) => item.runId === runId);
+  if (run && run.status !== SCRIPT_RUN_STATUS.RUNNING) return false;
+  control.stop();
   return true;
 }

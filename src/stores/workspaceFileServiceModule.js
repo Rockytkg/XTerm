@@ -124,11 +124,9 @@ export function createWorkspaceFileServiceModule({ fileServiceConfig, fileServic
   }
 
   function updateFileServicePassword(password) {
-    // file_service_set_password 返回 void：提交后重新拉取快照以刷新 passwordSet。
-    return mutateFileService(async () => {
-      await setFileServicePassword(password);
-      return getFileServiceConfig();
-    });
+    // file_service_set_password 直接返回 FileServicePublicConfig 快照（含 passwordSet），
+    // 与 mutateFileService 的其他操作一样无需再拉取。
+    return mutateFileService(() => setFileServicePassword(password));
   }
 
   function applyTransfer(payload) {

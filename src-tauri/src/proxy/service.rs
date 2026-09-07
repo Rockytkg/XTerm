@@ -35,14 +35,20 @@ impl<'a> ProxyService<'a> {
     }
 
     pub(crate) async fn start(&self, port: u16, bind_ip: String) -> Result<ProxyConfig, String> {
+        let operation_lock = self.state.proxy_operation_lock();
+        let _guard = operation_lock.lock().await;
         self.apply(port, bind_ip).await
     }
 
     pub(crate) async fn stop(&self) -> Result<ProxyConfig, String> {
+        let operation_lock = self.state.proxy_operation_lock();
+        let _guard = operation_lock.lock().await;
         self.stop_runtime().await
     }
 
     pub(crate) async fn update_port(&self, new_port: u16) -> Result<ProxyConfig, String> {
+        let operation_lock = self.state.proxy_operation_lock();
+        let _guard = operation_lock.lock().await;
         validate_port(new_port)?;
         let (bind_ip, was_running, old_port) = {
             let manager = self.state.proxy();
@@ -72,6 +78,8 @@ impl<'a> ProxyService<'a> {
     }
 
     pub(crate) async fn update_bind_ip(&self, bind_ip: String) -> Result<ProxyConfig, String> {
+        let operation_lock = self.state.proxy_operation_lock();
+        let _guard = operation_lock.lock().await;
         validate_bind_ip(&bind_ip)?;
         self.persist_settings(None, Some(&bind_ip))?;
 

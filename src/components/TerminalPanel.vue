@@ -277,7 +277,8 @@ const {
 
 const terminalDragDrop = useTerminalDragDrop({
   logger,
-  shouldListen: () => props.transferDragUpload && props.terminalTrzsz,
+  shouldListen: () =>
+    props.transferDragUpload && props.terminalTrzsz && isForegroundRuntime(),
   handleDrop: (paths) => {
     trzszAddon?.uploadPaths?.(paths).catch((error) => {
       logger.warn("trzsz.drag_upload.failed", error);
@@ -863,9 +864,10 @@ watch(
   },
 );
 
-// shouldListen 只在 attach 时判断一次，运行中切换该偏好需要立即摘挂拖放监听
+// shouldListen 由 transferDragUpload、terminalTrzsz 与前台状态共同决定：运行中切换任一
+// 偏好需要立即摘挂拖放监听；前后台切换由 syncTerminalRuntimeResources 统一处理
 watch(
-  () => props.transferDragUpload,
+  () => props.transferDragUpload && props.terminalTrzsz,
   (enabled) => {
     if (enabled) {
       void terminalDragDrop.attachDragDropListener();
@@ -980,8 +982,12 @@ function syncTerminalRuntimeResources() {
   backgroundSuspender.sync(isForegroundRuntime());
   if (isForegroundRuntime()) {
     frameIntervalSampler.start();
+    // 仅前台面板挂窗口级拖放监听：后台面板attach 会被 shouldListen 拦截（幂等）
+    void terminalDragDrop.attachDragDropListener();
   } else {
     frameIntervalSampler.stop();
+    // 后台面板摘掉窗口级拖放监听，避免 N 个会话每个 drop 都被唤醒
+    terminalDragDrop.detachDragDropListener();
   }
   terminalResizeAddon.observe();
   sessionRuntimeController.syncRuntimeResources();

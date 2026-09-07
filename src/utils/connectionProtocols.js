@@ -59,10 +59,10 @@ function protocolDisplayName(protocol) {
 export function connectionEndpointLabel(connection) {
   const protocol = normalizeConnectionProtocol(connection?.protocol);
   if (protocol === CONNECTION_PROTOCOL.SERIAL) {
-    return `${connection?.serialPort || connection?.port || "-"}:${connection?.baudRate || "auto"}`;
+    return `${connection?.serialPort || "-"}:${connection?.baudRate || "auto"}`;
   }
 
-  const host = connection?.host || connection?.port || "-";
+  const host = connection?.host || connection?.name || "-";
   const user = connection?.user ? `${connection.user}@` : "";
   const port = connection?.port ? `:${connection.port}` : "";
   return `${user}${host}${port}`;

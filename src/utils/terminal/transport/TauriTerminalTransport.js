@@ -166,6 +166,8 @@ class TauriTerminalTransport {
   sendBatch(frames) {
     const normalized = (Array.isArray(frames) ? frames : []).filter(Boolean);
     if (!normalized.length) return Promise.resolve();
+    // 热路径有意使用裸 invoke：终端输入/输出帧频率高，invokeDetailedIpc 的
+    // 逐条日志开销不可忽略；失败由 flushQueuedBatch 统一 warn
     return invoke("terminal_send_batch", { frames: normalized });
   }
 

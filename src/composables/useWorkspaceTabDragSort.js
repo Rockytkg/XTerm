@@ -2,6 +2,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Sortable from "sortablejs";
 import { createSortableCleanup } from "../utils/sortableCleanup";
 import { sortableMotion } from "../utils/motion";
+import { sameOrder } from "../utils/listOrder";
 
 const SELECTION_SUPPRESS_MS = 180;
 const TAB_ORDER_SEPARATOR = "\u001f";
@@ -11,10 +12,6 @@ const SORTABLE_STATE_CLASSES = [
   "ui-session-tab-sortable-drag",
   "ui-session-tab-sortable-fallback",
 ];
-
-function ordersMatch(a, b) {
-  return a.length === b.length && a.every((id, index) => id === b[index]);
-}
 
 function elementFromRef(templateRef) {
   const value = templateRef.value;
@@ -59,7 +56,7 @@ export function useWorkspaceTabDragSort({ getTabIds, onReorder }) {
     const ids = currentTabIds();
     const domOrder = sortable.toArray().filter(Boolean);
     sortable.option("disabled", ids.length < 1);
-    if (!ordersMatch(domOrder, ids)) {
+    if (!sameOrder(domOrder, ids)) {
       sortable.sort(ids, false);
     }
   }
@@ -99,7 +96,7 @@ export function useWorkspaceTabDragSort({ getTabIds, onReorder }) {
         sortableCleanup.resetSortableState();
         suppressUpcomingSelection();
 
-        if (!ordersMatch(nextOrder, currentTabIds())) {
+        if (!sameOrder(nextOrder, currentTabIds())) {
           onReorder(nextOrder);
         }
 

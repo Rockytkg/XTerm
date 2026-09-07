@@ -7,8 +7,8 @@ import { ToggleGroupItem, ToggleGroupRoot } from "reka-ui";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useScriptsStore } from "../../stores/scriptsStore";
 import { languageOptions } from "../../i18n";
-import { invokeIpc } from "../../services/ipc/core";
 import { getLogLevel, setLogLevel } from "../../services/logging";
+import { openDevTools } from "../../services/system";
 import { useToasts } from "../../composables/useToasts";
 // Per-view import: this component renders independently from other consumers of this stylesheet.
 import "../../styles/settings-tab-switcher.scss";
@@ -115,7 +115,7 @@ async function commitProxyPort() {
 }
 
 function openDeveloperTools() {
-  invokeIpc("open_devtools").catch((error) => {
+  openDevTools().catch((error) => {
     logger.error("devtools.open.failed", error);
   });
 }

@@ -10,6 +10,20 @@ pub struct AppPaths {
     pub(super) log_dir: PathBuf,
 }
 
+#[cfg(test)]
+impl AppPaths {
+    /// Synthetic paths rooted at a throwaway directory, for tests that need
+    /// an `AppState` without touching real user directories.
+    pub(crate) fn for_tests(root: PathBuf) -> Self {
+        Self {
+            install_dir: root.clone(),
+            base_dir: root.clone(),
+            data_dir: root.join("data"),
+            log_dir: root.join("logs"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathSettings {

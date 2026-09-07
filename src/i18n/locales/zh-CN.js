@@ -54,8 +54,6 @@ export default {
     title: "创建连接",
     titleEdit: "编辑连接",
     description: "配置 SSH、Telnet 或串口连接。",
-    credentialLinked: "已关联凭证",
-    clearCredential: "改为手动输入",
     auto: "自动",
     noPasswordCredentials: "暂无已保存的密码凭证。",
     refreshSerialPorts: "刷新串口列表",
@@ -135,7 +133,6 @@ export default {
       hostInvalid: "主机地址不能包含空格。",
       portInvalid: "端口必须是 1 到 65535 之间的整数。",
       userRequired: "请输入 SSH 用户名。",
-      passwordRequired: "请选择已保存凭证或输入密码。",
       keyRequired: "请选择已保存凭证或提供私钥内容。",
       credentialNotFound: "已关联的凭证不存在或不适用于当前协议。",
       jumpHostsRequired: "请填写至少一个跳板机主机，或移除空白节点。",
@@ -173,8 +170,6 @@ export default {
     missingDescription: "请输入用于连接 {target} 的 SSH 凭证。未保存的凭证仅用于本次连接。",
     rejectedDescription:
       "当前 SSH 凭证未通过 {target} 认证。请更新凭证，或选择其他处理方式后重新连接。",
-    saveAndLink: "保存凭证并关联至此 SSH 连接",
-    saveAsNewAndLink: "保存为新凭证并关联至此 SSH 连接",
     connectOnce: "仅本次连接",
     saveConnect: "保存并连接",
     updateConnect: "更新凭证并连接",
@@ -196,7 +191,6 @@ export default {
     terminal: "终端",
     sftp: "SFTP 文件管理",
     settings: "设置",
-    credentialGraph: "引用关系图",
     keys: "凭证管理",
     scripts: "脚本",
     collapse: "收起",
@@ -235,10 +229,6 @@ export default {
     formatNoChanges: "代码已是规范格式，无需修改",
     formatFailed: "格式化失败",
     syntaxError: "JavaScript 语法错误",
-    meta: {
-      created: "创建时间",
-      updated: "最后更新",
-    },
     fields: {
       name: "脚本名",
       author: "作者",
@@ -264,6 +254,9 @@ export default {
       waitTimeout: "等待输出超时（{timeout}ms）：{pattern}",
       blockedApi:
         "脚本沙盒已禁用“{api}”：网络、本地存储与系统资源只能通过会请求用户授权的 xterm.* 专用函数访问",
+      targetUnavailable: "目标会话不可用（可能已关闭或断连）",
+      recordingUnavailable: "会话录音不可用（可能已关闭或断连）",
+      unknownError: "未知脚本错误",
     },
     validation: {
       required: "该项为必填项",
@@ -291,17 +284,11 @@ export default {
       stopHint: "点击中断脚本运行",
       running: "运行中 · 点击中断",
     },
-    stopConfirm: {
-      title: "中断脚本运行？",
-      description: "脚本“{name}”正在运行，确定要中断吗？",
-      confirm: "中断运行",
-    },
   },
   overview: {
     section: "会话",
     session: {
       title: "会话偏好",
-      latency: "延迟",
       path: "工作目录",
       baudRate: "波特率",
       terminalType: "终端类型",
@@ -705,6 +692,7 @@ export default {
   },
   notifications: {
     connectionDeleted: "连接配置已删除",
+    connectionDeleteFailed: "连接配置删除失败",
     connectionOrderSaveFailed: "连接排序保存失败",
     connectionSaved: "连接配置已保存",
     connectionSaveFailed: "连接配置保存失败",
@@ -739,6 +727,8 @@ export default {
     highlightSchemeCreated: "高亮方案已创建：{name}",
     highlightSchemeDeleted: "已删除高亮方案：{name}",
     highlightSchemeDeleteFailed: "高亮方案删除失败",
+    highlightRuleDeleted: "已删除高亮规则",
+    highlightRuleDeleteFailed: "高亮规则删除失败",
     highlightSchemesImported: "高亮方案已导入",
     highlightSchemesImportFailed: "高亮方案导入失败",
     highlightSchemesExported: "高亮方案已导出",
@@ -822,7 +812,6 @@ export default {
     upload: "上传文件",
     download: "下载",
     remotePath: "远程路径",
-    remote: "远程",
     transferQueue: "传输队列",
     transferDone: "完成",
     pauseTransfer: "暂停传输",
@@ -865,10 +854,8 @@ export default {
     deleteTitle: "删除项目",
     deleteFileTitle: "删除文件",
     deleteFolderTitle: "删除目录",
-    deleteOneMessage: "确定删除“{name}”？此操作不可撤销。",
     deleteOneFileMessage: "确定删除文件“{name}”？此操作不可撤销。",
     deleteOneFolderMessage: "确定删除目录“{name}”？目录中的内容也会被删除，此操作不可撤销。",
-    deleteManyMessage: "确定删除 {count} 个项目？此操作不可撤销。",
     deleteManyTypedMessage:
       "将删除 {count} 个项目，其中包含 {files} 个文件、{folders} 个目录。此操作不可撤销。",
     deleteAction: "删除",
@@ -954,6 +941,7 @@ export default {
     jump_host_missing_username: "跳板机 '{host}' 缺少 SSH 用户名。",
     jump_host_not_found: "跳板机连接 '{connectionId}' 不存在。",
     jump_host_not_ssh: "跳板机连接 '{name}' 不是 SSH 连接配置。",
+    jump_host_protocol_invalid: "跳板机连接 '{name}' 的协议不受支持。",
     jump_host_reference_loop: "跳板机链路存在循环引用：{chain} -> {connectionId}",
     jump_host_required: "跳板机链路为空，请至少配置一个跳板机。",
     protocol_error: "协议握手失败，目标服务未按预期响应。",
@@ -999,6 +987,7 @@ export default {
     telnet_startup_write_failed: "向 {host}:{port} 发送 Telnet 启动协商数据失败。",
     telnet_stream_setup_failed: "配置 Telnet TCP 连接失败。",
     unknown: "未知连接错误，请查看日志获取诊断信息。",
+    unsupported_capability: "当前会话不支持该能力。",
     unsupported_connection_protocol: "当前连接协议不受支持：{protocol}",
     validation_error: "连接配置无效，请检查必填项和参数格式。",
   },
@@ -1018,14 +1007,6 @@ export default {
     credTypes: {
       password: "密码",
       key: "SSH 密钥",
-    },
-    addTypes: {
-      password: "添加密码凭证",
-      key: "添加 SSH 密钥",
-    },
-    stats: {
-      total: "总数",
-      unused: "未使用",
     },
     cleanup: {
       action: "清理未使用凭证",
@@ -1053,28 +1034,9 @@ export default {
       usedCount: "{count} 个引用",
       unused: "未使用",
     },
-    graph: {
-      title: "凭证引用关系",
-      root: "凭证",
-      emptyType: "暂无此类凭证",
-      usedBy: "引用",
-      unused: "未被引用",
-      zoomIn: "放大",
-      zoomOut: "缩小",
-      resetView: "重置视图",
-    },
     relations: {
       connection: "连接",
       jumpHost: "跳板机",
-    },
-    deleteConfirm: {
-      title: "删除凭证？",
-      description: "将永久删除“{name}”。如果已有连接正在使用该凭证，系统会阻止删除。",
-      confirm: "确认删除",
-    },
-    errors: {
-      usedBy: "该凭证正被以下连接使用：{names}",
-      notFound: "凭证不存在或已被删除。",
     },
     fields: {
       name: "名称",
@@ -1096,7 +1058,6 @@ export default {
   },
   relationshipGraph: {
     empty: "暂无可展示的引用关系。",
-    searchPlaceholder: "搜索当前视图节点",
     views: {
       credential: "凭证引用关系",
     },
@@ -1118,14 +1079,12 @@ export default {
     actions: {
       zoomIn: "放大",
       zoomOut: "缩小",
-      resetView: "重置视图",
       refresh: "刷新",
       refreshAndReset: "刷新并重置视图",
       stabilize: "重新布局",
       relationMode: "关系编辑",
     },
     menu: {
-      viewDetails: "查看详情",
       edit: "编辑",
       focusRelated: "聚焦关联节点",
       quickAddRelation: "添加关联",
@@ -1155,13 +1114,7 @@ export default {
         confirm: "继续删除",
       },
     },
-    detail: {
-      type: "类型",
-      endpoint: "端点",
-      status: "状态",
-    },
     toast: {
-      openCredentialEditor: "已打开凭证管理，可编辑对应凭证。",
       openRelationEditor: "已打开关联配置入口。",
       invalidRelation: "当前视图不支持此类关系。",
       relationUpdated: "关系已更新",

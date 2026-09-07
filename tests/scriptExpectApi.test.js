@@ -223,6 +223,61 @@ test("expectAny rejects an empty or invalid pattern list", async () => {
   assert.match(run.error, /strings or RegExps/);
 });
 
+test("waitForAny preserves per-pattern RegExp flags", async () => {
+  setup();
+  const runPromise = runScript(
+    {
+      id: "e8b",
+      name: "wait-any-flags",
+      code: `
+        const hit = await xterm.waitForAny(["prompt>", /error:\\s*(\\w+)/i], 2000);
+        xterm.log(hit);
+      `,
+    },
+    testContext(),
+  );
+  await settle();
+  // 仅小写 "error" 模式带 i flag：合并正则丢 flags 时这里会超时而非命中。
+  publishTerminalOutput(TARGET, "ERROR: Timeout");
+  const run = await runPromise;
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.equal(run.logs[0].text, "ERROR: Timeout");
+});
+
+test("waitForAny picks the earliest match among mixed string/RegExp patterns", async () => {
+  setup();
+  const runPromise = runScript(
+    {
+      id: "e8c",
+      name: "wait-any-order",
+      code: `const hit = await xterm.waitForAny(["beta", /a/], 2000); xterm.log(hit);`,
+    },
+    testContext(),
+  );
+  await settle();
+  publishTerminalOutput(TARGET, "xxbeta-alpha");
+  const run = await runPromise;
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.equal(run.logs[0].text, "beta");
+});
+
+test("waitForAny rejects an empty or invalid pattern list", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "e8d",
+      name: "wait-any-invalid",
+      code: `await xterm.waitForAny(["ok", 42]);`,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
+  assert.match(run.error, /strings or RegExps/);
+});
+
 test("press maps named keys and ctrl combinations to control sequences", async () => {
   setup();
   const run = await runScript(

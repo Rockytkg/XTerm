@@ -2,6 +2,7 @@ import { nextTick, ref, watch } from "vue";
 import Sortable from "sortablejs";
 import { sortableMotion } from "../utils/motion";
 import { createSortableCleanup } from "../utils/sortableCleanup";
+import { sameOrder } from "../utils/listOrder";
 
 const ORDER_SEPARATOR = "\u001f";
 const SORTABLE_STATE_CLASSES = [
@@ -10,10 +11,6 @@ const SORTABLE_STATE_CLASSES = [
   "session-card-sortable-drag",
   "session-card-sortable-fallback",
 ];
-
-function sameOrder(a, b) {
-  return a.length === b.length && a.every((id, index) => id === b[index]);
-}
 
 // 卡片列表拖拽排序的共享骨架：Sortable 实例生命周期、DOM 顺序与数据顺序同步、
 // 拖拽释放后的状态类清理。各视图的差异（id 来源、拖拽选项、持久化回调）

@@ -169,7 +169,7 @@ impl ConnectionApplicationService {
                     .field("port", port)
                     .field("algorithm", &algorithm)
                     .warn();
-                emit_connection_host_key_challenge(
+                if let Err(error) = emit_connection_host_key_challenge(
                     &app,
                     ConnectionHostKeyChallengePayload {
                         connection_id: resolved.id.clone(),
@@ -179,7 +179,29 @@ impl ConnectionApplicationService {
                         algorithm,
                         fingerprint,
                     },
-                )?;
+                ) {
+                    // The frontend never saw the challenge, so it can neither
+                    // answer the pending connection nor recover the open
+                    // attempt: tear it down like a cancelled open instead of
+                    // leaking the open scope and parking the runtime state on
+                    // "connecting" forever.
+                    protocol_registry().discard_pending_connections(&resolved.id);
+                    set_connection_state(
+                        state,
+                        &resolved.id,
+                        protocol,
+                        ConnectionStatus::Failed,
+                        Some(error.clone()),
+                    );
+                    if let Some(scope) = open_scope.as_ref() {
+                        state.finish_connection_open(open_request_id, scope);
+                    }
+                    log.clone()
+                        .field("result", "host_key_challenge_emit_failed")
+                        .field("error", &error)
+                        .error();
+                    return Err(TerminalApiError::from(error));
+                }
                 Ok(ConnectionOpenResponse::HostKeyChallenge {
                     awaiting: "hostKeyChallenge",
                     connection_id: resolved.id,
@@ -270,55 +292,6 @@ impl ConnectionApplicationService {
             resolve_connection_request(state, open_request).map_err(TerminalApiError::from)?;
         self.connect(app, state, resolved.with_open_scope(open_scope), log)
             .await
-    }
-
-    pub(crate) fn close(
-        &self,
-        _app: AppHandle,
-        state: &AppState,
-        connection_id: &str,
-    ) -> Result<(), TerminalApiError> {
-        let log = logging::event("terminal.connection_service", "connection.close")
-            .field("connection_id", connection_id);
-        let protocol = state
-            .connection_runtime(connection_id)
-            .and_then(|runtime| ProtocolKind::from_str(&runtime.protocol));
-        if let Some(protocol) = protocol {
-            log.clone().field("protocol", protocol.as_str()).info();
-        } else {
-            log.clone().info();
-        }
-
-        state.forget_transient_connection(connection_id);
-        state.cancel_connection_open(connection_id);
-        protocol_registry().discard_pending_connections(connection_id);
-        if let Some(protocol) = protocol {
-            set_connection_state(
-                state,
-                connection_id,
-                protocol,
-                ConnectionStatus::Disconnecting,
-                None,
-            );
-        }
-        let session_ids = state.session_ids_for_connection(connection_id);
-        for sid in &session_ids {
-            log.clone().field("session_id", sid).debug();
-            let _ = session_service().close(state, sid)?;
-            state.remove_terminal_output_channels(sid);
-        }
-        if session_ids.is_empty() {
-            if let Some(protocol) = protocol {
-                set_connection_state(
-                    state,
-                    connection_id,
-                    protocol,
-                    ConnectionStatus::Disconnected,
-                    None,
-                );
-            }
-        }
-        Ok(())
     }
 
     pub(crate) async fn start_metrics(

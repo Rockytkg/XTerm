@@ -18,9 +18,10 @@ use crate::{
         manager::SharedPassword,
         models::{
             await_runtime_task, canonical_shared_dir, emit_file_service_config, emit_file_transfer,
-            validate_service_config, FileServiceConfig, TransferRegistry, DEFAULT_FTP_PASSIVE_END,
-            DEFAULT_FTP_PASSIVE_START,
+            parse_bind_address, validate_service_config, FileServiceConfig, TransferRegistry,
+            DEFAULT_FTP_PASSIVE_END, DEFAULT_FTP_PASSIVE_START,
         },
+        password::passwords_equal,
     },
     logging,
 };
@@ -67,21 +68,6 @@ impl Authenticator for PasswordAuthenticator {
     }
 }
 
-/// 恒定时间比较，避免口令校验在首个不匹配字节处提前返回而泄露时序信息。
-/// 长度不等时直接失败（长度本身不视为秘密）。
-fn passwords_equal(provided: &str, expected: &str) -> bool {
-    let provided = provided.as_bytes();
-    let expected = expected.as_bytes();
-    if provided.len() != expected.len() {
-        return false;
-    }
-    provided
-        .iter()
-        .zip(expected.iter())
-        .fold(0u8, |diff, (a, b)| diff | (a ^ b))
-        == 0
-}
-
 #[derive(Debug)]
 struct TransferListener {
     app: AppHandle,
@@ -119,7 +105,13 @@ pub(crate) async fn start_runtime(
     validate_service_config("FTP", config)?;
     let root = canonical_shared_dir("FTP", &config.shared_dir).await?;
     let passive_ports = DEFAULT_FTP_PASSIVE_START..=DEFAULT_FTP_PASSIVE_END;
-    let bind_addr = format!("{}:{}", config.bind_ip, config.port);
+    let bind_addr = parse_bind_address("FTP", &config.bind_ip, config.port)?;
+    // libunftp 只接受地址字符串并自行 bind，无法注入预绑定 socket，因此 Linux 下
+    // 特权端口（21）无法复用 pkexec bind helper。先同步探测 bind，让 EADDRINUSE/
+    // EACCES 立即返回，而不是在 accept task 内失败后才靠事件向前端纠正状态。
+    std::net::TcpListener::bind(bind_addr)
+        .map_err(|error| crate::elevated::format_bind_error(bind_addr, &error))?;
+    // 探测 socket 随语句结束立即释放，真正的监听仍由 libunftp 在 accept task 内完成。
     // libunftp 直接监听真实地址，确保主动模式下控制连接和数据连接看到
     // 相同的远端 IP。防火墙规则独立管理，不再引入会丢失对端地址的代理。
     let firewall_ports = std::iter::once(config.port)
@@ -168,7 +160,7 @@ pub(crate) async fn start_runtime(
         .build();
         let result = match server {
             Ok(server) => server
-                .listen(bind_addr)
+                .listen(bind_addr.to_string())
                 .await
                 .map_err(|error| error.to_string()),
             Err(error) => Err(error.to_string()),
@@ -206,17 +198,4 @@ pub(crate) async fn stop_runtime(runtime: FtpRuntimeHandle, port: u16) -> Result
         .field("port", port)
         .info();
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::passwords_equal;
-
-    #[test]
-    fn password_comparison_matches_only_identical_passwords() {
-        assert!(passwords_equal("s3cret", "s3cret"));
-        assert!(!passwords_equal("s3cret", "s3creT"));
-        assert!(!passwords_equal("s3cret", "s3cret-longer"));
-        assert!(!passwords_equal("", "s3cret"));
-    }
 }

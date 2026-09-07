@@ -75,6 +75,9 @@ function makeDataset({ label, varName, fallback, fill = true }) {
     fill,
     spanGaps: true,
     tension: 0.38,
+    // chart.js 的颜色是创建期快照，主题切换时按这两个字段重新解析（见 refreshChartColors）
+    colorVar: varName,
+    colorFallback: fallback,
   };
 }
 
@@ -173,6 +176,24 @@ export function usePerformanceCharts(props, t) {
     updateNetworkChart(labels);
   }
 
+  function refreshChartColors(chart) {
+    if (!chart) return;
+    for (const dataset of chart.data.datasets) {
+      const color = resolveColor(dataset.colorVar, dataset.colorFallback);
+      dataset.borderColor = color;
+      dataset.backgroundColor = dataset.fill ? makeLineFill(color) : withAlpha(color, 0.08);
+    }
+    const ticks = chart.options?.scales?.x?.ticks;
+    if (ticks) ticks.color = resolveColor("--text-tertiary", "rgb(120,120,120)");
+    chart.update("none");
+  }
+
+  function refreshChartsTheme() {
+    refreshChartColors(charts.cpu);
+    refreshChartColors(charts.memory);
+    refreshChartColors(charts.network);
+  }
+
   function destroyCharts() {
     charts.cpu?.destroy();
     charts.memory?.destroy();
@@ -225,8 +246,23 @@ export function usePerformanceCharts(props, t) {
     { flush: "post" },
   );
 
+  const scheduleThemeRefresh = createRafThrottle(refreshChartsTheme);
+  // 亮/暗主题切换只改 documentElement 属性；chart.js 颜色是创建期快照，
+  // 需监听后手动重解析（做法参照 CredentialGraphView 的 startThemeObserver）。
+  let themeObserver = null;
+  if (typeof MutationObserver !== "undefined") {
+    themeObserver = new MutationObserver(scheduleThemeRefresh);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme", "style"],
+    });
+  }
+
   onBeforeUnmount(() => {
     scheduleChartsFromHistoryUpdate.cancel();
+    scheduleThemeRefresh.cancel();
+    themeObserver?.disconnect();
+    themeObserver = null;
     destroyCharts();
   });
 

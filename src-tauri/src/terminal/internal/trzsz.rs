@@ -107,13 +107,6 @@ pub(crate) struct TrzszChecksumRequest {
     pub(crate) checksum_id: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct TrzszChecksumChunkRequest {
-    pub(crate) checksum_id: String,
-    pub(crate) data_base64: String,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TrzszChecksumResult {
@@ -220,7 +213,6 @@ pub(crate) struct TrzszRuntime {
     pub(crate) entries: HashMap<String, TrzszEntry>,
     pub(crate) downloads: HashMap<String, TrzszDownloadSession>,
     pub(crate) upload_checksums: HashMap<String, TrzszChecksum>,
-    pub(crate) checksums: HashMap<String, TrzszChecksum>,
 }
 
 impl TrzszRuntime {
@@ -293,22 +285,6 @@ pub(crate) async fn trzsz_choose_download_directory(
 }
 
 #[tauri::command]
-pub(crate) async fn trzsz_get_entry(
-    state: tauri::State<'_, AppState>,
-    request: TrzszEntryRequest,
-) -> Result<TrzszEntryDescriptor, String> {
-    let entry = {
-        let runtime = lock_runtime(state.inner());
-        runtime
-            .entries
-            .get(&request.entry_id)
-            .cloned()
-            .ok_or_else(|| format!("trzsz entry '{}' was not found", request.entry_id))?
-    };
-    build_descriptor_async(&entry).await
-}
-
-#[tauri::command]
 pub(crate) async fn trzsz_list_directory(
     state: tauri::State<'_, AppState>,
     request: TrzszEntryRequest,
@@ -367,9 +343,7 @@ pub(crate) async fn trzsz_read_file_chunk(
     if !matches!(entry.kind, TrzszEntryKind::File) {
         return Err(format!("trzsz entry '{}' is not a file", request.entry_id));
     }
-    let length = request
-        .length
-        .clamp(1, TRZSZ_CHUNK_MAX_BYTES.min(TRZSZ_CHUNK_MAX_BYTES));
+    let length = request.length.clamp(1, TRZSZ_CHUNK_MAX_BYTES);
     let mut file = tokio::fs::File::open(&entry.path)
         .await
         .map_err(|e| format!("failed to open upload file '{}': {e}", entry.path.display()))?;
@@ -533,6 +507,15 @@ pub(crate) async fn trzsz_finish_download(
 
     let descriptor = build_descriptor_async(&download.file_entry).await?;
     if request.aborted {
+        // 中止语义只来自前端 deleteFile（如 MD5 校验失败），必须把已落盘的损坏文件一并删除，
+        // 否则用户磁盘上会留下与完整文件无异的坏文件；删除失败仅记录，不影响会话清理
+        if let Err(error) = tokio::fs::remove_file(&download.file_entry.path).await {
+            logging::event(TRZSZ_SCOPE, "download.abort_remove_failed")
+                .field("transfer_id", &request.transfer_id)
+                .field("path", download.file_entry.path.display().to_string())
+                .field("error", error.to_string())
+                .warn();
+        }
         logging::event(TRZSZ_SCOPE, "download.aborted")
             .field("transfer_id", &request.transfer_id)
             .field("name", &descriptor.name)
@@ -577,59 +560,6 @@ pub(crate) fn trzsz_get_download_checksum(
             .get(&request.checksum_id)
             .map(|download| download.checksum.clone())
             .ok_or_else(|| format!("trzsz download '{}' is not active", request.checksum_id))?
-    };
-    Ok(TrzszChecksumResult {
-        checksum_id: request.checksum_id,
-        digest_base64: checksum_digest_base64(checksum),
-    })
-}
-
-#[tauri::command]
-pub(crate) fn trzsz_begin_checksum(
-    state: tauri::State<'_, AppState>,
-) -> Result<TrzszChecksumResult, String> {
-    let checksum_id = crate::ids::new_id();
-    {
-        let mut runtime = lock_runtime(state.inner());
-        runtime
-            .checksums
-            .insert(checksum_id.clone(), TrzszChecksum::default());
-    }
-    Ok(TrzszChecksumResult {
-        checksum_id,
-        digest_base64: checksum_digest_base64(TrzszChecksum::default()),
-    })
-}
-
-#[tauri::command]
-pub(crate) fn trzsz_update_checksum(
-    state: tauri::State<'_, AppState>,
-    request: TrzszChecksumChunkRequest,
-) -> Result<(), String> {
-    let bytes = STANDARD_NO_PAD
-        .decode(request.data_base64.as_bytes())
-        .map_err(|e| format!("invalid trzsz checksum chunk base64: {e}"))?;
-    let mut runtime = lock_runtime(state.inner());
-    let checksum = runtime
-        .checksums
-        .get_mut(&request.checksum_id)
-        .ok_or_else(|| format!("trzsz checksum '{}' is not active", request.checksum_id))?;
-    checksum.context.consume(&bytes);
-    checksum.bytes_hashed = checksum.bytes_hashed.saturating_add(bytes.len() as u64);
-    Ok(())
-}
-
-#[tauri::command]
-pub(crate) fn trzsz_finish_checksum(
-    state: tauri::State<'_, AppState>,
-    request: TrzszChecksumRequest,
-) -> Result<TrzszChecksumResult, String> {
-    let checksum = {
-        let mut runtime = lock_runtime(state.inner());
-        runtime
-            .checksums
-            .remove(&request.checksum_id)
-            .ok_or_else(|| format!("trzsz checksum '{}' is not active", request.checksum_id))?
     };
     Ok(TrzszChecksumResult {
         checksum_id: request.checksum_id,

@@ -16,7 +16,8 @@ export function useTerminalDragDrop({ logger, shouldListen, handleDrop }) {
       registration = asyncListeners.register(
         getCurrentWindow().onDragDropEvent((event) => {
           const payload = event.payload;
-          if (payload.type === "drop" && payload.paths?.length) {
+          // attach 后开关可能被关掉，drop 时复查一次，避免禁用后仍触发上传
+          if (payload.type === "drop" && payload.paths?.length && shouldListen()) {
             handleDrop(payload.paths);
           }
         }),

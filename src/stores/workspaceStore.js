@@ -21,6 +21,7 @@ import { createWorkspaceConnectionCatalog } from "./workspaceConnectionCatalog";
 import { createWorkspaceExternalSessionController } from "./workspaceExternalSessions";
 import { createLogger } from "../utils/logger";
 import { createRuntimeId } from "../utils/runtimeIds";
+import { sameOrder } from "../utils/listOrder";
 import { i18n } from "../i18n";
 import { showToast } from "../composables/useToasts";
 
@@ -233,10 +234,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     return normalized;
-  }
-
-  function sameOrder(a, b) {
-    return a.length === b.length && a.every((id, index) => id === b[index]);
   }
 
   function setSessionTabOrder(order) {
@@ -456,8 +453,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     activeConnection.value ? sessionRegistry.getRuntimeMetrics(activeConnection.value) : null,
   );
 
-  const activeSessionId = computed(() => activeConnection.value || "");
-
   const activeRemoteWorkingDirectory = computed(() =>
     sessionRegistry.getWorkingDirectoryByConnection(activeConnection.value),
   );
@@ -566,7 +561,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   return {
     activeTerminalSize,
     activeConnection,
-    activeSessionId,
     activeConnectionInfo,
     activeConnectionState,
     activeRuntimeMetrics,

@@ -66,6 +66,22 @@ test("a backend session cannot bind to a superseded connection attempt", () => {
   assert.equal(registry.getFrontendSessionId("backend-current"), frontendSessionId);
 });
 
+test("setActiveSessionChannel clears the channel for null-ish input instead of storing 0", () => {
+  const registry = createWorkspaceSessionRegistry();
+  const frontendSessionId = "session-1";
+
+  registry.setActiveSessionChannel(frontendSessionId, 7);
+  assert.equal(registry.getActiveSessionChannelId(frontendSessionId), 7);
+
+  // 后端 channel id 从 1 起分配；null/"" 经 Number() 会变 0，必须归一化为 null。
+  registry.setActiveSessionChannel(frontendSessionId, null);
+  assert.equal(registry.getActiveSessionChannelId(frontendSessionId), null);
+
+  registry.setActiveSessionChannel(frontendSessionId, 9);
+  registry.setActiveSessionChannel(frontendSessionId, "");
+  assert.equal(registry.getActiveSessionChannelId(frontendSessionId), null);
+});
+
 test("SSH and Telnet connections can bind multiple independent backend sessions", () => {
   for (const protocol of ["ssh", "telnet"]) {
     const registry = createWorkspaceSessionRegistry();

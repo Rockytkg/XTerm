@@ -173,6 +173,9 @@ impl SftpSession {
 pub enum ConnectionStatus {
     Connecting,
     Connected,
+    // Kept for the wire/state-machine contract: the frontend transitions to and
+    // reacts on "disconnecting" locally; no backend path constructs it today.
+    #[allow(dead_code)]
     Disconnecting,
     Disconnected,
     Failed,
@@ -236,7 +239,14 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub struct AppState {
     store: Arc<Mutex<Store>>,
     paths: Mutex<crate::paths::AppPaths>,
+    /// Immutable copy of the paths resolved at startup. `path_settings_set`
+    /// hot-replaces `paths` so new values persist and display immediately, but
+    /// the running store and file logger still write to the startup locations
+    /// until restart — runtime consumers (log viewer, SFTP host key) must
+    /// read this snapshot to stay consistent with them.
+    startup_paths: crate::paths::AppPaths,
     proxy: Mutex<ProxyManager>,
+    proxy_operation_lock: Arc<tokio::sync::Mutex<()>>,
     file_service: Mutex<FileServiceManager>,
     file_service_operation_lock: Arc<tokio::sync::Mutex<()>>,
     terminal: TerminalRuntimeRegistry,
@@ -291,8 +301,10 @@ impl AppState {
         let file_service = FileServiceManager::from_store(&store);
         Self {
             store: Arc::new(Mutex::new(store)),
+            startup_paths: paths.clone(),
             paths: Mutex::new(paths),
             proxy: Mutex::new(proxy),
+            proxy_operation_lock: Arc::new(tokio::sync::Mutex::new(())),
             file_service: Mutex::new(file_service),
             file_service_operation_lock: Arc::new(tokio::sync::Mutex::new(())),
             terminal: TerminalRuntimeRegistry::new(),
@@ -328,8 +340,19 @@ impl AppState {
         lock(&self.paths)
     }
 
+    /// The paths the store and file logger actually opened at startup. Use
+    /// this (not `paths()`) for anything that must agree with those running
+    /// consumers; `paths()` may already point at next-launch directories.
+    pub fn startup_paths(&self) -> &crate::paths::AppPaths {
+        &self.startup_paths
+    }
+
     pub fn proxy(&self) -> MutexGuard<'_, ProxyManager> {
         lock(&self.proxy)
+    }
+
+    pub fn proxy_operation_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.proxy_operation_lock.clone()
     }
 
     pub fn file_service(&self) -> MutexGuard<'_, FileServiceManager> {
@@ -929,7 +952,79 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use super::ConnectionStatus;
+    use super::{AppState, ConnectionStatus};
+    use crate::terminal::{domain::ProtocolKind, internal::ResolvedConnection};
+    use std::path::PathBuf;
+
+    fn temp_app_state() -> (AppState, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("xterm-state-test-{}", crate::ids::new_id()));
+        std::fs::create_dir_all(&dir).expect("temp dir should be created");
+        let store = crate::storage::Store::open(&dir).expect("temp store should open");
+        let state = AppState::new(store, crate::paths::AppPaths::for_tests(dir.clone()));
+        (state, dir)
+    }
+
+    fn transient_connection(id: &str) -> ResolvedConnection {
+        ResolvedConnection {
+            id: id.to_string(),
+            open_request_id: None,
+            open_scope: None,
+            protocol: ProtocolKind::Ssh,
+            host: Some("example.test".to_string()),
+            port: Some(22),
+            user: Some("root".to_string()),
+            serial_port: None,
+            baud_rate: None,
+            serial_quick_auto_baud: None,
+            data_bits: None,
+            flow_control: None,
+            parity: None,
+            stop_bits: None,
+            encoding: None,
+            realtime_encoding_detection: None,
+            auth_method: None,
+            saved_credential_id: None,
+            inline_password: None,
+            inline_private_key: None,
+            inline_private_key_passphrase: None,
+            trust_host_key: None,
+            accept_host_key_once: None,
+            terminal_scrollback: None,
+            terminal_type: None,
+            runtime_metrics: None,
+            cols: None,
+            rows: None,
+            jump_hosts: None,
+        }
+    }
+
+    #[test]
+    fn transient_connection_is_forgotten_once_its_last_session_is_gone() {
+        let (state, dir) = temp_app_state();
+        state.remember_transient_connection(transient_connection("conn-t"));
+        assert!(state.transient_connection("conn-t").is_some());
+
+        // The session-end hook relies on session_ids_for_connection to decide
+        // whether the connection still has live sessions.
+        state.bind_session_connection("session-1", "conn-t");
+        state.bind_session_connection("session-2", "conn-t");
+        assert_eq!(state.session_ids_for_connection("conn-t").len(), 2);
+
+        state.unbind_session_connection("session-2");
+        assert_eq!(state.session_ids_for_connection("conn-t").len(), 1);
+        state.unbind_session_connection("session-1");
+        assert!(state.session_ids_for_connection("conn-t").is_empty());
+
+        state.forget_transient_connection("conn-t");
+        assert!(state.transient_connection("conn-t").is_none());
+
+        // Forgetting an unknown (e.g. workspace profile) id is a no-op.
+        state.forget_transient_connection("conn-t");
+        state.forget_transient_connection("profile-connection");
+
+        drop(state);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn connection_status_serializes_to_legacy_wire_values() {

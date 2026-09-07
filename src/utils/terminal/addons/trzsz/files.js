@@ -100,13 +100,7 @@ class TauriFileWriter {
   async writeFile(bytes) {
     if (this._directory || !bytes?.length) return;
     this._chain = this._chain.then(async () => {
-      if (!this._transfer) {
-        this._transfer = await beginDownload({
-          directoryId: this._directoryId,
-          fileName: this._fileName,
-        });
-        this._localName = this._transfer?.entry?.name || this._localName;
-      }
+      await this._ensureTransfer();
       await writeDownloadChunk({
         transferId: this._transfer.transferId,
         dataBase64: bytesToBase64(bytes),
@@ -115,13 +109,23 @@ class TauriFileWriter {
     await this._chain;
   }
 
+  async _ensureTransfer() {
+    if (this._transfer) return;
+    this._transfer = await beginDownload({
+      directoryId: this._directoryId,
+      fileName: this._fileName,
+    });
+    this._localName = this._transfer?.entry?.name || this._localName;
+  }
+
   async closeFile() {
     if (this._closed || this._directory) return;
     this._closed = true;
     await this._chain;
-    if (this._transfer?.transferId) {
-      await finishDownload({ transferId: this._transfer.transferId, aborted: false });
-    }
+    // 零字节文件不会触发任何 writeFile，关闭时补建空文件再走完成流程，
+    // 对齐上游 trzsz.js 打开保存句柄即创建本地文件的语义
+    await this._ensureTransfer();
+    await finishDownload({ transferId: this._transfer.transferId, aborted: false });
   }
 
   async getDigest() {

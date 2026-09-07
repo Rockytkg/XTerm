@@ -26,7 +26,10 @@ pub struct LogFileInfo {
 }
 
 fn log_dir(state: &AppState) -> PathBuf {
-    state.paths().log_dir().to_path_buf()
+    // The file logger keeps writing to the startup log dir until restart, so
+    // listing/tailing must read the same directory — not the hot-replaced
+    // `paths()`, which already points at the next-launch location.
+    state.startup_paths().log_dir().to_path_buf()
 }
 
 /// Resolves a user-supplied file name to a path inside `dir`, rejecting

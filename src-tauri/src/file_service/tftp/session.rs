@@ -692,22 +692,37 @@ fn emit_transfer_start(context: &SessionContext, id: &str) {
 
 /// Maps a client-supplied filename onto the shared root, rejecting any
 /// traversal outside it with RFC 1350 error 2 (Access violation).
+///
+/// When the target does not exist yet (a write into a new subdirectory), the
+/// longest *existing* ancestor prefix is canonicalized instead: only the
+/// existing prefix can contain symlinks, so validating it against the root
+/// keeps the escape guard intact while still allowing `create_dir_all` in
+/// `serve_write` to materialize the remaining components.
 async fn secure_transfer_path(root: &Path, requested: &Path) -> Result<PathBuf, TransferError> {
     let candidate = root.join(secure_transfer_path_components(requested)?);
     let canonical = match tokio::fs::canonicalize(&candidate).await {
         Ok(path) => path,
-        Err(_) => match candidate.parent() {
-            Some(parent) => {
-                let parent = tokio::fs::canonicalize(parent)
-                    .await
-                    .map_err(|_| TransferError::access_violation("Access violation"))?;
-                candidate
+        Err(_) => {
+            let mut pending = Vec::new();
+            let mut existing = candidate.clone();
+            let resolved_prefix = loop {
+                let name = existing
                     .file_name()
-                    .map(|name| parent.join(name))
+                    .ok_or_else(|| TransferError::access_violation("Access violation"))?;
+                pending.insert(0, name.to_os_string());
+                existing = existing
+                    .parent()
                     .ok_or_else(|| TransferError::access_violation("Access violation"))?
-            }
-            None => return Err(TransferError::access_violation("Access violation")),
-        },
+                    .to_path_buf();
+                match tokio::fs::canonicalize(&existing).await {
+                    Ok(prefix) => break prefix,
+                    Err(_) => continue,
+                }
+            };
+            pending
+                .iter()
+                .fold(resolved_prefix, |path, name| path.join(name))
+        }
     };
     if canonical.starts_with(root) {
         Ok(canonical)
@@ -754,13 +769,13 @@ fn discover_local_ip(peer: SocketAddr) -> io::Result<IpAddr> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, sync::Arc, time::Duration};
+    use std::{fs, path::Path, sync::Arc, time::Duration};
 
     use tokio::{net::UdpSocket, sync::watch, time::timeout};
 
     use super::{
-        super::packet::data_packet, build_data_window, recv_packet, send_window_with_ack,
-        PendingUpload,
+        super::packet::data_packet, build_data_window, recv_packet, secure_transfer_path,
+        send_window_with_ack, PendingUpload,
     };
 
     fn block_of(packet: &[u8]) -> u16 {
@@ -846,6 +861,66 @@ mod tests {
         assert!(!abandoned_path.exists());
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn transfer_path_allows_nested_new_directories_inside_root() {
+        // Regression: only the immediate parent was canonicalized, so a WRQ
+        // into a not-yet-existing subdirectory failed with Access violation
+        // before serve_write could create it.
+        let root_raw =
+            std::env::temp_dir().join(format!("xterm-tftp-path-{}", crate::ids::new_id()));
+        fs::create_dir(&root_raw).unwrap();
+        // The runtime stores a canonicalized root; mirror that (on Windows
+        // canonicalize returns verbatim \\?\ paths).
+        let root = fs::canonicalize(&root_raw).unwrap();
+
+        let resolved = secure_transfer_path(&root, Path::new("sub/dir/upload.bin"))
+            .await
+            .expect("a new nested target inside the root must be accepted");
+        assert_eq!(resolved, root.join("sub").join("dir").join("upload.bin"));
+
+        // An existing single-level file keeps resolving to itself.
+        let existing_dir = root.join("plain");
+        fs::create_dir(&existing_dir).unwrap();
+        fs::write(existing_dir.join("file.bin"), b"x").unwrap();
+        let resolved = secure_transfer_path(&root, Path::new("plain/file.bin"))
+            .await
+            .unwrap();
+        assert_eq!(resolved, existing_dir.join("file.bin"));
+
+        fs::remove_dir_all(&root_raw).unwrap();
+    }
+
+    #[tokio::test]
+    async fn transfer_path_rejects_symlink_escape_from_existing_prefix() {
+        let root_raw =
+            std::env::temp_dir().join(format!("xterm-tftp-link-{}", crate::ids::new_id()));
+        let outside_raw =
+            std::env::temp_dir().join(format!("xterm-tftp-outside-{}", crate::ids::new_id()));
+        fs::create_dir(&root_raw).unwrap();
+        fs::create_dir(&outside_raw).unwrap();
+        let root = fs::canonicalize(&root_raw).unwrap();
+
+        #[cfg(unix)]
+        let link_result = std::os::unix::fs::symlink(&outside_raw, root.join("link"));
+        #[cfg(windows)]
+        let link_result = std::os::windows::fs::symlink_dir(&outside_raw, root.join("link"));
+        if link_result.is_err() {
+            // Symlink creation needs elevation/developer mode on Windows.
+            fs::remove_dir_all(&root_raw).unwrap();
+            fs::remove_dir_all(&outside_raw).unwrap();
+            return;
+        }
+
+        let result = secure_transfer_path(&root, Path::new("link/evil.bin")).await;
+        assert!(
+            result.is_err(),
+            "a symlink escaping the root must be rejected"
+        );
+
+        fs::remove_dir_all(&root_raw).unwrap();
+        fs::remove_dir_all(&outside_raw).unwrap();
     }
 
     #[tokio::test]

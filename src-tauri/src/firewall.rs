@@ -231,13 +231,26 @@ where
             Ok(())
         }
         Ok(Err(error)) if firewall_error_requires_elevation(&error.detail) => {
-            run_elevated_firewall_task(
-                request.prefix,
-                request.ports,
-                request.operation,
-                request.protocol,
-                request.all_ports,
-            )
+            // The elevated helper waits synchronously for UAC/pkexec user
+            // approval; running it on a tokio worker thread would stall the
+            // runtime for the whole prompt.
+            match tokio::task::spawn_blocking(move || {
+                run_elevated_firewall_task(
+                    request.prefix,
+                    request.ports,
+                    request.operation,
+                    request.protocol,
+                    request.all_ports,
+                )
+            })
+            .await
+            {
+                Ok(result) => result,
+                Err(join_error) => Err(FirewallCommandError::new(
+                    "The firewall operation did not complete.",
+                    join_error.to_string(),
+                )),
+            }
         }
         Ok(Err(error)) => {
             logging::event("firewall", request.action)

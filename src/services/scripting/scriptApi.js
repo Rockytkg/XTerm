@@ -35,10 +35,6 @@ function normalizeRegExp(pattern) {
   return new RegExp(pattern.source, pattern.flags.replaceAll(/[gy]/g, ""));
 }
 
-function escapeRegExp(text) {
-  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function matchPattern(buffer, pattern, apiName = "waitFor") {
   if (typeof pattern === "string") {
     const index = buffer.indexOf(pattern);
@@ -214,13 +210,19 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
         );
       }
       const timeout = Number(timeoutMs);
-      // timeout<=0 表示永不超时；自定义错误信息优先，缺省走 i18n。
-      addPending(entry, timeout > 0 ? timeout : null, () =>
+      // timeout<=0 表示永不超时；非有限输入（如 "abc"→NaN）回退默认超时，
+      // 避免静默变成永不超时。自定义错误信息优先，缺省走 i18n。
+      const effectiveTimeout = Number.isFinite(timeout)
+        ? timeout > 0
+          ? timeout
+          : null
+        : DEFAULT_WAIT_TIMEOUT_MS;
+      addPending(entry, effectiveTimeout, () =>
         reject(
           new Error(
             message ||
               i18n.global.t("scripts.errors.waitTimeout", {
-                timeout,
+                timeout: effectiveTimeout ?? timeout,
                 pattern: entryBase.label,
               }),
           ),
@@ -294,11 +296,31 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     );
   }
 
+  // waitForAny：与 expectAny 共用多模式竞争（matchEarliest 逐模式 exec，
+  // 各自保留 i/m/s 等 flags），结果映射与 waitFor 一致只回匹配文本。
+  function waitForAny(patterns, timeoutMs, message) {
+    throwIfStopped();
+    const list = Array.isArray(patterns) ? patterns : [patterns];
+    if (!list.length || list.some((p) => typeof p !== "string" && !(p instanceof RegExp))) {
+      return Promise.reject(new TypeError("waitForAny patterns must be strings or RegExps"));
+    }
+    return waitOnOutput(
+      {
+        apiName: "waitForAny",
+        patterns: list,
+        label: list.map((pattern) => String(pattern)).join(" | "),
+        mapMatch: (match) => match.text,
+      },
+      timeoutMs,
+      message,
+    );
+  }
+
   function sleep(ms) {
     throwIfStopped();
     return new Promise((resolve, reject) => {
       const entry = { kind: "sleep", resolve, reject, timer: null };
-      addPending(entry, Number(ms) || 0, resolve);
+      addPending(entry, Math.max(0, Number(ms) || 0), resolve);
     });
   }
 
@@ -306,14 +328,16 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     throwIfStopped();
     return new Promise((resolve, reject) => {
       const entry = { kind: "read", chunks: [], resolve, reject, timer: null };
-      addPending(entry, Number(timeoutMs) || 0, () => resolve(entry.chunks.join("")));
+      addPending(entry, Math.max(0, Number(timeoutMs) || 0), () => resolve(entry.chunks.join("")));
     });
   }
 
   async function send(data) {
     throwIfStopped();
     // 经 ScriptBridgeAddon 走 xterm input，等同人工输入：前端回显 + 正常链路发往后端。
-    if (!bridge.send(String(data ?? ""))) throw new Error("target session is not available");
+    if (!bridge.send(String(data ?? ""))) {
+      throw new Error(i18n.global.t("scripts.errors.targetUnavailable"));
+    }
   }
 
   function getScreen() {
@@ -354,7 +378,7 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
 
   function requireRecordingBridge() {
     const recording = getRecordingBridge();
-    if (!recording) throw new Error("session recording is not available");
+    if (!recording) throw new Error(i18n.global.t("scripts.errors.recordingUnavailable"));
     return recording;
   }
 
@@ -433,22 +457,7 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     expectAny: (...args) => trackTask(expectAny(...args)),
     // 命名按键（ctrl+c / enter / 方向键 / f1-f12 等）：等同人工按键发送控制序列。
     press: (key) => trackTask(send(keySequence(key))),
-    waitForAny: (patterns, timeoutMs, message) =>
-      trackTask(
-        waitFor(
-          new RegExp(
-            (Array.isArray(patterns) ? patterns : [patterns])
-              .map((pattern) =>
-                pattern instanceof RegExp
-                  ? `(?:${pattern.source})`
-                  : `(?:${escapeRegExp(pattern)})`,
-              )
-              .join("|"),
-          ),
-          timeoutMs,
-          message,
-        ),
-      ),
+    waitForAny: (...args) => trackTask(waitForAny(...args)),
     read: (...args) => trackTask(read(...args)),
     getScreen,
     getBuffer,

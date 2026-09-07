@@ -54,8 +54,6 @@ export default {
     title: "Create connection",
     titleEdit: "Edit connection",
     description: "Configure an SSH, Telnet, or serial connection.",
-    credentialLinked: "Credential linked",
-    clearCredential: "Use manual input",
     auto: "Auto",
     noPasswordCredentials: "No saved password credentials.",
     refreshSerialPorts: "Refresh serial ports",
@@ -140,7 +138,6 @@ export default {
       hostInvalid: "Host cannot contain spaces.",
       portInvalid: "Port must be an integer from 1 to 65535.",
       userRequired: "Enter an SSH username.",
-      passwordRequired: "Select a saved credential or enter a password.",
       keyRequired: "Select a saved credential or provide private key content.",
       credentialNotFound: "The linked credential is missing or cannot be used with this protocol.",
       jumpHostsRequired: "Enter at least one jump server host or remove the blank hop.",
@@ -182,8 +179,6 @@ export default {
       "Enter the SSH credential for {target}. Unsaved credentials are used for this connection only.",
     rejectedDescription:
       "The current SSH credential was rejected by {target}. Update the credential or choose another handling option before reconnecting.",
-    saveAndLink: "Save credential and associate it with this SSH connection",
-    saveAsNewAndLink: "Save as a new credential and associate it with this SSH connection",
     connectOnce: "Connect once",
     saveConnect: "Save and connect",
     updateConnect: "Update credential and connect",
@@ -205,7 +200,6 @@ export default {
     terminal: "Terminal",
     sftp: "SFTP Files",
     settings: "Settings",
-    credentialGraph: "Reference graph",
     keys: "Credentials",
     scripts: "Scripts",
     collapse: "Collapse",
@@ -245,10 +239,6 @@ export default {
     formatNoChanges: "Code is already well formatted",
     formatFailed: "Formatting failed",
     syntaxError: "JavaScript syntax error",
-    meta: {
-      created: "Created",
-      updated: "Updated",
-    },
     fields: {
       name: "Name",
       author: "Author",
@@ -275,6 +265,9 @@ export default {
       waitTimeout: "Timed out waiting for output ({timeout}ms): {pattern}",
       blockedApi:
         '"{api}" is blocked by the script sandbox; access network, local storage, and system resources only via the dedicated xterm.* APIs, which ask for user authorization',
+      targetUnavailable: "Target session is not available (it may be closed or disconnected)",
+      recordingUnavailable: "Session recording is not available (it may be closed or disconnected)",
+      unknownError: "Unknown script error",
     },
     validation: {
       required: "This field is required",
@@ -302,17 +295,11 @@ export default {
       stopHint: "Click to stop the running script",
       running: "Running · click to stop",
     },
-    stopConfirm: {
-      title: "Stop script?",
-      description: 'The script "{name}" is still running. Stop it now?',
-      confirm: "Stop script",
-    },
   },
   overview: {
     section: "Session",
     session: {
       title: "Session",
-      latency: "Latency",
       path: "Working directory",
       baudRate: "Baud rate",
       terminalType: "Terminal type",
@@ -742,6 +729,7 @@ export default {
   },
   notifications: {
     connectionDeleted: "Connection profile deleted",
+    connectionDeleteFailed: "Failed to delete connection profile",
     connectionOrderSaveFailed: "Failed to save connection order",
     connectionSaved: "Connection profile saved",
     connectionSaveFailed: "Failed to save connection profile",
@@ -776,6 +764,8 @@ export default {
     highlightSchemeCreated: "Highlight scheme created: {name}",
     highlightSchemeDeleted: "Highlight scheme deleted: {name}",
     highlightSchemeDeleteFailed: "Failed to delete highlight scheme",
+    highlightRuleDeleted: "Highlight rule deleted",
+    highlightRuleDeleteFailed: "Failed to delete highlight rule",
     highlightSchemesImported: "Highlight schemes imported",
     highlightSchemesImportFailed: "Failed to import highlight schemes",
     highlightSchemesExported: "Highlight schemes exported",
@@ -829,7 +819,6 @@ export default {
     upload: "Upload",
     download: "Download",
     remotePath: "Remote path",
-    remote: "Remote",
     transferQueue: "Transfer queue",
     transferDone: "Done",
     pauseTransfer: "Pause transfer",
@@ -874,11 +863,9 @@ export default {
     deleteTitle: "Delete items",
     deleteFileTitle: "Delete file",
     deleteFolderTitle: "Delete folder",
-    deleteOneMessage: 'Delete "{name}"? This cannot be undone.',
     deleteOneFileMessage: 'Delete file "{name}"? This cannot be undone.',
     deleteOneFolderMessage:
       'Delete folder "{name}"? Its contents will also be removed. This cannot be undone.',
-    deleteManyMessage: "Delete {count} items? This cannot be undone.",
     deleteManyTypedMessage:
       "Delete {count} items, including {files} files and {folders} folders. This cannot be undone.",
     deleteAction: "Delete",
@@ -1002,6 +989,7 @@ export default {
     jump_host_missing_username: "The jump host '{host}' is missing its SSH username.",
     jump_host_not_found: "The jump host connection '{connectionId}' was not found.",
     jump_host_not_ssh: "The jump host connection '{name}' is not an SSH profile.",
+    jump_host_protocol_invalid: "The jump host connection '{name}' has an unsupported protocol.",
     jump_host_reference_loop: "The jump host chain contains a loop: {chain} -> {connectionId}",
     jump_host_required: "The jump host chain is empty. Add at least one jump host.",
     protocol_error: "Protocol handshake failed. The target service did not respond as expected.",
@@ -1053,6 +1041,7 @@ export default {
     telnet_startup_write_failed: "Failed to send Telnet startup negotiation to {host}:{port}.",
     telnet_stream_setup_failed: "Failed to configure the Telnet TCP stream.",
     unknown: "Unknown connection error. Check the logs for details.",
+    unsupported_capability: "This session does not support the requested capability.",
     unsupported_connection_protocol: "This connection protocol is not supported: {protocol}",
     validation_error:
       "The connection profile is invalid. Check required fields and parameter formats.",
@@ -1073,14 +1062,6 @@ export default {
     credTypes: {
       password: "Password",
       key: "SSH key",
-    },
-    addTypes: {
-      password: "Add password",
-      key: "Add SSH key",
-    },
-    stats: {
-      total: "Total",
-      unused: "Unused",
     },
     cleanup: {
       action: "Clear unused credentials",
@@ -1109,29 +1090,9 @@ export default {
       usedCount: "{count} references",
       unused: "Unused",
     },
-    graph: {
-      title: "Credential references",
-      root: "Credentials",
-      emptyType: "No credentials",
-      usedBy: "Used by",
-      unused: "Not referenced",
-      zoomIn: "Zoom in",
-      zoomOut: "Zoom out",
-      resetView: "Reset view",
-    },
     relations: {
       connection: "Connection",
       jumpHost: "Jump server",
-    },
-    deleteConfirm: {
-      title: "Delete credential?",
-      description:
-        'This will permanently remove "{name}". Existing connections using it will block deletion.',
-      confirm: "Delete",
-    },
-    errors: {
-      usedBy: "This credential is used by: {names}",
-      notFound: "Credential not found or already deleted.",
     },
     fields: {
       name: "Name",
@@ -1153,7 +1114,6 @@ export default {
   },
   relationshipGraph: {
     empty: "No references to display.",
-    searchPlaceholder: "Search nodes in this view",
     views: {
       credential: "Credential references",
     },
@@ -1175,14 +1135,12 @@ export default {
     actions: {
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
-      resetView: "Reset view",
       refresh: "Refresh",
       refreshAndReset: "Refresh and reset view",
       stabilize: "Reflow layout",
       relationMode: "Relationship editing",
     },
     menu: {
-      viewDetails: "View details",
       edit: "Edit",
       focusRelated: "Focus related nodes",
       quickAddRelation: "Add relationship",
@@ -1213,13 +1171,7 @@ export default {
         confirm: "Continue delete",
       },
     },
-    detail: {
-      type: "Type",
-      endpoint: "Endpoint",
-      status: "Status",
-    },
     toast: {
-      openCredentialEditor: "Credentials opened. Edit the selected credential there.",
       openRelationEditor: "Relationship configuration opened.",
       invalidRelation: "This view does not support this relationship type.",
       relationUpdated: "Relationship updated",

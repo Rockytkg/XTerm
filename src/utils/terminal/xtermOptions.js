@@ -1,5 +1,7 @@
 import { getTerminalTheme } from "../terminalColors";
 import {
+  TERMINAL_CURSOR_WIDTH_MAX,
+  TERMINAL_CURSOR_WIDTH_MIN,
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
   TERMINAL_SCROLLBACK_MAX,
@@ -30,7 +32,12 @@ export function createXtermOptions(props, isForegroundRuntime) {
     cursorBlink: props.terminalCursorBlink && isForegroundRuntime,
     cursorInactiveStyle: normalizeCursorInactiveStyle(props.terminalCursorInactiveStyle),
     cursorStyle: normalizeCursorStyle(props.terminalCursorStyle),
-    cursorWidth: normalizeIntegerOption(props.terminalCursorWidth, 1, 1, 10),
+    cursorWidth: normalizeIntegerOption(
+      props.terminalCursorWidth,
+      1,
+      TERMINAL_CURSOR_WIDTH_MIN,
+      TERMINAL_CURSOR_WIDTH_MAX,
+    ),
     customGlyphs: props.terminalCustomGlyphs,
     drawBoldTextInBrightColors: props.terminalDrawBoldTextInBrightColors,
     fastScrollSensitivity: normalizeNumberOption(props.terminalFastScrollSensitivity, 5, 1, 20),

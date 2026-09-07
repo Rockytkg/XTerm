@@ -21,7 +21,9 @@ export function createServiceRunner({ logger, module }) {
       scope: scopedLogger,
       level: options.level || "info",
       successLevel: options.successLevel || options.level || "info",
+      failureLevel: options.failureLevel,
       summarizePayload: options.summarizePayload,
+      summarizeResult: options.summarizeResult,
     });
   };
 }

@@ -186,8 +186,8 @@ class TerminalSessionRuntimeController {
   queueBytes(dataBase64) {
     this.queueInput(
       dataBase64,
-      ({ sessionId, channelId, data }) =>
-        createInputBytesFrame({ sessionId, channelId, dataBase64: data }),
+      ({ sessionId, channelId, inputSequence, data }) =>
+        createInputBytesFrame({ sessionId, channelId, inputSequence, dataBase64: data }),
       "Failed to write backend terminal bytes:",
     );
   }

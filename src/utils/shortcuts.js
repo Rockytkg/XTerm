@@ -39,8 +39,3 @@ export function eventShortcut(event) {
 
   return parts.sort().join("+");
 }
-
-export function shortcutMatchesEvent(shortcut, event) {
-  const normalized = normalizeShortcut(shortcut);
-  return normalized === eventShortcut(event);
-}

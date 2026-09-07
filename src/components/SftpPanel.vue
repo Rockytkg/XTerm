@@ -22,6 +22,7 @@ import { dismissContextMenu, openContextMenu } from "../services/contextMenu";
 import { writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import { closeSftpSession } from "../services/sftp";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { contextMenuItem, isEditableContextTarget } from "../utils/editableContext";
 import { resolveEditorTheme } from "../utils/editorTheme";
 import { blurActiveElement } from "../utils/focusGuards";
 import { createShortcutRegistry } from "../utils/shortcutRegistry";
@@ -78,7 +79,11 @@ function fileTypeLabel(entry) {
 
 async function copyText(text) {
   if (!text) return;
-  await writeClipboardText(text);
+  try {
+    await writeClipboardText(text);
+  } catch (error) {
+    logger.warn("sftp.clipboard.copy_failed", error);
+  }
   closeContextMenu();
 }
 
@@ -215,25 +220,6 @@ function requestDeleteEntries(entries = selectedEntries.value) {
 
 function releaseSftpDeleteSourceFocus() {
   blurActiveElement({ within: ".sftp-root" });
-}
-
-function isEditableContextTarget(target) {
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target?.isContentEditable
-  );
-}
-
-function contextMenuItem(id, label, icon, enabled, action, options = {}) {
-  return {
-    id,
-    label,
-    icon,
-    enabled,
-    action,
-    ...options,
-  };
 }
 
 function contextMenuSeparator() {

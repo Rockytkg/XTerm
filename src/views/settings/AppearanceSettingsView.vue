@@ -9,6 +9,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import "../../styles/settings-tab-switcher.scss";
 import UiSelect from "../../components/UiSelect.vue";
 import UiSwitch from "../../components/UiSwitch.vue";
+import { normalizeNumberPreference } from "../../utils/numberPreference";
 
 const { t } = useI18n();
 const { preferences } = storeToRefs(useWorkspaceStore());
@@ -107,6 +108,7 @@ const uiThemeOptionsDark = computed(() => [
           min="12"
           max="18"
           class="ui-input ui-input-inline"
+          @change="normalizeNumberPreference(preferences, 'uiFontSize', 14, 12, 18, true)"
         >
       </div>
     </div>

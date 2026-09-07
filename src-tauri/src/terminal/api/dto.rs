@@ -110,12 +110,6 @@ pub(crate) enum SshCredentialOverride {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ConnectionCloseCommand {
-    pub connection_id: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct ConnectionOpenCancelCommand {
     pub connection_id: String,
     #[serde(default)]

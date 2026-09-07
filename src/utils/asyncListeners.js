@@ -1,3 +1,7 @@
+import { createLogger } from "./logger";
+
+const logger = createLogger("frontend.utils.async-listeners");
+
 export function createAsyncListenerRegistry() {
   const listeners = new Set();
   let disposed = false;
@@ -20,7 +24,10 @@ export function createAsyncListenerRegistry() {
       .then((unlisten) => {
         return add(unlisten);
       })
-      .catch(() => null);
+      .catch((error) => {
+        logger.warn("listener.register.failed", error);
+        return null;
+      });
   }
 
   // 监听器被提前单独取消时从集合移除，否则 dispose 会对同一 unlisten 重复调用

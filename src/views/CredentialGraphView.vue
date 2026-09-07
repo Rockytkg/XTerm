@@ -25,6 +25,7 @@ import {
   useCredentialDeleteFlow,
 } from "../composables/useCredentialDeleteFlow";
 import { openContextMenu } from "../services/contextMenu";
+import { contextMenuItem, isEditableContextTarget } from "../utils/editableContext";
 import { useToasts } from "../composables/useToasts";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import {
@@ -946,10 +947,6 @@ function requestDeleteSelectedCredentialNodes(credentialsToDelete = selectedCred
   bulkCredentialDeleteOpen.value = true;
 }
 
-function contextMenuItem(id, label, icon, enabled, action, options = {}) {
-  return { id, label, icon, enabled, action, ...options };
-}
-
 function buildNodeMenuItems(node) {
   const data = node.data();
   const items = [
@@ -1148,14 +1145,6 @@ function selectedRemovableRelations() {
     relations.push(relation);
   });
   return relations;
-}
-
-function isEditableContextTarget(target) {
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target?.isContentEditable
-  );
 }
 
 function edgeFromCyNodes(sourceNodeId, targetNodeId) {

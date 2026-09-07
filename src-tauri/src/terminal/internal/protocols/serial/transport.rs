@@ -210,7 +210,7 @@ async fn handle_serial_transport_capability(
                     return Ok(TransportCommandOutcome::Close);
                 }
             }
-            let _ = reply.send(result.map_err(|error| error.detail));
+            let _ = reply.send(result);
             Ok(TransportCommandOutcome::Continue)
         }
     }

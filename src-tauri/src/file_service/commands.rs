@@ -102,15 +102,19 @@ pub(crate) async fn set_shared_dir(
         .map(public)
 }
 
+/// `password` is optional: the frontend manages the secret only through
+/// `file_service_set_password` (keyring), so this command receives just the
+/// username. `None`/empty keeps the current keyring password, matching
+/// `update_credentials`' empty-password semantics.
 #[tauri::command]
 pub(crate) async fn set_credentials(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     username: String,
-    password: String,
+    password: Option<String>,
 ) -> Result<FileServicePublicConfig, String> {
     FileServiceService::new(app, state.inner())
-        .update_credentials(username, password)
+        .update_credentials(username, password.unwrap_or_default())
         .await
         .map(public)
 }

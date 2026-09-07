@@ -43,7 +43,10 @@ pub(crate) fn path_settings_get(state: tauri::State<'_, AppState>) -> Result<Pat
 }
 
 /// Saves the next Rust-owned data and log directories. The running local store
-/// and file logger keep using their startup paths until restart.
+/// and file logger keep using their startup paths until restart; the hot
+/// replacement below only feeds persistence and the settings display. Runtime
+/// consumers that must agree with the live store/logger (log viewer, SFTP host
+/// key) read `AppState::startup_paths()` instead.
 #[tauri::command]
 pub(crate) async fn path_settings_set(
     state: tauri::State<'_, AppState>,
