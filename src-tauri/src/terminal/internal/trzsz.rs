@@ -1,9 +1,14 @@
-use std::{collections::HashMap, io::SeekFrom, path::PathBuf, time::UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    io::{Read, Write},
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::UNIX_EPOCH,
+};
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::{
     logging,
@@ -17,7 +22,8 @@ use crate::{
 };
 
 const TRZSZ_SCOPE: &str = "terminal.trzsz";
-const TRZSZ_CHUNK_MAX_BYTES: usize = 1024 * 1024;
+// 前端自适应分块上限默认 10 MiB，这里留到 16 MiB 余量；base64 后单条 IPC 约 21 MiB 可接受
+const TRZSZ_CHUNK_MAX_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -186,33 +192,41 @@ impl TrzszEntry {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct TrzszDownloadSession {
-    file_entry: TrzszEntry,
-    bytes_written: u64,
-    checksum: TrzszChecksum,
+/// 一次传输内保持打开的文件句柄：offset 同时充当顺序性校验和已传输字节数，
+/// checksum 随每次读写增量更新，避免按块反复 open/seek/close。
+pub(crate) struct TrzszFileSession {
+    file: std::fs::File,
+    offset: u64,
+    checksum: md5::Context,
 }
 
-#[derive(Clone)]
-pub(crate) struct TrzszChecksum {
-    context: md5::Context,
-    bytes_hashed: u64,
-}
-
-impl Default for TrzszChecksum {
-    fn default() -> Self {
+impl TrzszFileSession {
+    fn new(file: std::fs::File) -> Self {
         Self {
-            context: md5::Context::new(),
-            bytes_hashed: 0,
+            file,
+            offset: 0,
+            checksum: md5::Context::new(),
         }
     }
+
+    fn digest_base64(&self) -> String {
+        STANDARD_NO_PAD.encode(self.checksum.clone().finalize().0)
+    }
+}
+
+type SharedFileSession = Arc<Mutex<TrzszFileSession>>;
+
+pub(crate) struct TrzszDownloadSession {
+    session: SharedFileSession,
+    path: PathBuf,
+    name: String,
 }
 
 #[derive(Default)]
 pub(crate) struct TrzszRuntime {
     pub(crate) entries: HashMap<String, TrzszEntry>,
-    pub(crate) downloads: HashMap<String, TrzszDownloadSession>,
-    pub(crate) upload_checksums: HashMap<String, TrzszChecksum>,
+    uploads: HashMap<String, SharedFileSession>,
+    downloads: HashMap<String, TrzszDownloadSession>,
 }
 
 impl TrzszRuntime {
@@ -276,7 +290,7 @@ pub(crate) async fn trzsz_choose_download_directory(
         logging::event(TRZSZ_SCOPE, "picker.download_directory.cancelled").debug();
         return Ok(None);
     };
-    let descriptor = register_directory(state.inner(), path).await?;
+    let descriptor = register_path(state.inner(), &path).await?;
     logging::event(TRZSZ_SCOPE, "picker.download_directory.selected")
         .field("entry_id", &descriptor.entry_id)
         .field("name", &descriptor.name)
@@ -344,41 +358,57 @@ pub(crate) async fn trzsz_read_file_chunk(
         return Err(format!("trzsz entry '{}' is not a file", request.entry_id));
     }
     let length = request.length.clamp(1, TRZSZ_CHUNK_MAX_BYTES);
-    let mut file = tokio::fs::File::open(&entry.path)
-        .await
-        .map_err(|e| format!("failed to open upload file '{}': {e}", entry.path.display()))?;
-    file.seek(SeekFrom::Start(request.offset))
-        .await
-        .map_err(|e| format!("failed to seek upload file '{}': {e}", entry.path.display()))?;
-    let mut buffer = vec![0_u8; length];
-    let bytes_read = file
-        .read(&mut buffer)
-        .await
-        .map_err(|e| format!("failed to read upload file '{}': {e}", entry.path.display()))?;
-    buffer.truncate(bytes_read);
 
-    {
-        let mut runtime = lock_runtime(state.inner());
-        let checksum = runtime
-            .upload_checksums
-            .entry(request.entry_id.clone())
-            .or_default();
-        if request.offset == 0 && checksum.bytes_hashed != 0 {
-            *checksum = TrzszChecksum::default();
-        }
-        if request.offset != checksum.bytes_hashed {
+    let session = if request.offset == 0 {
+        // 每次从 0 开始视为新上传，重置该 entry 的会话（覆盖中止后重传的场景）
+        let file = std::fs::File::open(&entry.path)
+            .map_err(|e| format!("failed to open upload file '{}': {e}", entry.path.display()))?;
+        let session: SharedFileSession = Arc::new(Mutex::new(TrzszFileSession::new(file)));
+        lock_runtime(state.inner())
+            .uploads
+            .insert(request.entry_id.clone(), session.clone());
+        session
+    } else {
+        lock_runtime(state.inner())
+            .uploads
+            .get(&request.entry_id)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "trzsz upload '{}' did not start at offset 0",
+                    request.entry_id
+                )
+            })?
+    };
+
+    let entry_id = request.entry_id.clone();
+    let expected_offset = request.offset;
+    let buffer = tokio::task::spawn_blocking(move || {
+        let mut session = session
+            .lock()
+            .map_err(|_| format!("trzsz upload session '{entry_id}' is poisoned"))?;
+        if session.offset != expected_offset {
             return Err(format!(
-                "trzsz upload checksum for '{}' is non-sequential: expected offset {}, got {}",
-                request.entry_id, checksum.bytes_hashed, request.offset
+                "trzsz upload checksum for '{entry_id}' is non-sequential: expected offset {expected_offset}, got {}",
+                session.offset
             ));
         }
-        checksum.context.consume(&buffer);
-        checksum.bytes_hashed = checksum.bytes_hashed.saturating_add(bytes_read as u64);
-    }
+        let mut buffer = vec![0_u8; length];
+        let bytes_read = session
+            .file
+            .read(&mut buffer)
+            .map_err(|e| format!("failed to read upload file: {e}"))?;
+        buffer.truncate(bytes_read);
+        session.checksum.consume(&buffer);
+        session.offset += bytes_read as u64;
+        Ok::<Vec<u8>, String>(buffer)
+    })
+    .await
+    .map_err(|e| format!("trzsz upload read task failed: {e}"))??;
 
     Ok(TrzszReadFileChunkResult {
+        bytes_read: buffer.len(),
         data_base64: STANDARD_NO_PAD.encode(&buffer),
-        bytes_read,
     })
 }
 
@@ -417,8 +447,7 @@ pub(crate) async fn trzsz_begin_download(
     }
     let file_name = normalize_terminal_transfer_name(&request.file_name, "download");
     let path = unique_terminal_transfer_download_path(&parent.path, &file_name);
-    tokio::fs::File::create(&path)
-        .await
+    let file = std::fs::File::create(&path)
         .map_err(|e| format!("failed to create download file '{}': {e}", path.display()))?;
     let (file_entry, metadata) = register_entry_with_metadata_async(state.inner(), path).await?;
     let transfer_id = crate::ids::new_id();
@@ -429,9 +458,9 @@ pub(crate) async fn trzsz_begin_download(
         runtime.downloads.insert(
             transfer_id.clone(),
             TrzszDownloadSession {
-                file_entry,
-                bytes_written: 0,
-                checksum: TrzszChecksum::default(),
+                session: Arc::new(Mutex::new(TrzszFileSession::new(file))),
+                path: file_entry.path.clone(),
+                name: descriptor.name.clone(),
             },
         );
     }
@@ -456,37 +485,26 @@ pub(crate) async fn trzsz_write_download_chunk(
         .decode(request.data_base64.as_bytes())
         .map_err(|e| format!("invalid trzsz download chunk base64: {e}"))?;
 
-    let path = {
-        let runtime = lock_runtime(state.inner());
-        runtime
-            .downloads
-            .get(&request.transfer_id)
-            .map(|download| download.file_entry.path.clone())
-            .ok_or_else(|| format!("trzsz download '{}' is not active", request.transfer_id))?
-    };
+    let session = lock_runtime(state.inner())
+        .downloads
+        .get(&request.transfer_id)
+        .map(|download| download.session.clone())
+        .ok_or_else(|| format!("trzsz download '{}' is not active", request.transfer_id))?;
 
-    let mut file = tokio::fs::OpenOptions::new()
-        .append(true)
-        .open(&path)
-        .await
-        .map_err(|e| format!("failed to open download file '{}': {e}", path.display()))?;
-    file.write_all(&bytes)
-        .await
-        .map_err(|e| format!("failed to write download file '{}': {e}", path.display()))?;
-
-    {
-        let mut runtime = lock_runtime(state.inner());
-        let download = runtime
-            .downloads
-            .get_mut(&request.transfer_id)
-            .ok_or_else(|| format!("trzsz download '{}' is not active", request.transfer_id))?;
-        download.checksum.context.consume(&bytes);
-        download.checksum.bytes_hashed = download
-            .checksum
-            .bytes_hashed
-            .saturating_add(bytes.len() as u64);
-        download.bytes_written = download.bytes_written.saturating_add(bytes.len() as u64);
-    }
+    tokio::task::spawn_blocking(move || {
+        let mut session = session
+            .lock()
+            .map_err(|_| "trzsz download session is poisoned".to_string())?;
+        session
+            .file
+            .write_all(&bytes)
+            .map_err(|e| format!("failed to write download file: {e}"))?;
+        session.checksum.consume(&bytes);
+        session.offset += bytes.len() as u64;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("trzsz download write task failed: {e}"))??;
 
     Ok(())
 }
@@ -504,27 +522,41 @@ pub(crate) async fn trzsz_finish_download(
     let Some(download) = download else {
         return Ok(());
     };
+    let path = download.path.clone();
 
-    let descriptor = build_descriptor_async(&download.file_entry).await?;
+    let bytes_written = tokio::task::spawn_blocking(move || {
+        let mut session = download
+            .session
+            .lock()
+            .map_err(|_| "trzsz download session is poisoned".to_string())?;
+        session
+            .file
+            .flush()
+            .map_err(|e| format!("failed to flush download file '{}': {e}", path.display()))?;
+        Ok::<u64, String>(session.offset)
+    })
+    .await
+    .map_err(|e| format!("trzsz download finish task failed: {e}"))??;
+
     if request.aborted {
         // 中止语义只来自前端 deleteFile（如 MD5 校验失败），必须把已落盘的损坏文件一并删除，
         // 否则用户磁盘上会留下与完整文件无异的坏文件；删除失败仅记录，不影响会话清理
-        if let Err(error) = tokio::fs::remove_file(&download.file_entry.path).await {
+        if let Err(error) = tokio::fs::remove_file(&download.path).await {
             logging::event(TRZSZ_SCOPE, "download.abort_remove_failed")
                 .field("transfer_id", &request.transfer_id)
-                .field("path", download.file_entry.path.display().to_string())
+                .field("path", download.path.display().to_string())
                 .field("error", error.to_string())
                 .warn();
         }
         logging::event(TRZSZ_SCOPE, "download.aborted")
             .field("transfer_id", &request.transfer_id)
-            .field("name", &descriptor.name)
+            .field("name", &download.name)
             .warn();
     } else {
         logging::event(TRZSZ_SCOPE, "download.finished")
             .field("transfer_id", &request.transfer_id)
-            .field("name", &descriptor.name)
-            .field("bytes", download.bytes_written)
+            .field("name", &download.name)
+            .field("bytes", bytes_written)
             .info();
     }
     Ok(())
@@ -535,16 +567,20 @@ pub(crate) fn trzsz_finish_upload_checksum(
     state: tauri::State<'_, AppState>,
     request: TrzszEntryRequest,
 ) -> Result<TrzszChecksumResult, String> {
-    let checksum = {
+    let session = {
         let mut runtime = lock_runtime(state.inner());
-        runtime
-            .upload_checksums
-            .remove(&request.entry_id)
-            .unwrap_or_default()
+        runtime.uploads.remove(&request.entry_id)
+    };
+    let digest_base64 = match session {
+        Some(session) => session
+            .lock()
+            .map_err(|_| format!("trzsz upload session '{}' is poisoned", request.entry_id))?
+            .digest_base64(),
+        None => STANDARD_NO_PAD.encode(md5::Context::new().finalize().0),
     };
     Ok(TrzszChecksumResult {
         checksum_id: request.entry_id,
-        digest_base64: checksum_digest_base64(checksum),
+        digest_base64,
     })
 }
 
@@ -553,17 +589,23 @@ pub(crate) fn trzsz_get_download_checksum(
     state: tauri::State<'_, AppState>,
     request: TrzszChecksumRequest,
 ) -> Result<TrzszChecksumResult, String> {
-    let checksum = {
-        let runtime = lock_runtime(state.inner());
-        runtime
-            .downloads
-            .get(&request.checksum_id)
-            .map(|download| download.checksum.clone())
-            .ok_or_else(|| format!("trzsz download '{}' is not active", request.checksum_id))?
+    let digest_base64 = {
+        let session = {
+            let runtime = lock_runtime(state.inner());
+            runtime
+                .downloads
+                .get(&request.checksum_id)
+                .map(|download| download.session.clone())
+                .ok_or_else(|| format!("trzsz download '{}' is not active", request.checksum_id))?
+        };
+        let guard = session
+            .lock()
+            .map_err(|_| "trzsz download session is poisoned".to_string())?;
+        guard.digest_base64()
     };
     Ok(TrzszChecksumResult {
         checksum_id: request.checksum_id,
-        digest_base64: checksum_digest_base64(checksum),
+        digest_base64,
     })
 }
 
@@ -571,30 +613,21 @@ fn lock_runtime(state: &crate::state::AppState) -> parking_lot::MutexGuard<'_, T
     state.trzsz_runtime()
 }
 
-fn checksum_digest_base64(checksum: TrzszChecksum) -> String {
-    STANDARD_NO_PAD.encode(checksum.context.finalize().0)
+async fn register_path(state: &AppState, path: &str) -> Result<TrzszEntryDescriptor, String> {
+    let path = expand_local_path(path)?;
+    let (entry, metadata) = register_entry_with_metadata_async(state, path).await?;
+    Ok(entry.descriptor(metadata))
 }
 
 async fn register_paths(
     state: &AppState,
     paths: Vec<String>,
 ) -> Result<Vec<TrzszEntryDescriptor>, String> {
-    let mut descriptors = Vec::new();
-    for path in paths {
-        let path = expand_local_path(&path)?;
-        let (entry, metadata) = register_entry_with_metadata_async(state, path).await?;
-        descriptors.push(entry.descriptor(metadata));
+    let mut descriptors = Vec::with_capacity(paths.len());
+    for path in &paths {
+        descriptors.push(register_path(state, path).await?);
     }
     Ok(descriptors)
-}
-
-async fn register_directory(
-    state: &AppState,
-    path: String,
-) -> Result<TrzszEntryDescriptor, String> {
-    let path = expand_local_path(&path)?;
-    let (entry, metadata) = register_entry_with_metadata_async(state, path).await?;
-    Ok(entry.descriptor(metadata))
 }
 
 async fn register_entry_with_metadata_async(
@@ -618,12 +651,47 @@ fn get_registered_entry(state: &AppState, entry_id: &str) -> Result<TrzszEntry, 
         .ok_or_else(|| format!("trzsz entry '{entry_id}' was not found"))
 }
 
-async fn build_descriptor_async(entry: &TrzszEntry) -> Result<TrzszEntryDescriptor, String> {
-    let metadata = tokio::fs::metadata(&entry.path).await.map_err(|e| {
-        format!(
-            "failed to read entry metadata '{}': {e}",
-            entry.path.display()
-        )
-    })?;
-    Ok(entry.descriptor(metadata))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_file(content: &[u8]) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("xterm-trzsz-test-{}", crate::ids::new_id()));
+        std::fs::write(&path, content).expect("write temp file");
+        path
+    }
+
+    #[test]
+    fn sequential_reads_track_offset_and_checksum() {
+        let path = temp_file(b"hello trzsz");
+        let file = std::fs::File::open(&path).expect("open temp file");
+        let mut session = TrzszFileSession::new(file);
+
+        let mut buffer = vec![0_u8; 5];
+        let read = session.file.read(&mut buffer).expect("read first chunk");
+        buffer.truncate(read);
+        session.checksum.consume(&buffer);
+        session.offset += read as u64;
+        assert_eq!(session.offset, 5);
+        assert_eq!(buffer, b"hello");
+
+        assert_eq!(
+            session.digest_base64(),
+            STANDARD_NO_PAD.encode(md5::compute(b"hello").0)
+        );
+
+        std::fs::remove_file(&path).expect("remove temp file");
+    }
+
+    #[test]
+    fn empty_session_digest_matches_empty_md5() {
+        let path = temp_file(b"");
+        let file = std::fs::File::open(&path).expect("open temp file");
+        let session = TrzszFileSession::new(file);
+        assert_eq!(
+            session.digest_base64(),
+            STANDARD_NO_PAD.encode(md5::compute(b"").0)
+        );
+        std::fs::remove_file(&path).expect("remove temp file");
+    }
 }

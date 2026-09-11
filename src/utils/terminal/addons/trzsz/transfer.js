@@ -1,9 +1,9 @@
-import { bytesEqual, bytesToUtf8, decodeBuffer, encodeBuffer } from "./bytes";
-import { DEFAULT_MAX_CHUNK_SIZE, EMPTY_MD5, TRZSZ_VERSION } from "./constants";
-import { normalizeError, protocolParseError, TransferError } from "./errors";
-import { escapeCodes, escapeData, unescapeData } from "./escape";
-import { TransferBuffer } from "./terminalBuffer";
-import { stripTmuxStatusLine } from "./text";
+import { bytesEqual, bytesToUtf8, decodeBuffer, encodeBuffer } from "./bytes.js";
+import { DEFAULT_MAX_CHUNK_SIZE, EMPTY_MD5, TRZSZ_VERSION } from "./constants.js";
+import { normalizeError, protocolParseError, TransferError } from "./errors.js";
+import { escapeCodes, escapeData, unescapeData } from "./escape.js";
+import { TransferBuffer } from "./terminalBuffer.js";
+import { stripTmuxStatusLine } from "./text.js";
 
 export class TrzszTransfer {
   constructor({ sendToServer, maxDataChunkSize = DEFAULT_MAX_CHUNK_SIZE }) {

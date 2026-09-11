@@ -21,6 +21,12 @@ const emit = defineEmits([
 ]);
 
 const { t } = useI18n();
+const hasFilteredCredentials = computed(() => props.filteredCredentials.length > 0);
+// Telnet/serial only have the inline password method; the tabs are only
+// meaningful when a saved credential can be picked or is still referenced.
+const showAuthMethodTabs = computed(
+  () => hasFilteredCredentials.value || Boolean(props.form.savedCredentialId),
+);
 const credentialMode = computed(() =>
   props.form.savedCredentialId ? "saved" : "password",
 );
@@ -47,11 +53,14 @@ function selectCredentialMode(mode) {
 </script>
 
 <template>
-  <div class="conn-field-group">
+  <div
+    v-if="showAuthMethodTabs"
+    class="conn-field-group"
+  >
     <span class="conn-field-label">{{ t("connectionDialog.fields.authMethod") }}</span>
     <CredentialModeTabs
       :model-value="credentialMode"
-      show-saved
+      :show-saved="hasFilteredCredentials"
       @select="selectCredentialMode"
     />
   </div>

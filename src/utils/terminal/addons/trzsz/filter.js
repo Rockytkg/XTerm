@@ -1,12 +1,13 @@
-import { asBytes, bytesToBinaryString, stringToBytes } from "./bytes";
-import { DRAG_INIT_TIMEOUT, TRZSZ_TRIGGER, TRZSZ_TRIGGER_PATTERN } from "./constants";
-import { checkDuplicateNames, chooseSendFiles, openSaveFile, parseDragPaths } from "./files";
-import { chooseDownloadDirectory } from "./ipc";
-import { TextProgressBar } from "./progress";
-import { stripServerOutput } from "./text";
-import { TrzszTransfer } from "./transfer";
+import { asBytes, bytesToBinaryString, stringToBytes } from "./bytes.js";
+import { DRAG_INIT_TIMEOUT, TRZSZ_TRIGGER, TRZSZ_TRIGGER_PATTERN } from "./constants.js";
+import { checkDuplicateNames, chooseSendFiles, openSaveFile, parseDragPaths } from "./files.js";
+import { chooseDownloadDirectory } from "./ipc.js";
+import { TextProgressBar } from "./progress.js";
+import { stripServerOutput } from "./text.js";
+import { TrzszTransfer } from "./transfer.js";
 
 const TRIGGER_BYTES = stringToBytes(TRZSZ_TRIGGER);
+const TRZ_COMMANDS = new Set(["trz", "trz -d"]);
 
 function findMagicOffset(output) {
   if (typeof output === "string") {
@@ -133,7 +134,7 @@ export class LocalTrzszFilter {
     if (this._uploadSkipCommand) {
       this._uploadSkipCommand = false;
       const stripped = stripServerOutput(output);
-      if (stripped === "trz" || stripped === "trz -d") {
+      if (TRZ_COMMANDS.has(stripped)) {
         this._writeToTerminal("\r\n");
         return;
       }
@@ -143,7 +144,7 @@ export class LocalTrzszFilter {
     if (split) {
       this._detectAndHandle(split.protocol);
       const strippedPrefix = stripServerOutput(split.prefix);
-      if (strippedPrefix === "trz" || strippedPrefix === "trz -d") {
+      if (TRZ_COMMANDS.has(strippedPrefix)) {
         this._writeToTerminal("\r\n");
         return;
       }

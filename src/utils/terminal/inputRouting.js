@@ -1,5 +1,5 @@
 import { BACKSPACE_SENDS } from "../terminalSessionOptions";
-import { bytesToBase64, stringToBytes } from "./addons/trzsz/bytes";
+import { bytesToBase64, stringToBytes } from "./addons/trzsz/bytes.js";
 
 export function binaryStringToBase64(value) {
   return bytesToBase64(stringToBytes(String(value || "")));

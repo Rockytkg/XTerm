@@ -201,9 +201,6 @@ export default defineConfig({
     "conn-dialog-overlay": {
       "z-index": "30",
       background: "var(--overlay-bg)",
-      // WKWebView / old WebKitGTK need the prefixed blur; unprefixed follows.
-      "-webkit-backdrop-filter": "blur(4px)",
-      "backdrop-filter": "blur(4px)",
     },
     "conn-dialog":
       "grid grid-rows-[auto_minmax(0,1fr)_auto] [inline-size:min(560px,calc(var(--viewport-min-inline)-var(--space-6)))] [max-block-size:calc(var(--viewport-min-block)-var(--space-6))] overflow-hidden rounded-[14px] border border-border bg-bg-secondary shadow-[0_24px_70px_oklch(0_0_0/0.2),0_6px_18px_oklch(0_0_0/0.12)]",
@@ -241,9 +238,6 @@ export default defineConfig({
     "conn-jump-dialog-overlay": {
       "z-index": "40",
       background: "var(--overlay-bg)",
-      // WKWebView / old WebKitGTK need the prefixed blur; unprefixed follows.
-      "-webkit-backdrop-filter": "blur(4px)",
-      "backdrop-filter": "blur(4px)",
     },
     "conn-jump-dialog":
       "grid grid-rows-[auto_minmax(0,1fr)_auto] [inline-size:min(920px,calc(var(--viewport-min-inline)-var(--space-6)))] [block-size:min(680px,calc(var(--viewport-min-block)-var(--space-6)))] overflow-hidden rounded-[14px] border border-border bg-bg-secondary shadow-[0_24px_70px_oklch(0_0_0/0.2),0_6px_18px_oklch(0_0_0/0.12)]",

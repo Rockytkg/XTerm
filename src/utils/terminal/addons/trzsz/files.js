@@ -1,6 +1,6 @@
-import { base64ToBytes, bytesToBase64 } from "./bytes";
-import { EMPTY_MD5 } from "./constants";
-import { TransferError } from "./errors";
+import { base64ToBytes, bytesToBase64 } from "./bytes.js";
+import { EMPTY_MD5 } from "./constants.js";
+import { TransferError } from "./errors.js";
 import {
   beginDownload,
   chooseUploadEntries,
@@ -12,7 +12,7 @@ import {
   readFileChunk,
   registerDragPaths,
   writeDownloadChunk,
-} from "./ipc";
+} from "./ipc.js";
 
 export function checkDuplicateNames(files) {
   const names = new Set();
@@ -152,6 +152,14 @@ async function collectTauriReaders(entry, pathId, relPath, output) {
   }
 }
 
+async function entriesToReaders(entries) {
+  const readers = [];
+  for (const [index, entry] of (entries || []).entries()) {
+    await collectTauriReaders(entry, index, [entry.name], readers);
+  }
+  return readers;
+}
+
 export async function chooseSendFiles({ directory, messages }) {
   const entries = await chooseUploadEntries({
     directory,
@@ -159,21 +167,11 @@ export async function chooseSendFiles({ directory, messages }) {
     allFilesLabel: messages.allFilesLabel,
   });
   if (!entries?.length) return undefined;
-  const readers = [];
-  for (const [index, entry] of entries.entries()) {
-    await collectTauriReaders(entry, index, [entry.name], readers);
-  }
-  return readers;
+  return entriesToReaders(entries);
 }
 
 export async function parseDragPaths(paths) {
-  const entries = await registerDragPaths(paths);
-  if (!entries?.length) return [];
-  const readers = [];
-  for (const [index, entry] of entries.entries()) {
-    await collectTauriReaders(entry, index, [entry.name], readers);
-  }
-  return readers;
+  return entriesToReaders(await registerDragPaths(paths));
 }
 
 export async function openSaveFile(saveParam, encodedName, directory, overwrite) {

@@ -1,4 +1,4 @@
-import { bytesToUtf8, decodeBuffer, encodeBuffer } from "./bytes";
+import { bytesToUtf8, decodeBuffer, encodeBuffer } from "./bytes.js";
 
 export class TransferError extends Error {
   constructor(message, type = null, trace = false) {

@@ -56,6 +56,11 @@
     position: fixed;
     inset: 0;
     background: var(--overlay-bg);
+
+    /* WKWebView / old WebKitGTK need the prefixed blur; unprefixed follows. */
+    /* stylelint-disable-next-line property-no-vendor-prefix */
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
   }
 
   .host-key-dialog-overlay {

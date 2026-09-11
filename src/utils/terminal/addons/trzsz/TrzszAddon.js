@@ -4,11 +4,11 @@ import {
   bytesToBase64,
   bytesToBinaryString,
   payloadBytes,
-} from "./bytes";
-import { TRZSZ_TRIGGER } from "./constants";
-import { LocalTrzszFilter } from "./filter";
-import { formatSavedFiles } from "./text";
-import { connectionCan } from "../../../connectionCapabilities";
+} from "./bytes.js";
+import { TRZSZ_TRIGGER } from "./constants.js";
+import { LocalTrzszFilter } from "./filter.js";
+import { formatSavedFiles } from "./text.js";
+import { connectionCan } from "../../../connectionCapabilities.js";
 
 const DEFAULT_TRZSZ_MESSAGES = Object.freeze({
   chooseUploadTitle: "Choose files to transfer",
@@ -62,7 +62,9 @@ export class TrzszAddon {
           ? this._sendText(input)
           : this._sendBytes(bytesToBase64(asBytes(input))),
       onTransferModeChange: (enabled) => {
-        return this._setRawOutputMode(enabled);
+        const result = this._setRawOutputMode(enabled);
+        if (!enabled) this._focusTerminal();
+        return result;
       },
     });
     this._resizeDisposable = terminal.onResize(({ cols }) => {
@@ -150,6 +152,14 @@ export class TrzszAddon {
   _canProcess() {
     const context = this._getSessionContext?.();
     return !!this._filter && context?.active && connectionCan(context, "sftp") && this.isEnabled();
+  }
+
+  // 文件选择对话框与传输进度会夺走焦点，传输结束后归还给终端；
+  // 仅当会话仍在前台活跃时聚焦，避免把焦点从其他面板抢回来。
+  _focusTerminal() {
+    const context = this._getSessionContext?.();
+    if (!context?.active) return;
+    this._terminal?.focus?.();
   }
 
   _setRawOutputMode(enabled) {

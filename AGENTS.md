@@ -29,6 +29,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 - `tests/`：Node 内置测试运行器的前端单元测试（如 `eventBridge.test.js`、`connectionStateMachine.test.js`）。
 - `docs/DESIGN.md`、`docs/SCRIPTING.md`、`docs/HIGHLIGHTING.md`、`README.md`：设计、脚本编写、关键字高亮使用指南与产品说明（中文）。
 - `examples/`：可供用户导入的示例资源（`highlight-schemes/` 终端高亮方案、`scripts/` 示例脚本，kebab-case 命名）。
+- `patches/`：pnpm patch（在 `pnpm-workspace.yaml` 的 `patchedDependencies` 登记）。`@xterm__addon-webgl@0.19.0.patch` 修复 WebGL 渲染器图集页数超过纹理容量时的致命崩溃（`Cannot read properties of undefined (reading 'version')`）：`_createNewPage` 无法合并出 4 个同尺寸页时改为整体驱逐图集（移植自上游 master 的 `_evictAllPages`），`GlyphRenderer.render` 的页遍历按纹理容量钳制；上游 0.20 正式版带此修复，升级后可移除该 patch。
 
 不要直接编辑 `node_modules/`、`dist/`、`src-tauri/target/`、`src-tauri/gen/` 等生成或依赖目录。
 

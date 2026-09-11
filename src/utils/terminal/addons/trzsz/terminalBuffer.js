@@ -1,5 +1,5 @@
-import { asBytes, bytesToBinaryString } from "./bytes";
-import { TransferError } from "./errors";
+import { asBytes, bytesToBinaryString } from "./bytes.js";
+import { TransferError } from "./errors.js";
 
 function joinBytes(chunks, length) {
   const result = new Uint8Array(length);

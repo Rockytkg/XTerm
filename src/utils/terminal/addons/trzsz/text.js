@@ -1,5 +1,5 @@
-import { asBytes, bytesToBinaryString } from "./bytes";
-import { isVtSequenceEnd } from "./terminalBuffer";
+import { asBytes, bytesToBinaryString } from "./bytes.js";
+import { isVtSequenceEnd } from "./terminalBuffer.js";
 
 export function stripTmuxStatusLine(value) {
   let text = value;
