@@ -146,7 +146,7 @@ export function createSshConnectionFlow({
   isExpectedCloseError,
   preferences,
   refreshConnectionList,
-  reconnect,
+  reconnectSession,
   onAuthenticatedResponse,
   requestClose,
   sshCredentialPromptController,
@@ -214,7 +214,7 @@ export function createSshConnectionFlow({
       await updateConnectionProfile(connectionId, profile);
     }
     await refreshConnectionList();
-    reconnect(connectionId, { forceReconnect: true, preserveActiveTab: true, sessionId });
+    reconnectSession(sessionId);
   }
 
   async function persistCredentialPrompt(prompt, input, persistence) {
@@ -250,10 +250,7 @@ export function createSshConnectionFlow({
       return true;
     }
 
-    reconnect(connectionId, {
-      forceReconnect: true,
-      preserveActiveTab: true,
-      sessionId: prompt.sessionId,
+    reconnectSession(prompt.sessionId, {
       sshCredential: sshCredentialOverride(input),
     });
     return true;
@@ -350,7 +347,12 @@ export function createSshConnectionFlow({
           logger.error("Failed to cancel pending SSH host-key connection", error);
         }
       });
-      connectionRuntime.cancel(prompt.sessionId || prompt.connectionId, prompt.attemptToken);
+      // 不能调用 connectionRuntime.cancel：cancel 进入 closing 相位，只有
+      // closeSession 的 finally 会用 closeComplete 收尾；此处后端 pending open
+      // 已由 terminal_connection_open_cancel 丢弃，没有进行中的会话关闭，
+      // 必须用 finish 直接结束本次 attempt，否则 closing 残留会让后续
+      // 回车重连被 connection.begin 拒绝（弹窗不再出现、终端无输出）。
+      connectionRuntime.finish(prompt.sessionId || prompt.connectionId, prompt.attemptToken);
       finishConnectionAttempt?.(prompt.sessionId || prompt.connectionId, prompt.attemptToken);
       if (prompt.sessionId) pendingCredentials.delete(prompt.sessionId);
       dispatchConnectionEvent(prompt.sessionId || prompt.connectionId, {

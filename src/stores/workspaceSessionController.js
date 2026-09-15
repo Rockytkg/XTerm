@@ -69,7 +69,7 @@ export function createWorkspaceSessionController({
     isExpectedCloseError,
     preferences,
     refreshConnectionList,
-    reconnect: connectTo,
+    reconnectSession,
     onAuthenticatedResponse: (connectionId, response, context = {}) => {
       const frontendSessionId = context.sessionId || connectionId;
       if (!connectionRuntime.isCurrent(frontendSessionId, context.attemptToken)) {
@@ -458,7 +458,6 @@ export function createWorkspaceSessionController({
       attemptToken,
       openRequestId: backendOpenRequestId,
       sessionId: frontendSessionId,
-      preserveActiveTab: options.preserveActiveTab,
     });
     void Promise.resolve(waitForTerminalPresentation?.(frontendSessionId)).then((presentation) => {
       if (presentation === "cancelled" || presentation === "superseded") return;
@@ -471,6 +470,21 @@ export function createWorkspaceSessionController({
       openConnectionInBackground(connectionId, openOptions);
     });
     return true;
+  }
+
+  function reconnectSession(sessionId, options = {}) {
+    const connectionId = connectionIdForSession(sessionId);
+    if (!connectionId) {
+      logger.warn("connection.reconnect.missing_session", { sessionId });
+      return false;
+    }
+    logger.info("connection.reconnect.requested", { connectionId, sessionId });
+    return connectTo(connectionId, {
+      ...options,
+      forceReconnect: true,
+      preserveActiveTab: true,
+      sessionId,
+    });
   }
 
   function answerHostKeyPrompt(mode) {
@@ -591,6 +605,7 @@ export function createWorkspaceSessionController({
     connectTo,
     handleBackendSessionEnded,
     reconnectSerialAutoBaud,
+    reconnectSession,
     removeConnection,
     selectConnection,
     toggleActiveSessionHighlight,

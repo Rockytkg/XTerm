@@ -16,7 +16,6 @@ const props = defineProps({
 
 const {
   activeConnectionInfo,
-  activeConnectionState,
   activeRemoteWorkingDirectory,
   activeTab,
   activeTerminalSize,
@@ -58,6 +57,9 @@ watch(canUseSftp, (enabled) => {
 /**
  * Handles terminal resize events from TerminalWorkspacePane.
  * Guards against invalid dimensions before updating the store.
+ * Geometry reporting is a pure data flow: it must never trigger connection
+ * lifecycle actions. Reconnects only come from explicit intents (Enter retry
+ * via workspace.reconnectSession, session clicks, deep-links, credential prompts).
  * @param {string} sessionId - The terminal session ID that triggered the resize
  * @param {{ cols?: number, rows?: number }} size - The new terminal dimensions
  */
@@ -69,30 +71,6 @@ function handleTerminalResize(sessionId, size) {
   if (activeTerminalSize.value.cols !== cols || activeTerminalSize.value.rows !== rows) {
     activeTerminalSize.value = { cols, rows };
   }
-  if (!activeConnectionInfo.value?.sessionId) {
-    const status = activeConnectionState.value?.status || "idle";
-    if (status === "idle" || status === "failed") {
-      workspace.connectTo(activeConnectionInfo.value.connectionId, {
-        preserveActiveTab: true,
-        sessionId,
-      });
-    }
-  }
-}
-
-/**
- * Triggers a forced reconnection to the given connection while preserving the active tab.
- * @param {string} sessionId - The terminal session ID to reconnect
- */
-function handleRetryConnection(sessionId) {
-  const connectionId =
-    openSessions.value.find((session) => session.id === sessionId)?.connectionId || "";
-  if (!connectionId) return;
-  workspace.connectTo(connectionId, {
-    forceReconnect: true,
-    preserveActiveTab: true,
-    sessionId,
-  });
 }
 
 /**
@@ -131,7 +109,7 @@ function handleRecordChunk(connectionId, chunk) {
         @font-size-change="preferences.terminalFontSize = $event"
         @record-chunk="handleRecordChunk"
         @resize="handleTerminalResize"
-        @retry-connection="handleRetryConnection"
+        @retry-connection="workspace.reconnectSession"
         @terminal-ready="workspace.markTerminalPresentationReady"
       />
 
