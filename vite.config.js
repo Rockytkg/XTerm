@@ -3,6 +3,12 @@ import vue from "@vitejs/plugin-vue";
 import UnoCSS from "unocss/vite";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      util: new URL("./src/shims/node-util.js", import.meta.url).pathname,
+      buffer: new URL("./src/shims/node-buffer.js", import.meta.url).pathname,
+    },
+  },
   plugins: [UnoCSS({ inspector: false }), vue()],
   clearScreen: false,
   optimizeDeps: {
@@ -14,6 +20,9 @@ export default defineConfig({
     minify: "terser",
     cssMinify: "lightningcss",
     reportCompressedSize: false,
+    // open-file-viewer bundles several format engines into one lazy chunk; the
+    // chunk is loaded only for file preview and cannot be usefully split further.
+    chunkSizeWarningLimit: 3000,
     terserOptions: {
       compress: {
         passes: 2,
@@ -98,6 +107,12 @@ export default defineConfig({
           if (nid.includes("/node_modules/@lucide/")) return "icons";
           // SFTP 文件预览库（懒加载）— 与 pdfjs 各自独立分包
           if (nid.includes("/node_modules/@open-file-viewer/")) return "open-file-viewer";
+          if (nid.includes("/node_modules/ag-psd/")) return "open-file-psd";
+          if (nid.includes("/node_modules/mammoth/")) return "open-file-mammoth";
+          if (nid.includes("/node_modules/docx-preview/")) return "open-file-docx";
+          if (nid.includes("/node_modules/mermaid/")) return "mermaid";
+          if (nid.includes("/node_modules/three/")) return "three";
+          if (nid.includes("/node_modules/xlsx/")) return "xlsx";
           if (nid.includes("/node_modules/pdfjs-dist/")) return "pdfjs";
           // UI primitives
           if (nid.includes("/node_modules/reka-ui/")) return "ui";
