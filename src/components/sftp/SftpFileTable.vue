@@ -124,269 +124,271 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main
-    :ref="setBrowserRef"
-    class="sftp-browser"
-    @click="$emit('clearSelection', $event)"
-    @dragover.prevent="$emit('domDragOver', $event)"
-    @dragleave="$emit('domDragLeave', $event)"
-    @drop="$emit('domDrop', $event)"
-    @scroll="updateViewport"
-  >
-    <span
-      v-if="loading"
-      class="sftp-skeleton-status"
-      role="status"
-      aria-live="polite"
-    >{{
-      labels.loading
-    }}</span>
-    <div
-      class="sftp-table"
-      role="table"
+  <div class="sftp-browser-shell">
+    <main
+      :ref="setBrowserRef"
+      class="sftp-browser"
+      @click="$emit('clearSelection', $event)"
+      @dragover.prevent="$emit('domDragOver', $event)"
+      @dragleave="$emit('domDragLeave', $event)"
+      @drop="$emit('domDrop', $event)"
+      @scroll="updateViewport"
     >
+      <span
+        v-if="loading"
+        class="sftp-skeleton-status"
+        role="status"
+        aria-live="polite"
+      >{{
+        labels.loading
+      }}</span>
       <div
-        class="sftp-table-head"
-        role="rowgroup"
+        class="sftp-table"
+        role="table"
       >
         <div
-          class="sftp-header-row"
-          role="row"
+          class="sftp-table-head"
+          role="rowgroup"
         >
-          <div role="columnheader">
-            {{ labels.name }}
-          </div>
-          <div role="columnheader">
-            {{ labels.type }}
-          </div>
-          <div role="columnheader">
-            {{ labels.size }}
-          </div>
           <div
-            role="columnheader"
-            class="sftp-compact-hidden"
-          >
-            {{ labels.modified }}
-          </div>
-        </div>
-      </div>
-      <div
-        :ref="setTableBodyRef"
-        class="sftp-table-body"
-        role="rowgroup"
-        :aria-busy="loading ? 'true' : 'false'"
-        @mousedown.capture="$emit('moveMouseDown', $event)"
-        @click.capture="$emit('suppressMoveClick', $event)"
-      >
-        <template v-if="loading">
-          <div
-            v-for="row in 10"
-            :key="`sftp-skeleton-${row}`"
-            class="sftp-row sftp-skeleton-row"
+            class="sftp-header-row"
             role="row"
-            aria-hidden="true"
           >
-            <div role="cell">
-              <span class="sftp-name-cell">
-                <span class="sftp-skeleton-icon" />
-                <span class="sftp-skeleton-bar sftp-skeleton-name" />
-              </span>
+            <div role="columnheader">
+              {{ labels.name }}
             </div>
-            <div role="cell">
-              <span class="sftp-skeleton-bar sftp-skeleton-type" />
+            <div role="columnheader">
+              {{ labels.type }}
             </div>
-            <div role="cell">
-              <span class="sftp-skeleton-bar sftp-skeleton-size" />
+            <div role="columnheader">
+              {{ labels.size }}
             </div>
             <div
-              role="cell"
+              role="columnheader"
               class="sftp-compact-hidden"
             >
-              <span class="sftp-skeleton-bar sftp-skeleton-modified" />
-            </div>
-          </div>
-        </template>
-        <div
-          v-else-if="isEmpty"
-          class="sftp-state-row"
-          role="row"
-        >
-          <div
-            class="sftp-state-cell"
-            role="cell"
-          >
-            <div class="sftp-state">
-              <Folder
-                :size="20"
-                stroke-width="1.7"
-              />
-              <span>{{ labels.emptyFolder }}</span>
+              {{ labels.modified }}
             </div>
           </div>
         </div>
-        <template v-else>
-          <div
-            v-if="visibleRange.top"
-            class="sftp-virtual-spacer"
-            :style="{ '--sftp-virtual-spacer-block': `${visibleRange.top}px` }"
-          />
-          <template
-            v-for="row in visibleRows"
-            :key="row.key"
-          >
+        <div
+          :ref="setTableBodyRef"
+          class="sftp-table-body"
+          role="rowgroup"
+          :aria-busy="loading ? 'true' : 'false'"
+          @mousedown.capture="$emit('moveMouseDown', $event)"
+          @click.capture="$emit('suppressMoveClick', $event)"
+        >
+          <template v-if="loading">
             <div
-              v-if="row.type === 'parent'"
-              tabindex="0"
-              class="sftp-row sftp-parent-row is-dir"
-              :class="{
-                'sftp-row-drop-target':
-                  dropTargetPath === row.entry.path || moveDropTargetPath === row.entry.path,
-              }"
+              v-for="row in 10"
+              :key="`sftp-skeleton-${row}`"
+              class="sftp-row sftp-skeleton-row"
               role="row"
-              :data-path="row.entry.path"
-              :data-row-key="row.key"
-              @dblclick="$emit('openParent')"
-              @keydown.enter.prevent="$emit('openParent')"
+              aria-hidden="true"
             >
               <div role="cell">
                 <span class="sftp-name-cell">
-                  <component
-                    :is="iconForSftpEntry(row.entry)"
-                    :size="16"
-                    stroke-width="1.8"
-                    class="text-accent"
-                  />
-                  <span>..</span>
+                  <span class="sftp-skeleton-icon" />
+                  <span class="sftp-skeleton-bar sftp-skeleton-name" />
                 </span>
               </div>
               <div role="cell">
-                {{ labels.folder }}
+                <span class="sftp-skeleton-bar sftp-skeleton-type" />
               </div>
               <div role="cell">
-                -
+                <span class="sftp-skeleton-bar sftp-skeleton-size" />
               </div>
               <div
                 role="cell"
                 class="sftp-compact-hidden"
               >
-                -
-              </div>
-            </div>
-            <div
-              v-else-if="row.type === 'creating'"
-              class="sftp-row is-selected is-editing sftp-row-selected sftp-row-editing"
-              :class="{ 'is-dir': creatingFolder }"
-              role="row"
-              :data-row-key="row.key"
-            >
-              <div role="cell">
-                <span class="sftp-name-cell">
-                  <component
-                    :is="creatingFolder ? Folder : File"
-                    :size="16"
-                    stroke-width="1.8"
-                    :class="{ 'text-accent': creatingFolder }"
-                  />
-                  <input
-                    :ref="setInlineEditInputRef"
-                    :value="inlineEdit.value"
-                    class="sftp-inline-name-input"
-                    :disabled="inlineEdit.committing"
-                    :aria-label="creatingFolder ? labels.newFolder : labels.newFile"
-                    @click.stop
-                    @dblclick.stop
-                    @input="$emit('updateInlineEditValue', $event.target.value)"
-                    @keydown.enter.prevent="commitInlineEdit"
-                    @keydown.esc.prevent="cancelInlineEdit"
-                    @blur="commitInlineEdit"
-                  >
-                </span>
-              </div>
-              <div role="cell">
-                {{ creatingFolder ? labels.folder : labels.file }}
-              </div>
-              <div role="cell">
-                -
-              </div>
-              <div
-                role="cell"
-                class="sftp-compact-hidden"
-              >
-                -
-              </div>
-            </div>
-            <div
-              v-else
-              tabindex="0"
-              class="sftp-row"
-              :class="{
-                'sftp-row-selected': selectedNames.has(row.entry.name),
-                'is-dir': row.entry.kind === 'dir',
-                'sftp-move-draggable': !isEditingEntry(row.entry),
-                'sftp-row-drop-target':
-                  dropTargetPath === row.entry.path || moveDropTargetPath === row.entry.path,
-                'sftp-row-editing': isEditingEntry(row.entry),
-              }"
-              role="row"
-              :data-path="row.entry.path"
-              :data-change="row.entry.animation || null"
-              :data-row-key="row.key"
-              @click="$emit('selectEntry', row.entry, $event)"
-              @dblclick="$emit('openEntry', row.entry)"
-              @keydown.enter.prevent="$emit('openEntry', row.entry)"
-              @keydown.f2.prevent="$emit('startRenameEntry', row.entry)"
-            >
-              <div role="cell">
-                <span class="sftp-name-cell">
-                  <component
-                    :is="iconForSftpEntry(row.entry)"
-                    :size="16"
-                    stroke-width="1.8"
-                    :class="{
-                      'text-accent': row.entry.kind === 'dir' || row.entry.kind === 'symlink',
-                    }"
-                  />
-                  <input
-                    v-if="isEditingEntry(row.entry)"
-                    :ref="setInlineEditInputRef"
-                    :value="inlineEdit.value"
-                    class="sftp-inline-name-input"
-                    :disabled="inlineEdit.committing"
-                    :aria-label="labels.rename"
-                    @click.stop
-                    @dblclick.stop
-                    @input="$emit('updateInlineEditValue', $event.target.value)"
-                    @keydown.enter.prevent="commitInlineEdit"
-                    @keydown.esc.prevent="cancelInlineEdit"
-                    @blur="commitInlineEdit"
-                  >
-                  <MarqueeText
-                    v-else
-                    :text="row.entry.name"
-                  />
-                </span>
-              </div>
-              <div role="cell">
-                {{ fileTypeLabel(row.entry) }}
-              </div>
-              <div role="cell">
-                {{ row.entry.kind === "dir" ? "-" : formatBytes(row.entry.size) }}
-              </div>
-              <div
-                role="cell"
-                class="sftp-compact-hidden"
-              >
-                {{ formatModified(row.entry.modified) }}
+                <span class="sftp-skeleton-bar sftp-skeleton-modified" />
               </div>
             </div>
           </template>
           <div
-            v-if="visibleRange.bottom"
-            class="sftp-virtual-spacer"
-            :style="{ '--sftp-virtual-spacer-block': `${visibleRange.bottom}px` }"
-          />
-        </template>
+            v-else-if="isEmpty"
+            class="sftp-state-row"
+            role="row"
+          >
+            <div
+              class="sftp-state-cell"
+              role="cell"
+            >
+              <div class="sftp-state">
+                <Folder
+                  :size="20"
+                  stroke-width="1.7"
+                />
+                <span>{{ labels.emptyFolder }}</span>
+              </div>
+            </div>
+          </div>
+          <template v-else>
+            <div
+              v-if="visibleRange.top"
+              class="sftp-virtual-spacer"
+              :style="{ '--sftp-virtual-spacer-block': `${visibleRange.top}px` }"
+            />
+            <template
+              v-for="row in visibleRows"
+              :key="row.key"
+            >
+              <div
+                v-if="row.type === 'parent'"
+                tabindex="0"
+                class="sftp-row sftp-parent-row is-dir"
+                :class="{
+                  'sftp-row-drop-target':
+                    dropTargetPath === row.entry.path || moveDropTargetPath === row.entry.path,
+                }"
+                role="row"
+                :data-path="row.entry.path"
+                :data-row-key="row.key"
+                @dblclick="$emit('openParent')"
+                @keydown.enter.prevent="$emit('openParent')"
+              >
+                <div role="cell">
+                  <span class="sftp-name-cell">
+                    <component
+                      :is="iconForSftpEntry(row.entry)"
+                      :size="16"
+                      stroke-width="1.8"
+                      class="text-accent"
+                    />
+                    <span>..</span>
+                  </span>
+                </div>
+                <div role="cell">
+                  {{ labels.folder }}
+                </div>
+                <div role="cell">
+                  -
+                </div>
+                <div
+                  role="cell"
+                  class="sftp-compact-hidden"
+                >
+                  -
+                </div>
+              </div>
+              <div
+                v-else-if="row.type === 'creating'"
+                class="sftp-row is-selected is-editing sftp-row-selected sftp-row-editing"
+                :class="{ 'is-dir': creatingFolder }"
+                role="row"
+                :data-row-key="row.key"
+              >
+                <div role="cell">
+                  <span class="sftp-name-cell">
+                    <component
+                      :is="creatingFolder ? Folder : File"
+                      :size="16"
+                      stroke-width="1.8"
+                      :class="{ 'text-accent': creatingFolder }"
+                    />
+                    <input
+                      :ref="setInlineEditInputRef"
+                      :value="inlineEdit.value"
+                      class="sftp-inline-name-input"
+                      :disabled="inlineEdit.committing"
+                      :aria-label="creatingFolder ? labels.newFolder : labels.newFile"
+                      @click.stop
+                      @dblclick.stop
+                      @input="$emit('updateInlineEditValue', $event.target.value)"
+                      @keydown.enter.prevent="commitInlineEdit"
+                      @keydown.esc.prevent="cancelInlineEdit"
+                      @blur="commitInlineEdit"
+                    >
+                  </span>
+                </div>
+                <div role="cell">
+                  {{ creatingFolder ? labels.folder : labels.file }}
+                </div>
+                <div role="cell">
+                  -
+                </div>
+                <div
+                  role="cell"
+                  class="sftp-compact-hidden"
+                >
+                  -
+                </div>
+              </div>
+              <div
+                v-else
+                tabindex="0"
+                class="sftp-row"
+                :class="{
+                  'sftp-row-selected': selectedNames.has(row.entry.name),
+                  'is-dir': row.entry.kind === 'dir',
+                  'sftp-move-draggable': !isEditingEntry(row.entry),
+                  'sftp-row-drop-target':
+                    dropTargetPath === row.entry.path || moveDropTargetPath === row.entry.path,
+                  'sftp-row-editing': isEditingEntry(row.entry),
+                }"
+                role="row"
+                :data-path="row.entry.path"
+                :data-change="row.entry.animation || null"
+                :data-row-key="row.key"
+                @click="$emit('selectEntry', row.entry, $event)"
+                @dblclick="$emit('openEntry', row.entry)"
+                @keydown.enter.prevent="$emit('openEntry', row.entry)"
+                @keydown.f2.prevent="$emit('startRenameEntry', row.entry)"
+              >
+                <div role="cell">
+                  <span class="sftp-name-cell">
+                    <component
+                      :is="iconForSftpEntry(row.entry)"
+                      :size="16"
+                      stroke-width="1.8"
+                      :class="{
+                        'text-accent': row.entry.kind === 'dir' || row.entry.kind === 'symlink',
+                      }"
+                    />
+                    <input
+                      v-if="isEditingEntry(row.entry)"
+                      :ref="setInlineEditInputRef"
+                      :value="inlineEdit.value"
+                      class="sftp-inline-name-input"
+                      :disabled="inlineEdit.committing"
+                      :aria-label="labels.rename"
+                      @click.stop
+                      @dblclick.stop
+                      @input="$emit('updateInlineEditValue', $event.target.value)"
+                      @keydown.enter.prevent="commitInlineEdit"
+                      @keydown.esc.prevent="cancelInlineEdit"
+                      @blur="commitInlineEdit"
+                    >
+                    <MarqueeText
+                      v-else
+                      :text="row.entry.name"
+                    />
+                  </span>
+                </div>
+                <div role="cell">
+                  {{ fileTypeLabel(row.entry) }}
+                </div>
+                <div role="cell">
+                  {{ row.entry.kind === "dir" ? "-" : formatBytes(row.entry.size) }}
+                </div>
+                <div
+                  role="cell"
+                  class="sftp-compact-hidden"
+                >
+                  {{ formatModified(row.entry.modified) }}
+                </div>
+              </div>
+            </template>
+            <div
+              v-if="visibleRange.bottom"
+              class="sftp-virtual-spacer"
+              :style="{ '--sftp-virtual-spacer-block': `${visibleRange.bottom}px` }"
+            />
+          </template>
+        </div>
       </div>
-    </div>
-  </main>
+    </main>
+  </div>
 </template>

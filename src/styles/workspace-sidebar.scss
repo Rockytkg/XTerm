@@ -13,13 +13,11 @@
     }
 
     .perf-dashboard,
-    .perf-stat-grid,
-    .perf-trend-grid {
+    .perf-stat-grid {
       gap: 7px;
     }
 
     .perf-stat-card,
-    .perf-trend-card,
     .perf-detail-card {
       padding: 8px;
     }
@@ -45,7 +43,9 @@
     overflow: hidden;
   }
 
-  .workspace-sidebar-pane-performance {
+  // 通用 .workspace-sidebar-pane（flex 布局）在同一 @layer 内声明靠后，特异性相同时
+  // 会覆盖这里的 grid 声明导致行模板失效，因此用双类选择器提高特异性压住它。
+  .workspace-sidebar-pane.workspace-sidebar-pane-performance {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 12px;
@@ -107,10 +107,12 @@
 
   .perf-dashboard {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    align-content: start;
     gap: 10px;
     min-height: 0;
-    overflow: hidden;
+
+    // 窗口过矮时允许纵向滚动兜底，而不是把明细卡整体裁掉
+    overflow-y: auto;
   }
 
   // 指标卡片的强调色通过 --perf-tone 传递给图标、计量条等子元素
@@ -138,7 +140,7 @@
   }
 
   // 四张卡片共享同一外观（1px 半透明边框 + 10px 圆角 + 56% secondary 底色），
-  // 合并为一处；perf-trend-card / perf-detail-card 的透明度不同，保持独立。
+  // 合并为一处；perf-detail-card 的透明度不同，保持独立。
   .perf-stat-card,
   .workspace-sidebar-metric,
   .workspace-sidebar-pref-list,
@@ -217,69 +219,6 @@
     transition: inline-size 240ms ease;
   }
 
-  .perf-trend-grid {
-    display: grid;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .perf-trend-card {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 4px;
-    min-width: 0;
-    min-height: 0;
-    padding: 8px 10px 6px;
-    overflow: hidden;
-    border: 1px solid color-mix(in oklch, var(--border-light) 78%, transparent);
-    border-radius: 10px;
-    background: color-mix(in oklch, var(--bg-secondary) 60%, var(--bg-tertiary));
-  }
-
-  .perf-trend-card-wide {
-    grid-column: 1 / -1;
-  }
-
-  .perf-trend-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    min-width: 0;
-    color: var(--text-secondary);
-    font-size: var(--font-size-xs);
-    font-weight: 650;
-  }
-
-  .perf-trend-head span,
-  .perf-trend-head strong {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .perf-trend-head strong {
-    flex-shrink: 0;
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .perf-chart {
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .perf-chart canvas {
-    display: block;
-    inline-size: -webkit-fill-available !important;
-    inline-size: stretch !important;
-    block-size: -webkit-fill-available !important;
-    block-size: stretch !important;
-  }
-
   .perf-detail-card {
     display: grid;
     gap: 7px;
@@ -302,8 +241,7 @@
 
   .perf-detail-rows {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 5px 14px;
+    gap: 5px;
     min-width: 0;
   }
 

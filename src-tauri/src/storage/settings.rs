@@ -86,133 +86,6 @@ impl Store {
         self.set_setting("logLevel", level)
     }
 
-    pub fn preferences(&self) -> Result<AppPreferences, String> {
-        let rows = self.all_settings()?;
-        let defaults = AppPreferences::default();
-        Ok(AppPreferences {
-            enable_animations: rows.bool("enableAnimations", defaults.enable_animations),
-            ui_font_size: rows.integer("uiFontSize", defaults.ui_font_size),
-            locale: rows.text("locale", defaults.locale),
-            show_latency: rows.bool("showLatency", defaults.show_latency),
-            proxy_toolbar_enabled: rows.bool("proxyToolbarEnabled", defaults.proxy_toolbar_enabled),
-            file_service_toolbar_enabled: rows.bool(
-                "fileServiceToolbarEnabled",
-                defaults.file_service_toolbar_enabled,
-            ),
-            serial_redetect_baud_shortcut: rows.text(
-                "serialRedetectBaudShortcut",
-                defaults.serial_redetect_baud_shortcut,
-            ),
-            session_recording_shortcut: rows.text(
-                "sessionRecordingShortcut",
-                defaults.session_recording_shortcut,
-            ),
-            terminal_theme: rows.text("terminalTheme", defaults.terminal_theme),
-            terminal_theme_follow_app: rows
-                .bool("terminalThemeFollowApp", defaults.terminal_theme_follow_app),
-            terminal_theme_light: rows.text("terminalThemeLight", defaults.terminal_theme_light),
-            terminal_theme_dark: rows.text("terminalThemeDark", defaults.terminal_theme_dark),
-            terminal_font_family: rows.text("terminalFontFamily", defaults.terminal_font_family),
-            terminal_font_size: rows.integer("terminalFontSize", defaults.terminal_font_size),
-            terminal_line_height: rows.real("terminalLineHeight", defaults.terminal_line_height),
-            editor_font_family: rows.text("editorFontFamily", defaults.editor_font_family),
-            editor_font_size: rows.integer("editorFontSize", defaults.editor_font_size),
-            editor_tab_size: rows.integer("editorTabSize", defaults.editor_tab_size),
-            editor_line_wrapping: rows.bool("editorLineWrapping", defaults.editor_line_wrapping),
-            editor_highlight_active_line: rows.bool(
-                "editorHighlightActiveLine",
-                defaults.editor_highlight_active_line,
-            ),
-            editor_theme_mode: rows.text("editorThemeMode", defaults.editor_theme_mode),
-            terminal_scrollback: rows.integer("terminalScrollback", defaults.terminal_scrollback),
-            terminal_cursor_blink: rows.bool("terminalCursorBlink", defaults.terminal_cursor_blink),
-            terminal_cursor_style: rows.text("terminalCursorStyle", defaults.terminal_cursor_style),
-            terminal_cursor_inactive_style: rows.text(
-                "terminalCursorInactiveStyle",
-                defaults.terminal_cursor_inactive_style,
-            ),
-            terminal_cursor_width: rows
-                .integer("terminalCursorWidth", defaults.terminal_cursor_width),
-            terminal_scroll_sensitivity: rows.real(
-                "terminalScrollSensitivity",
-                defaults.terminal_scroll_sensitivity,
-            ),
-            terminal_fast_scroll_sensitivity: rows.real(
-                "terminalFastScrollSensitivity",
-                defaults.terminal_fast_scroll_sensitivity,
-            ),
-            terminal_smooth_scroll_duration: rows.integer(
-                "terminalSmoothScrollDuration",
-                defaults.terminal_smooth_scroll_duration,
-            ),
-            terminal_alt_click_moves_cursor: rows.bool(
-                "terminalAltClickMovesCursor",
-                defaults.terminal_alt_click_moves_cursor,
-            ),
-            terminal_right_click_selects_word: rows.bool(
-                "terminalRightClickSelectsWord",
-                defaults.terminal_right_click_selects_word,
-            ),
-            terminal_scroll_on_user_input: rows.bool(
-                "terminalScrollOnUserInput",
-                defaults.terminal_scroll_on_user_input,
-            ),
-            terminal_scroll_on_erase_in_display: rows.bool(
-                "terminalScrollOnEraseInDisplay",
-                defaults.terminal_scroll_on_erase_in_display,
-            ),
-            terminal_draw_bold_text_in_bright_colors: rows.bool(
-                "terminalDrawBoldTextInBrightColors",
-                defaults.terminal_draw_bold_text_in_bright_colors,
-            ),
-            terminal_minimum_contrast_ratio: rows.real(
-                "terminalMinimumContrastRatio",
-                defaults.terminal_minimum_contrast_ratio,
-            ),
-            terminal_custom_glyphs: rows
-                .bool("terminalCustomGlyphs", defaults.terminal_custom_glyphs),
-            terminal_rescale_overlapping_glyphs: rows.bool(
-                "terminalRescaleOverlappingGlyphs",
-                defaults.terminal_rescale_overlapping_glyphs,
-            ),
-            terminal_mac_option_is_meta: rows.bool(
-                "terminalMacOptionIsMeta",
-                defaults.terminal_mac_option_is_meta,
-            ),
-            terminal_mac_option_click_forces_selection: rows.bool(
-                "terminalMacOptionClickForcesSelection",
-                defaults.terminal_mac_option_click_forces_selection,
-            ),
-            terminal_webgl: rows.bool("terminalWebgl", defaults.terminal_webgl),
-            terminal_trzsz: rows.bool("terminalTrzsz", defaults.terminal_trzsz),
-            transfer_drag_upload: rows.bool("transferDragUpload", defaults.transfer_drag_upload),
-            transfer_directory_upload: rows.bool(
-                "transferDirectoryUpload",
-                defaults.transfer_directory_upload,
-            ),
-            transfer_max_chunk_size: rows
-                .integer("transferMaxChunkSize", defaults.transfer_max_chunk_size),
-            transfer_drag_init_timeout: rows.integer(
-                "transferDragInitTimeout",
-                defaults.transfer_drag_init_timeout,
-            ),
-            terminal_type: rows.text("terminalType", defaults.terminal_type),
-            terminal_search_shortcut: rows
-                .text("terminalSearchShortcut", defaults.terminal_search_shortcut),
-            open_devtools_shortcut: rows
-                .text("openDevToolsShortcut", defaults.open_devtools_shortcut),
-            terminal_highlight_schemes: rows.text(
-                "terminalHighlightSchemes",
-                defaults.terminal_highlight_schemes,
-            ),
-            theme: rows.text("theme", defaults.theme),
-            credential_layout_mode: rows
-                .text("credentialLayoutMode", defaults.credential_layout_mode),
-            ui_theme_light: rows.text("uiThemeLight", defaults.ui_theme_light),
-            ui_theme_dark: rows.text("uiThemeDark", defaults.ui_theme_dark),
-        })
-    }
-
     pub fn setting_value(&self, key: &str) -> Result<Option<String>, String> {
         let read_txn = self
             .database
@@ -311,128 +184,82 @@ pub(super) fn initial_setting_entries() -> Vec<SettingEntry> {
     entries
 }
 
-pub(super) fn preference_setting_entries(p: &AppPreferences) -> Vec<SettingEntry> {
-    vec![
-        setting("enableAnimations", p.enable_animations.to_string()),
-        setting("uiFontSize", p.ui_font_size.to_string()),
-        setting("locale", p.locale.clone()),
-        setting("showLatency", p.show_latency.to_string()),
-        setting("proxyToolbarEnabled", p.proxy_toolbar_enabled.to_string()),
-        setting(
-            "fileServiceToolbarEnabled",
-            p.file_service_toolbar_enabled.to_string(),
-        ),
-        setting(
-            "serialRedetectBaudShortcut",
-            p.serial_redetect_baud_shortcut.clone(),
-        ),
-        setting(
-            "sessionRecordingShortcut",
-            p.session_recording_shortcut.clone(),
-        ),
-        setting("terminalTheme", p.terminal_theme.clone()),
-        setting(
-            "terminalThemeFollowApp",
-            p.terminal_theme_follow_app.to_string(),
-        ),
-        setting("terminalThemeLight", p.terminal_theme_light.clone()),
-        setting("terminalThemeDark", p.terminal_theme_dark.clone()),
-        setting("terminalFontFamily", p.terminal_font_family.clone()),
-        setting("terminalFontSize", p.terminal_font_size.to_string()),
-        setting("terminalLineHeight", p.terminal_line_height.to_string()),
-        setting("editorFontFamily", p.editor_font_family.clone()),
-        setting("editorFontSize", p.editor_font_size.to_string()),
-        setting("editorTabSize", p.editor_tab_size.to_string()),
-        setting("editorLineWrapping", p.editor_line_wrapping.to_string()),
-        setting(
-            "editorHighlightActiveLine",
-            p.editor_highlight_active_line.to_string(),
-        ),
-        setting("editorThemeMode", p.editor_theme_mode.clone()),
-        setting("terminalScrollback", p.terminal_scrollback.to_string()),
-        setting("terminalCursorBlink", p.terminal_cursor_blink.to_string()),
-        setting("terminalCursorStyle", p.terminal_cursor_style.clone()),
-        setting(
-            "terminalCursorInactiveStyle",
-            p.terminal_cursor_inactive_style.clone(),
-        ),
-        setting("terminalCursorWidth", p.terminal_cursor_width.to_string()),
-        setting(
-            "terminalScrollSensitivity",
-            p.terminal_scroll_sensitivity.to_string(),
-        ),
-        setting(
-            "terminalFastScrollSensitivity",
-            p.terminal_fast_scroll_sensitivity.to_string(),
-        ),
-        setting(
-            "terminalSmoothScrollDuration",
-            p.terminal_smooth_scroll_duration.to_string(),
-        ),
-        setting(
-            "terminalAltClickMovesCursor",
-            p.terminal_alt_click_moves_cursor.to_string(),
-        ),
-        setting(
-            "terminalRightClickSelectsWord",
-            p.terminal_right_click_selects_word.to_string(),
-        ),
-        setting(
-            "terminalScrollOnUserInput",
-            p.terminal_scroll_on_user_input.to_string(),
-        ),
-        setting(
-            "terminalScrollOnEraseInDisplay",
-            p.terminal_scroll_on_erase_in_display.to_string(),
-        ),
-        setting(
-            "terminalDrawBoldTextInBrightColors",
-            p.terminal_draw_bold_text_in_bright_colors.to_string(),
-        ),
-        setting(
-            "terminalMinimumContrastRatio",
-            p.terminal_minimum_contrast_ratio.to_string(),
-        ),
-        setting("terminalCustomGlyphs", p.terminal_custom_glyphs.to_string()),
-        setting(
-            "terminalRescaleOverlappingGlyphs",
-            p.terminal_rescale_overlapping_glyphs.to_string(),
-        ),
-        setting(
-            "terminalMacOptionIsMeta",
-            p.terminal_mac_option_is_meta.to_string(),
-        ),
-        setting(
-            "terminalMacOptionClickForcesSelection",
-            p.terminal_mac_option_click_forces_selection.to_string(),
-        ),
-        setting("terminalWebgl", p.terminal_webgl.to_string()),
-        setting("terminalTrzsz", p.terminal_trzsz.to_string()),
-        setting("transferDragUpload", p.transfer_drag_upload.to_string()),
-        setting(
-            "transferDirectoryUpload",
-            p.transfer_directory_upload.to_string(),
-        ),
-        setting(
-            "transferMaxChunkSize",
-            p.transfer_max_chunk_size.to_string(),
-        ),
-        setting(
-            "transferDragInitTimeout",
-            p.transfer_drag_init_timeout.to_string(),
-        ),
-        setting("terminalType", p.terminal_type.clone()),
-        setting("terminalSearchShortcut", p.terminal_search_shortcut.clone()),
-        setting("openDevToolsShortcut", p.open_devtools_shortcut.clone()),
-        setting(
-            "terminalHighlightSchemes",
-            p.terminal_highlight_schemes.clone(),
-        ),
-        setting("theme", p.theme.clone()),
-        setting("credentialLayoutMode", p.credential_layout_mode.clone()),
-        setting("uiThemeLight", p.ui_theme_light.clone()),
-        setting("uiThemeDark", p.ui_theme_dark.clone()),
-    ]
+/// 偏好键的单一事实来源：(结构体字段, SettingMap 访问器, 存储/JSON 键)。
+/// 读取（Store::preferences）与写回（preference_setting_entries）由同一张表
+/// 生成，键名只出现一次；测试再校验此表与 AppPreferences 的 serde 键一致，
+/// 防止 camelCase 分词差异（如 devtools → DevTools）让前后端键名悄悄漂移。
+macro_rules! define_preference_mappings {
+    ($( $field:ident : $accessor:ident = $key:literal ;)*) => {
+        impl Store {
+            pub fn preferences(&self) -> Result<AppPreferences, String> {
+                let rows = self.all_settings()?;
+                let defaults = AppPreferences::default();
+                Ok(AppPreferences {
+                    $( $field: rows.$accessor($key, defaults.$field), )*
+                })
+            }
+        }
+
+        pub(super) fn preference_setting_entries(p: &AppPreferences) -> Vec<SettingEntry> {
+            vec![ $( setting($key, p.$field.to_string()), )* ]
+        }
+    };
+}
+
+define_preference_mappings! {
+    enable_animations: bool = "enableAnimations";
+    ui_font_size: integer = "uiFontSize";
+    locale: text = "locale";
+    show_latency: bool = "showLatency";
+    proxy_toolbar_enabled: bool = "proxyToolbarEnabled";
+    file_service_toolbar_enabled: bool = "fileServiceToolbarEnabled";
+    serial_redetect_baud_shortcut: text = "serialRedetectBaudShortcut";
+    session_recording_shortcut: text = "sessionRecordingShortcut";
+    terminal_theme: text = "terminalTheme";
+    terminal_theme_follow_app: bool = "terminalThemeFollowApp";
+    terminal_theme_light: text = "terminalThemeLight";
+    terminal_theme_dark: text = "terminalThemeDark";
+    terminal_font_family: text = "terminalFontFamily";
+    terminal_font_size: integer = "terminalFontSize";
+    terminal_line_height: real = "terminalLineHeight";
+    editor_font_family: text = "editorFontFamily";
+    editor_font_size: integer = "editorFontSize";
+    editor_tab_size: integer = "editorTabSize";
+    editor_line_wrapping: bool = "editorLineWrapping";
+    editor_highlight_active_line: bool = "editorHighlightActiveLine";
+    editor_theme_mode: text = "editorThemeMode";
+    terminal_scrollback: integer = "terminalScrollback";
+    terminal_cursor_blink: bool = "terminalCursorBlink";
+    terminal_cursor_style: text = "terminalCursorStyle";
+    terminal_cursor_inactive_style: text = "terminalCursorInactiveStyle";
+    terminal_cursor_width: integer = "terminalCursorWidth";
+    terminal_scroll_sensitivity: real = "terminalScrollSensitivity";
+    terminal_fast_scroll_sensitivity: real = "terminalFastScrollSensitivity";
+    terminal_smooth_scroll_duration: integer = "terminalSmoothScrollDuration";
+    terminal_alt_click_moves_cursor: bool = "terminalAltClickMovesCursor";
+    terminal_right_click_selects_word: bool = "terminalRightClickSelectsWord";
+    terminal_scroll_on_user_input: bool = "terminalScrollOnUserInput";
+    terminal_scroll_on_erase_in_display: bool = "terminalScrollOnEraseInDisplay";
+    terminal_draw_bold_text_in_bright_colors: bool = "terminalDrawBoldTextInBrightColors";
+    terminal_minimum_contrast_ratio: real = "terminalMinimumContrastRatio";
+    terminal_custom_glyphs: bool = "terminalCustomGlyphs";
+    terminal_rescale_overlapping_glyphs: bool = "terminalRescaleOverlappingGlyphs";
+    terminal_mac_option_is_meta: bool = "terminalMacOptionIsMeta";
+    terminal_mac_option_click_forces_selection: bool = "terminalMacOptionClickForcesSelection";
+    terminal_webgl: bool = "terminalWebgl";
+    terminal_trzsz: bool = "terminalTrzsz";
+    transfer_drag_upload: bool = "transferDragUpload";
+    transfer_directory_upload: bool = "transferDirectoryUpload";
+    transfer_max_chunk_size: integer = "transferMaxChunkSize";
+    transfer_drag_init_timeout: integer = "transferDragInitTimeout";
+    terminal_type: text = "terminalType";
+    terminal_search_shortcut: text = "terminalSearchShortcut";
+    open_devtools_shortcut: text = "openDevToolsShortcut";
+    terminal_highlight_schemes: text = "terminalHighlightSchemes";
+    theme: text = "theme";
+    credential_layout_mode: text = "credentialLayoutMode";
+    ui_theme_light: text = "uiThemeLight";
+    ui_theme_dark: text = "uiThemeDark";
 }
 
 trait SettingMap {
@@ -629,8 +456,29 @@ pub(super) fn default_ui_theme_preset() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::SettingMap;
-    use std::collections::HashMap;
+    use super::{preference_setting_entries, SettingMap};
+    use crate::storage::AppPreferences;
+    use std::collections::{BTreeSet, HashMap};
+
+    /// 存储/写回键表必须与 AppPreferences 序列化给前端的 JSON 键完全一致：
+    /// serde camelCase 对 devtools、webgl 这类词的分词结果不一定等于前端约定
+    /// 键名，漂移会导致"存得上、读不回"（见 open_devtools_shortcut 的 rename）。
+    #[test]
+    fn preference_keys_match_serialized_fields() {
+        let defaults = AppPreferences::default();
+        let serialized = serde_json::to_value(&defaults).expect("preferences serialize");
+        let json_keys: BTreeSet<String> = serialized
+            .as_object()
+            .expect("preferences serialize to an object")
+            .keys()
+            .cloned()
+            .collect();
+        let entry_keys: BTreeSet<String> = preference_setting_entries(&defaults)
+            .iter()
+            .map(|entry| entry.key.to_string())
+            .collect();
+        assert_eq!(json_keys, entry_keys);
+    }
 
     #[test]
     fn malformed_setting_values_fall_back_to_defaults() {

@@ -57,12 +57,14 @@
 
   /* 菜单面板直接定位在视口内（无遮罩层），菜单外点击穿透到下层元素并
      触发关闭。模态框开启时 reka-ui 会让 body 暂时失去指针事件，菜单是
-     独立的 Teleport 内容，必须在自己的边界上恢复事件。 */
+     独立的 Teleport 内容，必须在自己的边界上恢复事件。层级取 int32 最大值，
+     压过应用内全部蒙层（对话框/toast）、open-file-viewer 预览内部状态层
+     （最高 800）与致命错误浮层（2147483646，见 fatalErrorOverlay.js）。 */
   .context-menu-panel {
     position: fixed;
     inset-block-start: var(--context-menu-y, 0);
     inset-inline-start: var(--context-menu-x, 0);
-    z-index: 100;
+    z-index: 2147483647;
     pointer-events: auto;
   }
 

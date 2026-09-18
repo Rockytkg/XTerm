@@ -13,6 +13,7 @@ macro_rules! app_invoke_handler {
             crate::terminal::internal::commands::sftp::sftp_create_file,
             crate::terminal::internal::commands::sftp::sftp_delete,
             crate::terminal::internal::commands::sftp::sftp_read_file,
+            crate::terminal::internal::commands::sftp::sftp_read_file_base64,
             crate::terminal::internal::commands::sftp::sftp_rename,
             crate::terminal::internal::commands::sftp::sftp_stat_file,
             crate::terminal::internal::commands::transfer::sftp_transfer,

@@ -1,4 +1,5 @@
 import { listRemoteSftp, renameRemoteSftp } from "../services/sftp";
+import { normalizeRemotePath } from "./sftpDragNavigation";
 
 export const NAME_CONFLICT_ACTION = {
   CANCEL: "cancel",
@@ -10,6 +11,12 @@ export const NAME_CONFLICT_ACTION = {
 
 function mapEntriesByName(entries) {
   return new Map((entries || []).map((entry) => [entry.name, entry]));
+}
+
+export function remoteNameFromPath(path) {
+  const normalized = normalizeRemotePath(path);
+  if (normalized === "/" || normalized === ".") return normalized;
+  return normalized.replace(/\/+$/, "").split("/").filter(Boolean).pop() || normalized;
 }
 
 export async function loadRemoteEntriesByName({ connectionId, sessionId, path }) {

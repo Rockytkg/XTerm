@@ -5,6 +5,10 @@ import UnoCSS from "unocss/vite";
 export default defineConfig({
   plugins: [UnoCSS({ inspector: false }), vue()],
   clearScreen: false,
+  optimizeDeps: {
+    // pdfjs-dist 的 Node 专用可选依赖（原生 .node 二进制），开发预打包必须排除
+    exclude: ["@napi-rs/canvas"],
+  },
   build: {
     sourcemap: false,
     minify: "terser",
@@ -33,6 +37,9 @@ export default defineConfig({
         invalidAnnotation: false,
         pluginTimings: false,
       },
+      // pdfjs-dist 的 Node 专用可选依赖（原生 .node 二进制）：仅在 isNodeJS 的
+      // NodeCanvasFactory 内通过 createRequire 触达，浏览器构建置为 external
+      external: [/^@napi-rs\/canvas/],
       output: {
         codeSplitting: true,
         entryFileNames: "assets/[hash].js",
@@ -87,9 +94,11 @@ export default defineConfig({
           if (nid.includes("/node_modules/prettier/plugins/babel")) return "prettier-babel";
           if (nid.includes("/node_modules/prettier/plugins/estree")) return "prettier-estree";
           if (nid.includes("/node_modules/prettier/")) return "prettier-core";
-          if (nid.includes("/node_modules/chart.js/")) return "chart";
           // Icons — stable, cache-friendly
           if (nid.includes("/node_modules/@lucide/")) return "icons";
+          // SFTP 文件预览库（懒加载）— 与 pdfjs 各自独立分包
+          if (nid.includes("/node_modules/@open-file-viewer/")) return "open-file-viewer";
+          if (nid.includes("/node_modules/pdfjs-dist/")) return "pdfjs";
           // UI primitives
           if (nid.includes("/node_modules/reka-ui/")) return "ui";
           if (nid.includes("/node_modules/@vueuse/")) return "vueuse";

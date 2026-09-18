@@ -2,7 +2,6 @@ import { computed, onBeforeUnmount, ref } from "vue";
 
 function createDirtyEditorDialogState() {
   return {
-    count: 0,
     kind: "close",
     open: false,
     resolver: null,
@@ -29,18 +28,16 @@ export function useSftpDialogStates({ t }) {
     if (dirtyEditorDialog.value.kind === "overwrite") {
       return t("sftp.editor.overwriteTitle", { name: dirtyEditorDialog.value.tab?.name || "" });
     }
-    return dirtyEditorDialog.value.kind === "exit"
-      ? t("sftp.editor.unsavedExitTitle", { count: dirtyEditorDialog.value.count })
-      : t("sftp.editor.unsavedFileTitle", { name: dirtyEditorDialog.value.tab?.name || "" });
+    return t("sftp.editor.unsavedFileTitle", { name: dirtyEditorDialog.value.tab?.name || "" });
   });
 
   const editorConfirmDescription = computed(() => {
     if (dirtyEditorDialog.value.kind === "overwrite") {
       return t("sftp.editor.overwriteChanged");
     }
-    return dirtyEditorDialog.value.kind === "exit"
-      ? t("sftp.editor.unsavedExitDescription", { count: dirtyEditorDialog.value.count })
-      : t("sftp.editor.unsavedFileDescription", { name: dirtyEditorDialog.value.tab?.name || "" });
+    return t("sftp.editor.unsavedFileDescription", {
+      name: dirtyEditorDialog.value.tab?.name || "",
+    });
   });
 
   const editorConfirmText = computed(() =>
@@ -79,7 +76,6 @@ export function useSftpDialogStates({ t }) {
     return new Promise((resolve) => {
       resolvePendingDirtyEditorDialog();
       dirtyEditorDialog.value = {
-        count: payload.count || payload.tabs?.length || 0,
         kind: payload.kind || "close",
         open: true,
         resolver: resolve,
@@ -92,7 +88,6 @@ export function useSftpDialogStates({ t }) {
     return new Promise((resolve) => {
       resolvePendingDirtyEditorDialog();
       dirtyEditorDialog.value = {
-        count: 0,
         kind: "overwrite",
         open: true,
         resolver: resolve,

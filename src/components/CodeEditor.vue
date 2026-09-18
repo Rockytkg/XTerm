@@ -360,6 +360,10 @@ watch(
     if (!view) return;
     // 切换文件必须整体重建状态：仅替换文档会让撤销历史跨文件串扰。
     view.setState(createEditorState());
+    // setState 不触发 updateListener，必须手动同步回写守卫：否则新文件加载完成后的
+    // 内容若恰好等于旧文件最后 emit 的内容，content watch 会误判为自身回写而跳过，
+    // 编辑器一直显示空文档。
+    lastEmittedContent = view.state.doc.toString();
     syncStatus(view.state);
     configureLanguage(path);
   },
@@ -396,23 +400,25 @@ onBeforeUnmount(() => {
         <span class="sftp-editor-path">{{ path }}</span>
       </div>
       <div class="sftp-editor-actions">
-        <button
-          v-if="formattingEnabled"
-          type="button"
-          class="sftp-button"
-          :disabled="loading || saving || formatting || readonly"
-          @click="formatContent"
-        >
-          {{ formatting ? `${formatLabel}...` : formatLabel }}
-        </button>
-        <button
-          type="button"
-          class="sftp-button"
-          :disabled="loading || saving || readonly"
-          @click="$emit('saveAndBack')"
-        >
-          {{ saving ? `${saveLabel}...` : saveLabel }}
-        </button>
+        <slot name="actions">
+          <button
+            v-if="formattingEnabled"
+            type="button"
+            class="sftp-button"
+            :disabled="loading || saving || formatting || readonly"
+            @click="formatContent"
+          >
+            {{ formatting ? `${formatLabel}...` : formatLabel }}
+          </button>
+          <button
+            type="button"
+            class="sftp-button"
+            :disabled="loading || saving || readonly"
+            @click="$emit('saveAndBack')"
+          >
+            {{ saving ? `${saveLabel}...` : saveLabel }}
+          </button>
+        </slot>
       </div>
     </header>
     <div

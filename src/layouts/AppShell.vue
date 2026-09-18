@@ -8,7 +8,6 @@ import ScriptPromptDialog from "../components/ScriptPromptDialog.vue";
 import ScriptRunPickerDialog from "../components/ScriptRunPickerDialog.vue";
 import SshCredentialPromptDialog from "../components/SshCredentialPromptDialog.vue";
 import { useI18n } from "vue-i18n";
-import { useWorkspacePerformanceHistory } from "../composables/useWorkspacePerformanceHistory";
 import { useWorkspaceShellController } from "../composables/useWorkspaceShellController";
 import { dismissContextMenu } from "../services/contextMenu";
 import { openDevTools } from "../services/system";
@@ -31,7 +30,6 @@ const workspace = useWorkspaceStore();
 const {
   activeConnection,
   activeConnectionInfo,
-  activeRuntimeMetrics,
   activeTab,
   hostKeyPrompt,
   lastSerialBaudEvent,
@@ -73,12 +71,6 @@ const {
   selectTab: workspace.selectTab,
   toggleSessionRecording: workspace.toggleSessionRecording,
   navigate,
-});
-
-const { activePerformanceHistory } = useWorkspacePerformanceHistory({
-  activeConnectionInfo,
-  runtimeMetrics: activeRuntimeMetrics,
-  openSessions: sessionTabs,
 });
 
 const globalShortcuts = createShortcutRegistry();
@@ -138,7 +130,6 @@ onBeforeUnmount(() => {
     <div class="shell-content-row">
       <ShellPrimaryNav :nav-items="navItems" />
       <WorkspaceRouteFrame
-        :active-performance-history="activePerformanceHistory"
         :handle-workspace-split-layout="handleWorkspaceSplitLayout"
         :handle-workspace-tabbar-action="handleWorkspaceTabbarAction"
         :on-connection-created="onConnectionCreated"

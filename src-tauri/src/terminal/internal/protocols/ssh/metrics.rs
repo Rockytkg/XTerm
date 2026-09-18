@@ -27,6 +27,8 @@ struct RawMetricsSample {
     disk_used: Option<u64>,
     disk_available: Option<u64>,
     disk_inode_percent: Option<f32>,
+    disk_read_sectors: Option<u64>,
+    disk_write_sectors: Option<u64>,
     network_rx_bytes: Option<u64>,
     network_tx_bytes: Option<u64>,
     process_count: Option<u64>,
@@ -96,6 +98,8 @@ pub(crate) fn parse_runtime_metrics(output: &str) -> Result<SshRuntimeMetrics, S
                 raw.disk_available = parse_u64(value).map(|v| v.saturating_mul(1024))
             }
             "disk_inode_percent" => raw.disk_inode_percent = parse_percent(value),
+            "disk_read_sectors" => raw.disk_read_sectors = parse_u64(value),
+            "disk_write_sectors" => raw.disk_write_sectors = parse_u64(value),
             "network_rx_bytes" => raw.network_rx_bytes = parse_u64(value),
             "network_tx_bytes" => raw.network_tx_bytes = parse_u64(value),
             "process_count" => raw.process_count = parse_u64(value),
@@ -220,6 +224,15 @@ fn derive_runtime_metrics(metrics: &mut SshRuntimeMetrics, raw: RawMetricsSample
         metrics.disk_available = raw.disk_available.or(Some(total.saturating_sub(used)));
         metrics.disk_percent = percent(used, total);
     }
+
+    // Disk I/O：/proc/diskstats 的 sector 恒为 512 字节；速率由监控循环差分得出。
+    const DISK_SECTOR_BYTES: u64 = 512;
+    metrics.disk_read_bytes = raw
+        .disk_read_sectors
+        .map(|v| v.saturating_mul(DISK_SECTOR_BYTES));
+    metrics.disk_write_bytes = raw
+        .disk_write_sectors
+        .map(|v| v.saturating_mul(DISK_SECTOR_BYTES));
 }
 
 pub(super) fn percent(value: u64, total: u64) -> f32 {

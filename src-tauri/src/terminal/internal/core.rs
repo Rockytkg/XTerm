@@ -349,6 +349,8 @@ pub(crate) struct SshRuntimeMetrics {
     pub(super) disk_inode_percent: Option<f32>,
     pub(super) network_rx_rate: Option<f32>,
     pub(super) network_tx_rate: Option<f32>,
+    pub(super) disk_read_rate: Option<f32>,
+    pub(super) disk_write_rate: Option<f32>,
     pub(super) process_count: Option<u64>,
     pub(super) thread_count: Option<u64>,
     pub(super) uptime_seconds: Option<u64>,
@@ -368,6 +370,10 @@ pub(crate) struct SshRuntimeMetrics {
     pub(super) network_rx_bytes: Option<u64>,
     #[serde(skip)]
     pub(super) network_tx_bytes: Option<u64>,
+    #[serde(skip)]
+    pub(super) disk_read_bytes: Option<u64>,
+    #[serde(skip)]
+    pub(super) disk_write_bytes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -403,6 +409,7 @@ pub struct SftpFileStatResult {
     pub(super) kind: String,
     pub(super) size: u64,
     pub(super) modified: Option<u64>,
+    pub(super) mime: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -171,6 +171,8 @@ export function startWorkspaceEventListeners({
                 ),
                 networkRxRate: toFiniteOrNull(payload.networkRxRate),
                 networkTxRate: toFiniteOrNull(payload.networkTxRate),
+                diskReadRate: toFiniteOrNull(payload.diskReadRate),
+                diskWriteRate: toFiniteOrNull(payload.diskWriteRate),
                 processCount: keepFinite(payload.processCount, previousMetrics.processCount),
                 threadCount: keepFinite(payload.threadCount, previousMetrics.threadCount),
                 uptimeSeconds: toFiniteOrNull(payload.uptimeSeconds),

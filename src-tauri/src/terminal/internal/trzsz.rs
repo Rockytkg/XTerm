@@ -12,10 +12,10 @@ use tauri::AppHandle;
 
 use crate::{
     logging,
+    paths::expand_home_tilde,
     state::AppState,
     terminal::internal::{
         core::{TrzszChooseDownloadDirectoryRequest, TrzszChooseUploadFilesRequest},
-        sftp::expand_local_path,
         sftp_dialogs::{choose_trzsz_save_directory, choose_trzsz_upload_files},
         util::{normalize_terminal_transfer_name, unique_terminal_transfer_download_path},
     },
@@ -614,7 +614,7 @@ fn lock_runtime(state: &crate::state::AppState) -> parking_lot::MutexGuard<'_, T
 }
 
 async fn register_path(state: &AppState, path: &str) -> Result<TrzszEntryDescriptor, String> {
-    let path = expand_local_path(path)?;
+    let path = expand_home_tilde(path)?;
     let (entry, metadata) = register_entry_with_metadata_async(state, path).await?;
     Ok(entry.descriptor(metadata))
 }

@@ -223,9 +223,9 @@ export class TerminalStatusAddon {
     const normalized = normalizeLines(lines);
     const lineCount = 1 + normalized.length;
     const shouldErasePrevious = this._hasProgressBlock() || this._hasAttachedStatus(status);
-    const cursorX = Number(this._terminal?.buffer?.active?.cursorX);
-    const shouldStartOnNewLine =
-      leadingNewline && !shouldErasePrevious && (!Number.isFinite(cursorX) || cursorX > 0);
+    // 断开/失败提示前始终补一个换行：即使光标已在行首，也与上方会话输出
+    // 之间留出空行分隔；仅在覆盖前一块状态（重连进度等）时不追加。
+    const shouldStartOnNewLine = leadingNewline && !shouldErasePrevious;
     const prefix = `${clearTerminal ? CLEAR_TERMINAL : ""}${
       shouldErasePrevious ? erasePreviousBlock(this._overlayLineCount) : ""
     }${shouldStartOnNewLine ? "\r\n" : ""}`;

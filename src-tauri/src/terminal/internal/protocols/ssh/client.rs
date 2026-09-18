@@ -62,8 +62,9 @@ impl russh::client::Handler for RusshClient {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::ssh_key::PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        let server_public_key = server_public_key.public_key();
         let algorithm = server_public_key.algorithm().to_string();
         use russh::keys::PublicKeyBase64;
 

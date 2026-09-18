@@ -22,13 +22,13 @@ function createStatusAddon(cursorX = 0, protocol = "ssh") {
   return { addon, writes };
 }
 
-test("failure status does not add a blank line when already at line start", () => {
+test("failure status always starts with a blank line before the message", () => {
   const { addon, writes } = createStatusAddon(0);
 
   addon.write("failed", "connection refused");
 
   assert.equal(writes.length, 1);
-  assert.equal(writes[0].startsWith("\r\n"), false);
+  assert.equal(writes[0].startsWith("\r\n"), true);
 });
 
 test("failure status moves to a new line when output ends mid-line", () => {

@@ -1,4 +1,4 @@
-import pako from "pako";
+import { deflate, inflate } from "pako";
 
 const BASE64_CHUNK_SIZE = 0x8000;
 const TEXT_DECODER = new TextDecoder();
@@ -72,11 +72,11 @@ export function bytesIncludeAscii(bytes, ascii) {
 
 export function encodeBuffer(value) {
   const input = typeof value === "string" ? utf8ToBytes(value) : asBytes(value);
-  return bytesToBase64(pako.deflate(input), { stripPadding: false });
+  return bytesToBase64(deflate(input), { stripPadding: false });
 }
 
 export function decodeBuffer(value) {
-  return pako.inflate(base64ToBytes(value));
+  return inflate(base64ToBytes(value));
 }
 
 export function bytesEqual(left, right) {

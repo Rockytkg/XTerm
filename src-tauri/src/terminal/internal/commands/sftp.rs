@@ -1,6 +1,7 @@
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use std::time::Duration;
 use tauri::AppHandle;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 use crate::{
     logging,
@@ -13,10 +14,11 @@ use crate::{
             SftpRenameRequest, SftpStatFileRequest, SftpWriteFileRequest,
         },
         sftp::{
-            delete_remote_path, ensure_remote_dir, join_remote_path, normalize_remote_path,
+            delete_remote_path, ensure_remote_dir, join_remote_path, read_remote_file_bytes,
             remote_file_kind, remote_modified_timestamp, remote_parent_path, rename_remote_path,
-            resolve_remote_child_path, sftp_file_stat_result, sort_sftp_entries,
-            SftpNameConflictAction, SFTP_EDIT_MAX_BYTES,
+            resolve_remote_child_path, resolve_remote_input_path, sftp_file_stat_result,
+            sniff_remote_file_mime, sort_sftp_entries, SftpNameConflictAction, SFTP_EDIT_MAX_BYTES,
+            SFTP_PREVIEW_MAX_BYTES,
         },
         sftp_dialogs::{choose_sftp_download_path, choose_sftp_upload_files},
         ssh_aux::get_or_create_sftp_session,
@@ -58,46 +60,46 @@ pub(crate) async fn sftp_list_remote(
     let sftp_session =
         get_or_create_sftp_session(state.inner(), &request.connection_id, &request.session_id)
             .await?;
-    let path = normalize_remote_path(&request.path);
-    let read_path = path.clone();
-    let entries = sftp_session
+    let result = sftp_session
         .run_with_timeout(SFTP_COMMAND_TIMEOUT, move |sftp| {
             Box::pin(async move {
-                sftp.read_dir(&read_path).await.map_err(|error| {
-                    format!("failed to list remote directory '{read_path}': {error}")
+                let path = resolve_remote_input_path(sftp, &request.path).await?;
+                let entries = sftp.read_dir(&path).await.map_err(|error| {
+                    format!("failed to list remote directory '{path}': {error}")
+                })?;
+                let mut entries: Vec<SftpEntry> = entries
+                    .into_iter()
+                    .filter_map(|entry| {
+                        let name = entry.file_name().to_string();
+                        if name == "." || name == ".." {
+                            return None;
+                        }
+                        let attrs = entry.metadata();
+                        Some(SftpEntry {
+                            path: join_remote_path(&path, &name),
+                            name,
+                            kind: remote_file_kind(attrs.file_type()),
+                            size: attrs.len(),
+                            modified: remote_modified_timestamp(&attrs),
+                        })
+                    })
+                    .collect();
+                sort_sftp_entries(&mut entries);
+                Ok(SftpListResult {
+                    parent: remote_parent_path(&path),
+                    path,
+                    entries,
                 })
             })
         })
         .await?;
-    let mut entries: Vec<SftpEntry> = entries
-        .into_iter()
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string();
-            if name == "." || name == ".." {
-                return None;
-            }
-            let attrs = entry.metadata();
-            Some(SftpEntry {
-                path: join_remote_path(&path, &name),
-                name,
-                kind: remote_file_kind(attrs.file_type()),
-                size: attrs.len(),
-                modified: remote_modified_timestamp(&attrs),
-            })
-        })
-        .collect();
-    sort_sftp_entries(&mut entries);
     logging::event("terminal.sftp", "sftp.list_remote.success")
         .field("connection_id", &request.connection_id)
         .field("session_id", &request.session_id)
-        .field("path", &path)
-        .field("entries", entries.len())
+        .field("path", &result.path)
+        .field("entries", result.entries.len())
         .debug();
-    Ok(SftpListResult {
-        parent: remote_parent_path(&path),
-        path,
-        entries,
-    })
+    Ok(result)
 }
 
 #[tauri::command]
@@ -120,7 +122,8 @@ pub(crate) async fn sftp_delete(
         .run_with_timeout(SFTP_COMMAND_TIMEOUT, move |sftp| {
             Box::pin(async move {
                 for path in request.paths {
-                    delete_remote_path(sftp, &normalize_remote_path(&path)).await?;
+                    let resolved = resolve_remote_input_path(sftp, &path).await?;
+                    delete_remote_path(sftp, &resolved).await?;
                 }
                 Ok(())
             })
@@ -194,34 +197,45 @@ pub(crate) async fn sftp_read_file(
     let sftp_session =
         get_or_create_sftp_session(state.inner(), &request.connection_id, &request.session_id)
             .await?;
-    let path = normalize_remote_path(&request.path);
+    let requested_path = request.path;
     sftp_session
         .run_with_timeout(SFTP_COMMAND_TIMEOUT, move |sftp| {
             Box::pin(async move {
-                let metadata = sftp
-                    .metadata(path.clone())
-                    .await
-                    .map_err(|error| format!("failed to stat remote file '{path}': {error}"))?;
-                if metadata.file_type().is_dir() {
-                    return Err(format!("remote path '{path}' is a directory"));
-                }
-                if metadata.len() > SFTP_EDIT_MAX_BYTES {
-                    return Err(format!(
-                        "remote file '{path}' is too large to edit in memory ({} bytes)",
-                        metadata.len()
-                    ));
-                }
-
-                let mut file = sftp
-                    .open(path.clone())
-                    .await
-                    .map_err(|error| format!("failed to open remote file '{path}': {error}"))?;
-                let mut bytes = Vec::with_capacity(metadata.len() as usize);
-                file.read_to_end(&mut bytes)
-                    .await
-                    .map_err(|error| format!("failed to read remote file '{path}': {error}"))?;
+                let (path, bytes) =
+                    read_remote_file_bytes(sftp, &requested_path, SFTP_EDIT_MAX_BYTES, "edit")
+                        .await?;
                 String::from_utf8(bytes)
                     .map_err(|error| format!("remote file '{path}' is not valid UTF-8: {error}"))
+            })
+        })
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn sftp_read_file_base64(
+    state: tauri::State<'_, AppState>,
+    request: SftpReadFileRequest,
+) -> Result<String, String> {
+    logging::event("terminal.sftp", "sftp.read_file_base64.start")
+        .field("connection_id", &request.connection_id)
+        .field("session_id", &request.session_id)
+        .field("path", &request.path)
+        .debug();
+    let sftp_session =
+        get_or_create_sftp_session(state.inner(), &request.connection_id, &request.session_id)
+            .await?;
+    let requested_path = request.path;
+    sftp_session
+        .run_with_timeout(SFTP_COMMAND_TIMEOUT, move |sftp| {
+            Box::pin(async move {
+                let (_, bytes) = read_remote_file_bytes(
+                    sftp,
+                    &requested_path,
+                    SFTP_PREVIEW_MAX_BYTES,
+                    "preview",
+                )
+                .await?;
+                Ok(STANDARD_NO_PAD.encode(&bytes))
             })
         })
         .await
@@ -241,11 +255,12 @@ pub(crate) async fn sftp_write_file(
     let sftp_session =
         get_or_create_sftp_session(state.inner(), &request.connection_id, &request.session_id)
             .await?;
-    let path = normalize_remote_path(&request.path);
+    let requested_path = request.path;
     let content = request.content;
     sftp_session
         .run_with_timeout(SFTP_COMMAND_TIMEOUT, move |sftp| {
             Box::pin(async move {
+                let path = resolve_remote_input_path(sftp, &requested_path).await?;
                 let mut file = sftp.create(path.clone()).await.map_err(|error| {
                     format!("failed to open remote file '{path}' for writing: {error}")
                 })?;
@@ -258,7 +273,7 @@ pub(crate) async fn sftp_write_file(
                 let metadata = sftp.metadata(path.clone()).await.map_err(|error| {
                     format!("failed to stat remote file '{path}' after saving: {error}")
                 })?;
-                Ok(sftp_file_stat_result(path, &metadata))
+                Ok(sftp_file_stat_result(path, &metadata, None))
             })
         })
         .await
@@ -272,15 +287,31 @@ pub(crate) async fn sftp_stat_file(
     let sftp_session =
         get_or_create_sftp_session(state.inner(), &request.connection_id, &request.session_id)
             .await?;
-    let path = normalize_remote_path(&request.path);
+    let requested_path = request.path;
     sftp_session
         .run_with_timeout(SFTP_COMMAND_TIMEOUT, move |sftp| {
             Box::pin(async move {
+                let path = resolve_remote_input_path(sftp, &requested_path).await?;
                 let metadata = sftp
                     .metadata(path.clone())
                     .await
                     .map_err(|error| format!("failed to stat remote file '{path}': {error}"))?;
-                Ok(sftp_file_stat_result(path, &metadata))
+                // 内容嗅探只为辅助预览分类，失败时静默降级为 None，不影响 stat 本身
+                let mime = if metadata.file_type().is_file() {
+                    match sniff_remote_file_mime(sftp, &path).await {
+                        Ok(mime) => mime,
+                        Err(error) => {
+                            logging::event("terminal.sftp", "sftp.stat_file.sniff_failed")
+                                .field("path", &path)
+                                .field("error", &error)
+                                .debug();
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                Ok(sftp_file_stat_result(path, &metadata, mime))
             })
         })
         .await
@@ -301,12 +332,13 @@ pub(crate) async fn sftp_rename(
     let sftp_session =
         get_or_create_sftp_session(state.inner(), &request.connection_id, &request.session_id)
             .await?;
-    let from_path = normalize_remote_path(&request.from_path);
+    let from_path = request.from_path;
     let to_path = resolve_remote_child_path(&request.to_parent_path, &request.to_name)?;
     let conflict_action = SftpNameConflictAction::parse(request.conflict_action.as_deref())?;
     sftp_session
         .run_with_timeout(SFTP_COMMAND_TIMEOUT, move |sftp| {
             Box::pin(async move {
+                let from_path = resolve_remote_input_path(sftp, &from_path).await?;
                 rename_remote_path(sftp, &from_path, &to_path, conflict_action).await
             })
         })

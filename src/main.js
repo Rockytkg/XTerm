@@ -10,8 +10,15 @@ import { noop } from "./utils/noop";
 import { isWebKitGtkUserAgent } from "./utils/platform";
 import { getLogLevel } from "./services/logging";
 import { showFatalErrorOverlay } from "./utils/fatalErrorOverlay";
+import Prism from "prismjs";
 import "virtual:uno.css";
 import "./styles.scss";
+
+// prismjs 的语言组件（prism-c/typescript 等）以自由变量引用全局 Prism，而打包后
+// prismjs 核心走模块导出、不自动挂全局；组件代码还可能随早期 chunk 先于任何预览
+// 组件求值，因此必须在入口模块就完成赋值，否则文本/代码预览抛
+// ReferenceError: Prism is not defined。
+window.Prism ??= Prism;
 
 const logger = createLogger("frontend.startup");
 const startupSplash = document.getElementById("startup-splash");

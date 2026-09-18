@@ -8,6 +8,7 @@ mod file_ops;
 pub(crate) mod models;
 mod persistence;
 
+pub(crate) use file_ops::expand_home_tilde;
 pub use models::{AppPaths, PathSettings};
 
 use models::PersistedPathSettings;

@@ -48,7 +48,7 @@ use futures::task::{Context, Poll};
 use kex::ClientKex;
 use log::{debug, error, trace, warn};
 use russh_util::time::Instant;
-use ssh_encoding::Decode;
+use ssh_encoding::{Decode, Encode};
 use ssh_key::{Algorithm, Certificate, HashAlg, PrivateKey, PublicKey};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::pin;
@@ -58,6 +58,7 @@ use tokio::sync::mpsc::{
 use tokio::sync::oneshot;
 
 pub use crate::auth::AuthResult;
+use crate::cert::PublicKeyOrCertificate;
 use crate::channels::{
     Channel, ChannelMsg, ChannelReadHalf, ChannelRef, ChannelWriteHalf, WindowSizeRef,
 };
@@ -95,6 +96,8 @@ pub struct Session {
     target_window_size: u32,
     pending_reads: Vec<Vec<u8>>,
     pending_len: u32,
+    priority_sender: UnboundedSender<Msg>,
+    priority_receiver: UnboundedReceiver<Msg>,
     inbound_channel_sender: Sender<Msg>,
     inbound_channel_receiver: Receiver<Msg>,
     open_global_requests: VecDeque<GlobalRequestResponse>,
@@ -130,6 +133,17 @@ enum Reply {
         instructions: String,
         prompts: Vec<Prompt>,
     },
+    AuthGssapiResponse {
+        selected_mechanism: Vec<u8>,
+        mic_data: Vec<u8>,
+    },
+    AuthGssapiToken {
+        token: Vec<u8>,
+        mic_data: Vec<u8>,
+    },
+    AuthGssapiError {
+        error: auth::GssapiError,
+    },
 }
 
 #[derive(Debug)]
@@ -141,6 +155,16 @@ pub enum Msg {
     },
     AuthInfoResponse {
         responses: Vec<String>,
+    },
+    AuthGssapiToken {
+        token: Vec<u8>,
+    },
+    AuthGssapiMic {
+        token: Option<Vec<u8>>,
+        mic: Vec<u8>,
+    },
+    AuthGssapiExchangeComplete {
+        token: Option<Vec<u8>>,
     },
     Signed {
         data: Vec<u8>,
@@ -195,6 +219,10 @@ pub enum Msg {
         language_tag: String,
     },
     Channel(ChannelId, ChannelMsg),
+    ServerChannelOpenReply {
+        pending: crate::PendingChannelOpen,
+        result: Result<(), ChannelOpenFailure>,
+    },
     Rekey,
     AwaitExtensionInfo {
         extension_name: String,
@@ -220,6 +248,15 @@ impl From<(ChannelId, ChannelMsg)> for Msg {
         Msg::Channel(id, msg)
     }
 }
+
+/// Internal state for a server-initiated channel-open request awaiting accept or reject.
+/// A handle passed to `server_channel_open_*` callbacks that the handler uses to
+/// accept or reject the server's channel request.
+///
+/// Dropping the handle without calling [`accept`](ChannelOpenHandle::accept) or
+/// [`reject`](ChannelOpenHandle::reject) automatically sends an
+/// `AdministrativelyProhibited` rejection to the server.
+pub type ChannelOpenHandle = crate::ChannelOpenHandleInner<Msg>;
 
 #[derive(Debug)]
 pub enum KeyboardInteractiveAuthResponse {
@@ -504,6 +541,89 @@ impl<H: Handler> Handle<H> {
                 _ => {}
             }
         }
+    }
+
+    /// Authenticate using GSSAPI with MIC (RFC 4462).
+    ///
+    /// `mechanism_oids` contains DER-encoded GSSAPI mechanism OIDs advertised to
+    /// the server. The provided authenticator owns the platform- or
+    /// application-specific GSSAPI implementation and returns continuation
+    /// tokens and, once complete, the MIC over russh's SSH userauth data.
+    pub async fn authenticate_gssapi_with_mic<U: Into<String>, G: auth::GssapiAuthenticator>(
+        &mut self,
+        user: U,
+        mechanism_oids: Vec<Vec<u8>>,
+        authenticator: &mut G,
+    ) -> Result<AuthResult, G::Error> {
+        let user = user.into();
+        if self
+            .sender
+            .send(Msg::Authenticate {
+                user,
+                method: auth::Method::GssapiWithMic { mechanism_oids },
+            })
+            .await
+            .is_err()
+        {
+            return Err((crate::SendError {}).into());
+        }
+        loop {
+            let reply = self.receiver.recv().await;
+            match reply {
+                Some(Reply::AuthSuccess) => return Ok(AuthResult::Success),
+                Some(Reply::AuthFailure {
+                    proceed_with_methods: remaining_methods,
+                    partial_success,
+                }) => {
+                    return Ok(AuthResult::Failure {
+                        remaining_methods,
+                        partial_success,
+                    });
+                }
+                Some(Reply::AuthGssapiResponse {
+                    selected_mechanism,
+                    mic_data,
+                }) => {
+                    let step = authenticator
+                        .gssapi_step(Some(selected_mechanism), None, mic_data)
+                        .await?;
+                    self.send_gssapi_step(step).await?;
+                }
+                Some(Reply::AuthGssapiToken { token, mic_data }) => {
+                    let step = authenticator
+                        .gssapi_step(None, Some(token), mic_data)
+                        .await?;
+                    self.send_gssapi_step(step).await?;
+                }
+                Some(Reply::AuthGssapiError { error }) => {
+                    authenticator.gssapi_error(error).await;
+                }
+                None => {
+                    return Ok(AuthResult::Failure {
+                        remaining_methods: MethodSet::empty(),
+                        partial_success: false,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    async fn send_gssapi_step(&mut self, step: auth::GssapiStep) -> Result<(), crate::SendError> {
+        let msg = match step {
+            auth::GssapiStep::Continue { token } => Msg::AuthGssapiToken { token },
+            auth::GssapiStep::Complete {
+                token,
+                mic: Some(mic),
+            } => Msg::AuthGssapiMic { token, mic },
+            auth::GssapiStep::Complete { token, mic: None } => {
+                Msg::AuthGssapiExchangeComplete { token }
+            }
+        };
+        self.sender
+            .send(msg)
+            .await
+            .map_err(|_| crate::SendError {})
     }
 
     /// Authenticate using a certificate with a custom signer that implements the
@@ -1087,6 +1207,7 @@ impl Session {
         receiver: Receiver<Msg>,
         sender: UnboundedSender<Reply>,
     ) -> Self {
+        let (priority_sender, priority_receiver) = unbounded_channel();
         let (inbound_channel_sender, inbound_channel_receiver) = channel(10);
         Self {
             common,
@@ -1094,6 +1215,8 @@ impl Session {
             sender,
             kex: SessionKexState::Idle,
             target_window_size,
+            priority_sender,
+            priority_receiver,
             inbound_channel_sender,
             inbound_channel_receiver,
             channels: HashMap::new(),
@@ -1121,6 +1244,7 @@ impl Session {
             .await;
         trace!("disconnected");
         self.receiver.close();
+        self.priority_receiver.close();
         self.inbound_channel_receiver.close();
         map_err!(stream_write.shutdown().await)?;
         match result {
@@ -1182,6 +1306,10 @@ impl Session {
         while !self.common.disconnected {
             self.common.received_data = false;
             let mut sent_keepalive = false;
+            // Keep reading the network for window adjustments, but leave
+            // application output in its bounded receivers while a channel is
+            // window-blocked.
+            let can_receive_outbound = !self.kex.active() && !self.common.has_any_pending_data();
             tokio::select! {
                 r = &mut reading => {
                     let (stream_read, mut buffer, mut opening_cipher) = match r {
@@ -1228,7 +1356,8 @@ impl Session {
                     debug!("timeout");
                     return Err(crate::Error::InactivityTimeout.into());
                 }
-                msg = self.receiver.recv(), if !self.kex.active() => {
+                msg = self.receiver.recv(), if can_receive_outbound => {
+                    self.drain_priority_msgs()?;
                     match msg {
                         Some(msg) => self.handle_msg(msg)?,
                         None => {
@@ -1238,21 +1367,33 @@ impl Session {
                     };
 
                     // eagerly take all outgoing messages so writes are batched
-                    while !self.kex.active() {
+                    while !self.kex.active() && !self.common.has_any_pending_data() {
+                        self.drain_priority_msgs()?;
                         match self.receiver.try_recv() {
                             Ok(next) => self.handle_msg(next)?,
                             Err(_) => break
                         }
                     }
                 }
-                msg = self.inbound_channel_receiver.recv(), if !self.kex.active() => {
+                msg = self.priority_receiver.recv(), if !self.kex.active() => {
                     match msg {
                         Some(msg) => self.handle_msg(msg)?,
                         None => (),
                     }
 
                     // eagerly take all outgoing messages so writes are batched
-                    while !self.kex.active() {
+                    self.drain_priority_msgs()?;
+                }
+                msg = self.inbound_channel_receiver.recv(), if can_receive_outbound => {
+                    self.drain_priority_msgs()?;
+                    match msg {
+                        Some(msg) => self.handle_msg(msg)?,
+                        None => (),
+                    }
+
+                    // eagerly take all outgoing messages so writes are batched
+                    while !self.kex.active() && !self.common.has_any_pending_data() {
+                        self.drain_priority_msgs()?;
                         match self.inbound_channel_receiver.try_recv() {
                             Ok(next) => self.handle_msg(next)?,
                             Err(_) => break
@@ -1262,7 +1403,12 @@ impl Session {
             };
 
             self.flush()?;
-            map_err!(self.common.packet_writer.flush_into(stream_write).await)?;
+            crate::flush_or_timeout(
+                &mut self.common.packet_writer,
+                stream_write,
+                inactivity_timer.as_mut(),
+            )
+            .await?;
 
             if let Some(ref mut enc) = self.common.encrypted {
                 if let EncryptedState::InitCompression = enc.state {
@@ -1324,6 +1470,21 @@ impl Session {
         })
     }
 
+    /// Channel open replies must be dispatched before any channel traffic
+    /// queued after them: the bounded receivers may hold data for a channel
+    /// whose confirmation is still sitting in the priority queue, and
+    /// dispatching that data first would silently drop it (the channel is
+    /// only registered when its open reply is processed).
+    fn drain_priority_msgs(&mut self) -> Result<(), crate::Error> {
+        while !self.kex.active() {
+            match self.priority_receiver.try_recv() {
+                Ok(msg) => self.handle_msg(msg)?,
+                Err(_) => break,
+            }
+        }
+        Ok(())
+    }
+
     fn handle_msg(&mut self, msg: Msg) -> Result<(), crate::Error> {
         match msg {
             Msg::Authenticate { user, method } => {
@@ -1331,6 +1492,21 @@ impl Session {
             }
             Msg::Signed { .. } => {}
             Msg::AuthInfoResponse { .. } => {}
+            Msg::AuthGssapiToken { token } => {
+                if let Some(ref mut enc) = self.common.encrypted {
+                    enc.client_send_gssapi_token(&token)?;
+                }
+            }
+            Msg::AuthGssapiMic { token, mic } => {
+                if let Some(ref mut enc) = self.common.encrypted {
+                    enc.client_send_gssapi_mic(token.as_deref(), &mic)?;
+                }
+            }
+            Msg::AuthGssapiExchangeComplete { token } => {
+                if let Some(ref mut enc) = self.common.encrypted {
+                    enc.client_send_gssapi_exchange_complete(token.as_deref())?;
+                }
+            }
             Msg::ChannelOpenSession { channel_ref } => {
                 let id = self.channel_open_session()?;
                 self.channels.insert(id, channel_ref);
@@ -1499,6 +1675,9 @@ impl Session {
             Msg::NoMoreSessions { want_reply } => {
                 let _ = self.no_more_sessions(want_reply);
             }
+            Msg::ServerChannelOpenReply { pending, result } => {
+                self.finalize_server_channel_open_reply(pending, result)?;
+            }
             msg => {
                 // should be unreachable, since the receiver only gets
                 // messages from methods implemented within russh
@@ -1508,8 +1687,43 @@ impl Session {
         Ok(())
     }
 
+    fn finalize_server_channel_open_reply(
+        &mut self,
+        pending: crate::PendingChannelOpen,
+        result: Result<(), ChannelOpenFailure>,
+    ) -> Result<(), crate::Error> {
+        if let Some(ref mut enc) = self.common.encrypted {
+            match result {
+                Ok(()) => {
+                    push_packet!(enc.write, {
+                        msg::CHANNEL_OPEN_CONFIRMATION.encode(&mut enc.write)?;
+                        pending.recipient_channel.encode(&mut enc.write)?;
+                        pending.sender_channel.encode(&mut enc.write)?;
+                        pending.window_size.encode(&mut enc.write)?;
+                        pending.packet_size.encode(&mut enc.write)?;
+                    });
+                    enc.channels
+                        .insert(pending.sender_channel, pending.channel_params);
+                    self.channels
+                        .insert(pending.sender_channel, pending.channel_ref);
+                }
+                Err(reason) => {
+                    push_packet!(enc.write, {
+                        msg::CHANNEL_OPEN_FAILURE.encode(&mut enc.write)?;
+                        pending.recipient_channel.encode(&mut enc.write)?;
+                        reason.code().encode(&mut enc.write)?;
+                        reason.description().encode(&mut enc.write)?;
+                        "en".encode(&mut enc.write)?;
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn begin_rekey(&mut self) -> Result<(), crate::Error> {
         debug!("beginning re-key");
+        self.pending_len = 0;
         let mut kex = ClientKex::new(
             self.common.config.clone(),
             &self.common.config.client_id,
@@ -1532,9 +1746,13 @@ impl Session {
     /// buffer. This does *not* flush to the socket.
     fn flush(&mut self) -> Result<(), crate::Error> {
         if let Some(ref mut enc) = self.common.encrypted {
+            // Tearing down: get the queued packets (incl. DISCONNECT) out in
+            // order, kex or not.
+            let is_rekeying = self.kex.active() && !self.common.disconnected;
             if enc.flush(
                 &self.common.config.as_ref().limits,
                 &mut self.common.packet_writer,
+                is_rekeying,
             )? && !self.kex.active()
             {
                 self.begin_rekey()?;
@@ -1565,7 +1783,11 @@ async fn reply<H: Handler>(
             pkt.seqn.0,
             pkt.buffer.len()
         );
-        if session.common.strict_kex && session.common.encrypted.is_none() {
+        let strict_kex = match session.kex {
+            SessionKexState::InProgress(ref kex) => kex.strict_kex(),
+            _ => session.common.strict_kex,
+        };
+        if strict_kex && session.common.encrypted.is_none() {
             let seqno = pkt.seqn.0 - 1; // was incremented after read()
             validate_server_msg_strict_kex(*message_type, seqno as usize)?;
         }
@@ -1584,6 +1806,39 @@ async fn reply<H: Handler>(
 
     let is_kex_msg = pkt.buffer.first().cloned().map(is_kex_msg).unwrap_or(false);
 
+    // RFC 4253 s7.1: after a KEXINIT, only transport (1-19) and kex (20-49)
+    // messages may flow until NEWKEYS. Non-transport messages (>= 50: auth and
+    // channel traffic) are the DoS vector -- their replies queue on an
+    // unbounded channel that is not drained until the rekey the peer may never
+    // finish completes.
+    //
+    //   * Once the PEER's own KEXINIT has arrived, nothing of theirs is
+    //     legitimately still in flight, so such a message is a protocol
+    //     violation -- reject it.
+    //   * Before it arrives (we initiated the rekey; the peer may not have seen
+    //     our KEXINIT yet) their in-flight messages are legal. Handle them as
+    //     usual, but bound the total so a peer that stalls the rekey and floods
+    //     cannot grow memory without limit. `pending_len` is reset when the
+    //     rekey completes (see `begin_rekey` and the kex-done path).
+    if !is_kex_msg && session.common.encrypted.is_some() {
+        if let (Some(&msg_type), SessionKexState::InProgress(kex)) =
+            (pkt.buffer.first(), &session.kex)
+        {
+            if msg_type >= msg::USERAUTH_REQUEST {
+                if kex.peer_kexinit_received() {
+                    return Err(crate::Error::Inconsistent.into());
+                }
+                session.pending_len =
+                    session.pending_len.saturating_add(pkt.buffer.len() as u32);
+                if u64::from(session.pending_len)
+                    > 2 * u64::from(session.common.config.window_size)
+                {
+                    return Err(crate::Error::Pending.into());
+                }
+            }
+        }
+    }
+
     if is_kex_msg {
         if let SessionKexState::InProgress(kex) = session.kex.take() {
             let progress = kex.step(Some(pkt), &mut session.common.packet_writer)?;
@@ -1599,6 +1854,7 @@ async fn reply<H: Handler>(
                 }
                 KexProgress::Done {
                     server_host_key,
+                    server_host_certificate,
                     newkeys,
                 } => {
                     debug!("kex impl has completed");
@@ -1619,7 +1875,7 @@ async fn reply<H: Handler>(
                             common.packet_writer.buffer().bytes = 0;
                             if let Some(enc) = common.encrypted.as_mut() {
                                 enc.last_rekey = Instant::now();
-                                enc.flush_all_pending_with_writer(&mut common.packet_writer)?;
+                                enc.flush_all_pending_with_writer(&mut common.packet_writer, false)?;
                             }
                         }
 
@@ -1631,8 +1887,17 @@ async fn reply<H: Handler>(
                         session.pending_len = 0;
                     } else {
                         // This is the initial kex
-                        if let Some(server_host_key) = &server_host_key {
-                            let check = handler.check_server_key(server_host_key).await?;
+                        // A certificate replaces the key check rather than
+                        // adding to it. The key inside a certificate is not
+                        // something the client was ever told to trust — asking
+                        // about it as well would invite an implementation to
+                        // answer yes to the wrong question.
+                        if let Some(certificate) = server_host_certificate {
+                            if !handler.check_server_key(&certificate.into()).await? {
+                                return Err(crate::Error::UnknownKey.into());
+                            }
+                        } else if let Some(server_host_key) = server_host_key {
+                            let check = handler.check_server_key(&server_host_key.into()).await?;
                             if !check {
                                 return Err(crate::Error::UnknownKey.into());
                             }
@@ -1675,8 +1940,7 @@ mod tests {
     use std::sync::Arc;
 
     use ssh_encoding::Encode;
-    use tokio::sync::mpsc::channel;
-    use tokio::sync::mpsc::unbounded_channel;
+    use tokio::sync::mpsc::{channel, unbounded_channel};
 
     use super::*;
     use crate::auth::{AuthRequest, Method};
@@ -1691,10 +1955,7 @@ mod tests {
     impl Handler for TestHandler {
         type Error = crate::Error;
 
-        async fn check_server_key(
-            &mut self,
-            _: &ssh_key::PublicKey,
-        ) -> Result<bool, Self::Error> {
+        async fn check_server_key(&mut self, _: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
             Ok(true)
         }
     }
@@ -2098,13 +2359,17 @@ pub trait Handler: Sized + Send {
         async { Ok(()) }
     }
 
-    /// Called to check the server's public key. This is a very important
-    /// step to help prevent man-in-the-middle attacks. The default
-    /// implementation rejects all keys.
+    /// Called to check the server's public key or certificate.
+    /// This is a very important step to help prevent man-in-the-middle attacks.
+    /// The default implementation rejects all keys, and you must override it.
+    ///
+    /// The library verifies the key exchange signature before this call,
+    /// but it's up to the implementation to decide whether the key or certificate
+    /// is trusted.
     #[allow(unused_variables)]
     fn check_server_key(
         &mut self,
-        server_public_key: &ssh_key::PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
         async { Ok(false) }
     }
@@ -2204,8 +2469,13 @@ pub trait Handler: Sized + Send {
         async { Ok(()) }
     }
 
-    /// Called when the server opens a channel for a new remote port forwarding connection
+    /// Called when the server opens a channel for a new remote port forwarding connection.
+    ///
+    /// Call [`reply.accept().await`](ChannelOpenHandle::accept) to confirm, or
+    /// [`reply.reject(reason).await`](ChannelOpenHandle::reject) to decline.
+    /// Dropping `reply` automatically rejects.
     #[allow(unused_variables)]
+    #[allow(clippy::too_many_arguments)]
     fn server_channel_open_forwarded_tcpip(
         &mut self,
         channel: Channel<Msg>,
@@ -2213,30 +2483,50 @@ pub trait Handler: Sized + Send {
         connected_port: u32,
         originator_address: &str,
         originator_port: u32,
+        reply: ChannelOpenHandle,
         session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        async { Ok(()) }
+        async move {
+            reply.accept().await;
+            Ok(())
+        }
     }
 
-    // Called when the server opens a channel for a new remote UDS forwarding connection
+    /// Called when the server opens a channel for a new remote UDS forwarding connection.
+    ///
+    /// Call [`reply.accept().await`](ChannelOpenHandle::accept) to confirm, or
+    /// [`reply.reject(reason).await`](ChannelOpenHandle::reject) to decline.
+    /// Dropping `reply` automatically rejects.
     #[allow(unused_variables)]
     fn server_channel_open_forwarded_streamlocal(
         &mut self,
         channel: Channel<Msg>,
         socket_path: &str,
+        reply: ChannelOpenHandle,
         session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        async { Ok(()) }
+        async move {
+            reply.accept().await;
+            Ok(())
+        }
     }
 
-    /// Called when the server opens an agent forwarding channel
+    /// Called when the server opens an agent forwarding channel.
+    ///
+    /// Call [`reply.accept().await`](ChannelOpenHandle::accept) to confirm, or
+    /// [`reply.reject(reason).await`](ChannelOpenHandle::reject) to decline.
+    /// Dropping `reply` automatically rejects.
     #[allow(unused_variables)]
     fn server_channel_open_agent_forward(
         &mut self,
         channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
         session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        async { Ok(()) }
+        async move {
+            reply.accept().await;
+            Ok(())
+        }
     }
 
     /// Called when the server attempts to open a channel of unknown type. It may return `true`,
@@ -2252,28 +2542,48 @@ pub trait Handler: Sized + Send {
         async { false }
     }
 
-    /// Called when the server opens an unknown channel.
+    /// Called when the server opens an unknown channel (after
+    /// [`should_accept_unknown_server_channel`](Handler::should_accept_unknown_server_channel)
+    /// returned `true`).
+    ///
+    /// Call [`reply.accept().await`](ChannelOpenHandle::accept) to confirm, or
+    /// [`reply.reject(reason).await`](ChannelOpenHandle::reject) to decline.
+    /// Dropping `reply` automatically rejects.
     #[allow(unused_variables)]
     fn server_channel_open_unknown(
         &mut self,
         channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
         session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         async { Ok(()) }
     }
 
     /// Called when the server opens a session channel.
+    ///
+    /// Call [`reply.accept().await`](ChannelOpenHandle::accept) to confirm, or
+    /// [`reply.reject(reason).await`](ChannelOpenHandle::reject) to decline.
+    /// Dropping `reply` automatically rejects.
     #[allow(unused_variables)]
     fn server_channel_open_session(
         &mut self,
         channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
         session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        async { Ok(()) }
+        async move {
+            reply.accept().await;
+            Ok(())
+        }
     }
 
     /// Called when the server opens a direct tcp/ip channel (non-standard).
+    ///
+    /// Call [`reply.accept().await`](ChannelOpenHandle::accept) to confirm, or
+    /// [`reply.reject(reason).await`](ChannelOpenHandle::reject) to decline.
+    /// Dropping `reply` automatically rejects.
     #[allow(unused_variables)]
+    #[allow(clippy::too_many_arguments)]
     fn server_channel_open_direct_tcpip(
         &mut self,
         channel: Channel<Msg>,
@@ -2281,32 +2591,52 @@ pub trait Handler: Sized + Send {
         port_to_connect: u32,
         originator_address: &str,
         originator_port: u32,
+        reply: ChannelOpenHandle,
         session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        async { Ok(()) }
+        async move {
+            reply.accept().await;
+            Ok(())
+        }
     }
 
     /// Called when the server opens a direct-streamlocal channel (non-standard).
+    ///
+    /// Call [`reply.accept().await`](ChannelOpenHandle::accept) to confirm, or
+    /// [`reply.reject(reason).await`](ChannelOpenHandle::reject) to decline.
+    /// Dropping `reply` automatically rejects.
     #[allow(unused_variables)]
     fn server_channel_open_direct_streamlocal(
         &mut self,
         channel: Channel<Msg>,
         socket_path: &str,
+        reply: ChannelOpenHandle,
         session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        async { Ok(()) }
+        async move {
+            reply.accept().await;
+            Ok(())
+        }
     }
 
     /// Called when the server opens an X11 channel.
+    ///
+    /// Call [`reply.accept().await`](ChannelOpenHandle::accept) to confirm, or
+    /// [`reply.reject(reason).await`](ChannelOpenHandle::reject) to decline.
+    /// Dropping `reply` automatically rejects.
     #[allow(unused_variables)]
     fn server_channel_open_x11(
         &mut self,
         channel: Channel<Msg>,
         originator_address: &str,
         originator_port: u32,
+        reply: ChannelOpenHandle,
         session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        async { Ok(()) }
+        async move {
+            reply.accept().await;
+            Ok(())
+        }
     }
 
     /// Called when the server sends us data. The `extended_code`

@@ -264,10 +264,12 @@ impl server::Handler for SshSession {
     async fn channel_open_session(
         &mut self,
         channel: Channel<server::Msg>,
+        reply: server::ChannelOpenHandle,
         _: &mut server::Session,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         self.channels.lock().await.insert(channel.id(), channel);
-        Ok(true)
+        reply.accept().await;
+        Ok(())
     }
 
     async fn subsystem_request(
@@ -385,9 +387,10 @@ impl SftpSession {
     }
 
     fn attrs(metadata: &std::fs::Metadata) -> FileAttributes {
+        // russh-sftp 3.0 起 Default 改为全省略，dummy() 才是原先的缺省填充值。
         let mut attrs = FileAttributes {
             size: Some(metadata.len()),
-            ..Default::default()
+            ..FileAttributes::dummy()
         };
         attrs.set_dir(metadata.is_dir());
         attrs.set_regular(metadata.is_file());

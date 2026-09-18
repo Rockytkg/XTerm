@@ -9,7 +9,6 @@ import WorkspaceTabbar from "../../components/WorkspaceTabbar.vue";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 
 const props = defineProps({
-  activePerformanceHistory: { type: Object, default: null },
   handleWorkspaceSplitLayout: { type: Function, default: () => { } },
   handleWorkspaceTabbarAction: { type: Function, default: () => { } },
   onConnectionCreated: { type: Function, default: () => { } },
@@ -183,7 +182,6 @@ onBeforeUnmount(() => {
           :active-connection="activeConnectionInfo"
           :active-connection-state="activeConnectionState"
           :active-view="rightSidebarView"
-          :performance-history="activePerformanceHistory"
           :runtime-metrics="activeRuntimeMetrics"
           :working-directory="activeRemoteWorkingDirectory"
         />

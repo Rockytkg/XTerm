@@ -73,6 +73,7 @@ export function usePerformanceMetrics(props, t) {
   const detailRows = computed(() => {
     const metrics = props.runtimeMetrics || {};
     const load = String(metrics.loadAverage || "").trim();
+    const hasIoRate = metrics.diskReadRate != null || metrics.diskWriteRate != null;
     return [
       [t("overview.runtime.load"), load || "-"],
       [t("overview.runtime.uptime"), formatDuration(metrics.uptimeSeconds)],
@@ -83,6 +84,12 @@ export function usePerformanceMetrics(props, t) {
         t("overview.runtime.swap"),
         metrics.swapTotal ? usageText(metrics.swapUsed, metrics.swapTotal) : "-",
       ],
+      [
+        t("overview.runtime.diskIo"),
+        hasIoRate
+          ? `↓ ${formatRate(metrics.diskReadRate)} · ↑ ${formatRate(metrics.diskWriteRate)}`
+          : "-",
+      ],
       [t("overview.runtime.iowait"), formatPercent(metrics.cpuIowaitPercent)],
       [t("overview.runtime.steal"), formatPercent(metrics.cpuStealPercent)],
       [t("overview.runtime.inodes"), formatPercent(metrics.diskInodePercent)],
@@ -90,10 +97,8 @@ export function usePerformanceMetrics(props, t) {
   });
 
   return {
-    cpuPercent,
     detailRows,
     latencyMs,
-    memoryPercent,
     runtimeUnavailable,
     statCards,
   };

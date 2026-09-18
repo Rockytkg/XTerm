@@ -71,6 +71,8 @@ pub struct AppPreferences {
     pub transfer_drag_init_timeout: i64,
     pub terminal_type: String,
     pub terminal_search_shortcut: String,
+    // 前端/存储键约定为 openDevToolsShortcut；camelCase 分词会得到 openDevtoolsShortcut。
+    #[serde(rename = "openDevToolsShortcut")]
     pub open_devtools_shortcut: String,
     #[serde(serialize_with = "serialize_terminal_highlight_schemes")]
     pub terminal_highlight_schemes: String,

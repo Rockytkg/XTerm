@@ -16,8 +16,13 @@ function normalizeShortcutKey(key) {
 }
 
 export function normalizeShortcut(value) {
-  return String(value || "")
-    .split("+")
+  const parts = String(value || "").split("+");
+  // 主键为 "+" 的组合（如 "Ctrl++"）split 后会产生空尾段，还原为 "+" 键。
+  if (parts.length > 1 && parts[parts.length - 1] === "") {
+    parts.pop();
+    parts[parts.length - 1] = "+";
+  }
+  return parts
     .map((part) => normalizeShortcutKey(part))
     .filter(Boolean)
     .sort()

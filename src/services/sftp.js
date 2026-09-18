@@ -56,6 +56,10 @@ export function readRemoteSftpFile(connectionId, sessionId, path) {
   return invokeLoggedIpc("sftp_read_file", { request: { connectionId, sessionId, path } });
 }
 
+export function readRemoteSftpFileBase64(connectionId, sessionId, path) {
+  return invokeLoggedIpc("sftp_read_file_base64", { request: { connectionId, sessionId, path } });
+}
+
 export function writeRemoteSftpFile(connectionId, sessionId, path, content) {
   return invokeLoggedIpc("sftp_write_file", {
     request: { connectionId, sessionId, path, content },

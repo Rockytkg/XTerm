@@ -11,9 +11,9 @@
 
 [package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 name = "russh"
-version = "0.61.2"
+version = "0.63.3"
 authors = ["Pierre-Étienne Meunier <pe@pijul.org>"]
 build = false
 autolib = false
@@ -74,6 +74,10 @@ name = "echoserver"
 path = "examples/echoserver.rs"
 
 [[example]]
+name = "echoserver_certificates"
+path = "examples/echoserver_certificates.rs"
+
+[[example]]
 name = "ratatui_app"
 path = "examples/ratatui_app.rs"
 
@@ -102,6 +106,10 @@ name = "test_backpressure"
 path = "tests/test_backpressure.rs"
 
 [[test]]
+name = "test_contention"
+path = "tests/test_contention.rs"
+
+[[test]]
 name = "test_data_stream"
 path = "tests/test_data_stream.rs"
 
@@ -120,6 +128,10 @@ path = "tests/test_mlkem_kex.rs"
 [[test]]
 name = "test_rekey_strict_kex"
 path = "tests/test_rekey_strict_kex.rs"
+
+[[test]]
+name = "test_server_cert"
+path = "tests/test_server_cert.rs"
 
 [[bench]]
 name = "ciphers"
@@ -168,7 +180,7 @@ features = ["alloc"]
 version = "0.10"
 
 [dependencies.curve25519-dalek]
-version = "=5.0.0-rc.0"
+version = "5"
 
 [dependencies.data-encoding]
 version = "2.3"
@@ -184,13 +196,13 @@ version = "0.9"
 optional = true
 
 [dependencies.digest]
-version = "0.11.0-rc.5"
+version = "0.11.0"
 
 [dependencies.ecdsa]
-version = "=0.17.0-rc.18"
+version = "0.17"
 
 [dependencies.ed25519-dalek]
-version = "=3.0.0-rc.0"
+version = "3"
 features = [
     "alloc",
     "rand_core",
@@ -198,7 +210,7 @@ features = [
 ]
 
 [dependencies.elliptic-curve]
-version = "=0.14.0-rc.33"
+version = "0.14"
 features = ["ecdh"]
 
 [dependencies.enum_dispatch]
@@ -247,24 +259,19 @@ version = "0.3"
 version = "0.2"
 
 [dependencies.num-bigint]
-version = "=0.5.0"
+version = "0.5"
 features = ["rand_0_10"]
-package = "internal-russh-num-bigint"
-
-[dependencies.num_bigint_0_4]
-version = "0.4.6"
-package = "num-bigint"
 
 [dependencies.p256]
-version = "=0.14.0-rc.10"
+version = "0.14"
 features = ["ecdh"]
 
 [dependencies.p384]
-version = "=0.14.0-rc.10"
+version = "0.14"
 features = ["ecdh"]
 
 [dependencies.p521]
-version = "=0.14.0-rc.10"
+version = "0.14"
 features = ["ecdh"]
 
 [dependencies.pbkdf2]
@@ -303,7 +310,7 @@ version = "=0.10.0-rc.18"
 optional = true
 
 [dependencies.russh-cryptovec]
-version = "0.61.0"
+version = "0.62.0"
 features = ["ssh-encoding"]
 
 [dependencies.russh-util]
@@ -328,20 +335,20 @@ version = "0.11"
 features = ["oid"]
 
 [dependencies.sha3]
-version = "0.11.0"
+version = "0.12.0"
 
 [dependencies.signature]
-version = "3.0.0-rc.10"
+version = "3"
 
 [dependencies.spki]
 version = "0.8"
 
 [dependencies.ssh-encoding]
-version = "=0.3.0-rc.9"
+version = "0.3"
 features = ["bytes"]
 
 [dependencies.ssh-key]
-version = "=0.7.0-rc.10"
+version = "=0.7.0-rc.11"
 features = [
     "ed25519",
     "p256",
@@ -429,7 +436,7 @@ features = [
 ]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.russh-sftp]
-version = "2.1.0"
+version = "2.3.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.tokio]
 version = "1.17.0"

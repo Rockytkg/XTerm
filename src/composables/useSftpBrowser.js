@@ -9,20 +9,16 @@ import { normalizeRemotePath } from "./sftpDragNavigation";
 import {
   loadRemoteEntriesByName,
   NAME_CONFLICT_ACTION,
+  remoteNameFromPath,
   renameRemoteEntry,
   resolveNameConflict,
 } from "./sftpRemoteOperations";
+import { createSftpSessionScope } from "./sftpSessionScope";
 import { createLogger } from "../utils/logger";
 import { connectionCan } from "../utils/connectionCapabilities";
 
 const logger = createLogger("frontend.sftp.browser");
 const SFTP_ROW_ANIMATION_MS = 700;
-
-function remoteNameFromPath(path) {
-  const normalized = normalizeRemotePath(path);
-  if (normalized === "/" || normalized === ".") return normalized;
-  return normalized.replace(/\/+$/, "").split("/").filter(Boolean).pop() || normalized;
-}
 
 function sortRemoteEntries(entries) {
   // 小写 key 每条目只算一次，避免 O(N log N) 次比较里重复 toLowerCase。
@@ -105,10 +101,11 @@ export function useSftpBrowser({
     deleting: false,
   });
 
-  let disposed = false;
   let remoteRequestId = 0;
   let initializedSessionKey = "";
   let reconcileAnimationTimer = 0;
+
+  const { currentSession, isDisposed, isStaleSession, setDisposed } = createSftpSessionScope(props);
 
   async function remoteFileMapForPath(path = remotePath.value) {
     const session = currentSession(path);
@@ -430,7 +427,7 @@ export function useSftpBrowser({
   async function initializeRemotePath() {
     const path = props.workingDirectory || remotePath.value || ".";
     const loaded = await refreshRemote(path, { pathLoading: true, suppressError: true });
-    if (!loaded && !disposed) {
+    if (!loaded && !isDisposed()) {
       await refreshRemote(".", { pathLoading: true });
     }
   }
@@ -441,7 +438,7 @@ export function useSftpBrowser({
     if (!sessionKey || sessionKey === ":") return;
     if (initializedSessionKey === sessionKey) return;
     await initializeRemotePath();
-    if (!disposed) initializedSessionKey = sessionKey;
+    if (!isDisposed()) initializedSessionKey = sessionKey;
   }
 
   function createRemoteRequest(path) {
@@ -454,27 +451,9 @@ export function useSftpBrowser({
     };
   }
 
-  function currentSession(path = remotePath.value) {
-    if (!connectionCan(props.connection, "sftp") || !props.sessionId) return null;
-    return {
-      connectionId: props.connection.id,
-      sessionId: props.sessionId,
-      path,
-    };
-  }
-
-  function isStaleSession(session) {
-    return (
-      disposed ||
-      !session ||
-      props.connection?.id !== session.connectionId ||
-      props.sessionId !== session.sessionId
-    );
-  }
-
   function isStaleRemoteRequest(request) {
     return (
-      disposed ||
+      isDisposed() ||
       !request ||
       request.id !== remoteRequestId ||
       props.connection?.id !== request.connectionId ||
@@ -585,7 +564,7 @@ export function useSftpBrowser({
   }
 
   onMounted(() => {
-    disposed = false;
+    setDisposed(false);
     initializeVisibleRemotePath();
   });
 
@@ -604,7 +583,7 @@ export function useSftpBrowser({
   );
 
   onBeforeUnmount(() => {
-    disposed = true;
+    setDisposed(true);
     remoteRequestId += 1;
     if (reconcileAnimationTimer) {
       window.clearTimeout(reconcileAnimationTimer);

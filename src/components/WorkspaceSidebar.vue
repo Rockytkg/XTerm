@@ -14,7 +14,6 @@ const props = defineProps({
   activeConnection: { type: Object, default: null },
   activeConnectionState: { type: Object, default: () => ({ status: "idle", error: null }) },
   runtimeMetrics: { type: Object, default: null },
-  performanceHistory: { type: Object, default: null },
   activeView: { type: String, default: null },
   workingDirectory: { type: String, required: true },
 });
@@ -63,7 +62,6 @@ const showServiceView = computed(
       <WorkspaceSidebarPerformanceView
         v-if="activeView === 'performance'"
         :active-connection="activeConnection"
-        :history="performanceHistory"
         :runtime-metrics="runtimeMetrics"
       />
 

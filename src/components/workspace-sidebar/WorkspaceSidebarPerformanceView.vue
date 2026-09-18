@@ -1,22 +1,17 @@
 <script setup>
 import { useI18n } from "vue-i18n";
 import { Activity, Gauge } from "@lucide/vue";
-import { formatRate } from "../../utils/formatBytes";
-import { formatLatency, formatPercent } from "./performanceFormatters";
-import { usePerformanceCharts } from "./usePerformanceCharts";
+import { formatLatency } from "./performanceFormatters";
 import { usePerformanceMetrics } from "./usePerformanceMetrics";
 import { connectionCan } from "../../utils/connectionCapabilities";
 
 const props = defineProps({
   activeConnection: { type: Object, default: null },
-  history: { type: Object, default: null },
   runtimeMetrics: { type: Object, default: null },
 });
 
 const { t } = useI18n();
-const { cpuPercent, detailRows, latencyMs, memoryPercent, runtimeUnavailable, statCards } =
-  usePerformanceMetrics(props, t);
-const { cpuCanvasRef, memoryCanvasRef, networkCanvasRef } = usePerformanceCharts(props, t);
+const { detailRows, latencyMs, runtimeUnavailable, statCards } = usePerformanceMetrics(props, t);
 </script>
 
 <template>
@@ -80,39 +75,6 @@ const { cpuCanvasRef, memoryCanvasRef, networkCanvasRef } = usePerformanceCharts
             </div>
             <div class="perf-stat-hint">
               {{ card.hint }}
-            </div>
-          </div>
-        </section>
-
-        <section class="perf-trend-grid">
-          <div class="perf-trend-card">
-            <div class="perf-trend-head">
-              <span>{{ t("overview.runtime.cpu") }}</span>
-              <strong>{{ formatPercent(cpuPercent) }}</strong>
-            </div>
-            <div class="perf-chart">
-              <canvas ref="cpuCanvasRef" />
-            </div>
-          </div>
-          <div class="perf-trend-card">
-            <div class="perf-trend-head">
-              <span>{{ t("overview.runtime.memory") }}</span>
-              <strong>{{ formatPercent(memoryPercent) }}</strong>
-            </div>
-            <div class="perf-chart">
-              <canvas ref="memoryCanvasRef" />
-            </div>
-          </div>
-          <div class="perf-trend-card perf-trend-card-wide">
-            <div class="perf-trend-head">
-              <span>{{ t("overview.runtime.network") }}</span>
-              <strong>
-                ↓ {{ formatRate(runtimeMetrics?.networkRxRate) }} · ↑
-                {{ formatRate(runtimeMetrics?.networkTxRate) }}
-              </strong>
-            </div>
-            <div class="perf-chart">
-              <canvas ref="networkCanvasRef" />
             </div>
           </div>
         </section>

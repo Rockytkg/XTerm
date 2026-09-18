@@ -7,7 +7,7 @@
 XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端中整合 SSH / Telnet / 串口 / VNC 连接、交互式终端（XTerm.js）、VNC 远程桌面（noVNC）、SFTP 文件管理、内置 TFTP/FTP/SFTP 文件服务器、凭证管理、会话记录和设置。
 
 - 前端：Vue 3（`<script setup>`）+ Vite + Pinia + vue-router + vue-i18n（中英文）+ UnoCSS + SCSS + XTerm.js 6 + CodeMirror 6。
-- 后端：Rust + Tauri 2，tokio 异步运行时。SSH/SFTP 用 `russh` / `russh-sftp`，FTP 服务端用 `libunftp`，串口、本地存储（`redb`）、keyring 加密凭证、防火墙管理等均为原生实现。
+- 后端：Rust + Tauri 2，tokio 异步运行时。SSH/SFTP 用 `russh` / `russh-sftp`，FTP 服务端用 `libunftp`，串口、本地存储（`redb`）、keyring 加密凭证、防火墙管理等均为原生实现。SFTP 文件预览的内容嗅探（无扩展名文件类型判别）用 `infer`（魔数）+ `content_inspector`（文本/二进制）。
 - 包管理：`pnpm`（锁文件 `pnpm-lock.yaml`）。
 - 应用标识：`com.liushicong.xterm`；`tauri.conf.json` 中 `bundle.targets` 为 `"all"`，本地 `pnpm tauri build` 按平台默认出包（Windows：NSIS+MSI；Linux：deb+rpm+AppImage；macOS：app+dmg）。
 - 发版走 CI（`.github/workflows/build-release.yml`）：打 `v*` tag → 全平台构建（linux deb/rpm/appimage、win/mac 的 x64+arm64、Arch 的 xterm-workspace 包）并自动创建 GitHub Release；推送 main / 手动触发 → `<版本>-dev.<commit数>+<短sha>` 快照，仅上传 workflow artifacts。版本号由 `version` job 按 git ref 计算，经 `tauri build --config '{"version":"..."}'` 注入。
@@ -22,7 +22,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 - `src/services/`：前端到 Tauri Rust 命令的封装（`ipc/` 子目录为底层调用；`scripting/` 子目录为脚本引擎：终端桥接、运行器、弹窗交互）。组件中不要散落裸 `invoke`，应在 service 中添加明确封装。
 - `src/i18n/`：中英文案。`src/utils/`：通用工具（如 `eventBridge.js`）。
 - `src-tauri/src/`：Rust 后端。`lib.rs` 初始化状态、插件并注册 `tauri::generate_handler!`；模块包括 `terminal/`（api/app/domain/protocol 分层）、`credentials/`、`file_service/`、`tftp/`、`storage/`、`session_recording/`、`paths/`、`logging/`、`proxy/`、`firewall.rs` 等。
-- `src-tauri/vendor/`：vendored 依赖。`libtelnet/` 为 C 源码；`russh/` 为 russh 0.61.2 的本地补丁副本，经 `Cargo.toml` 的 `[patch.crates-io]` 对所有依赖方生效（补丁内容与升级注意事项见 `vendor/russh/UPSTREAM.md`，补丁点以 `PATCH(xterm)` 注释标注）。
+- `src-tauri/vendor/`：vendored 依赖。`libtelnet/` 为 C 源码；`russh/` 为 russh 0.63.3 的本地补丁副本，经 `Cargo.toml` 的 `[patch.crates-io]` 对所有依赖方生效（补丁内容与升级注意事项见 `vendor/russh/UPSTREAM.md`，补丁点以 `PATCH(xterm)` 注释标注）。
 - 日志体系：`src-tauri/src/logging/`（`level`/`event`/`writer`/`retention`/`panic`/`commands` 子模块）。后端写日志一律用 `crate::logging::event(scope, action)` 结构化事件或带显式 `target: "<scope>"` 的 `log::<level>!`，scope 为点分逻辑名（如 `terminal.serial`），不使用默认模块路径 target；panic/启动应急路径除外。日志按日写入 `<log_dir>/YYYYMMDD.log`（无缓冲逐条 flush，保留 7 天 / 最多 14 个文件），`panic.log`、`startup-error.log` 超 4 MiB 截尾。级别持久化于 settings（`logLevel`），`log_level_set` 立即生效；嘈杂依赖 crate（russh/keyring/mio/tao）在级别低于 debug 时被钳制。前端统一用 `createLogger("frontend.<area>.<module>")` + 点分事件名（`src/utils/logger.js`），启动时经 `src/services/logging.js` 同步后端级别；生产模式 error/warn 转发到后端日志文件。日志相关 Tauri 命令：`log_level_get/set`、`log_files_list`、`log_file_tail`、`log_files_prune`、`log_dir_open`；设置页"通用"内置日志查看对话框。
 - `src-tauri/capabilities/default.json`：Tauri 2 权限能力配置。
 - `src-tauri/tauri.conf.json`：开发地址（`http://127.0.0.1:1420`）、`dist` 输出、无边框窗口（`decorations: false`）、deep-link scheme（`ssh`、`telnet`）和打包配置。

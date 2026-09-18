@@ -11,7 +11,9 @@ const STYLES = `
 #${OVERLAY_ID} {
   position: fixed;
   inset: 0;
-  z-index: 2147483647;
+  /* 仅比右键菜单（2147483647，见 context-menu.scss）低一档：崩溃反馈仍压过
+     包括拖拽幽灵在内的全部界面层，但用户明确要求右键菜单保持最顶。 */
+  z-index: 2147483646;
   display: flex;
   align-items: center;
   justify-content: center;

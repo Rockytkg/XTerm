@@ -42,7 +42,13 @@ function captureShortcut(event, preferenceKey) {
     event.currentTarget?.blur?.();
     return;
   }
-  if (event.key === "Backspace" || event.key === "Delete") {
+  if (
+    (event.key === "Backspace" || event.key === "Delete") &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey &&
+    !event.metaKey
+  ) {
     preferences.value[preferenceKey] = "";
     shortcutCapture.value = "";
     return;

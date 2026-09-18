@@ -1,6 +1,6 @@
 # Vendored russh
 
-- 上游：<https://github.com/Eugeny/russh>，版本 0.61.2（crates.io 副本原样复制）。
+- 上游：<https://github.com/Eugeny/russh>，版本 0.63.3（crates.io 副本原样复制）。
 - 引入方式：`src-tauri/Cargo.toml` 的 `[patch.crates-io]` 指向本目录，对所有依赖方
   （包括 russh-sftp）生效。
 
@@ -14,7 +14,8 @@ OpenSSH 的宽容策略（`match.c` 的 `match_list` 静默跳过空条目），
 
 - `src/helpers.rs`：`NameList::from_encoded_string` 跳过空条目与非 ASCII 条目；
   `NameList::decode` 改为读取原始字节后有损转换（因此删除了仅剩这一处用途的
-  `LimitedString`）。
+  `LimitedString`）。注：上游 0.63 起已容忍恰好一个尾部逗号，但仍拒绝中间空条目
+  与非 ASCII 条目，补丁语义（全部跳过）仍需保留。
 - `src/negotiation.rs`：KEXINIT 中仅作信息用途且被丢弃的 languages 字段、
   cipher server-to-client 字段按字节串读取跳过，不再做 UTF-8 校验。
 - `src/client/encrypted.rs`：新增 `decode_string_lossy` 辅助函数，应用于
@@ -22,5 +23,12 @@ OpenSSH 的宽容策略（`match.c` 的 `match_list` 静默跳过空条目），
   EXT_INFO 扩展名、CHANNEL_OPEN_FAILURE 描述、CHANNEL_REQUEST / GLOBAL_REQUEST
   请求名、exit-signal 的信号名/错误信息/语言标签、userauth_pk_ok 算法名。
 - `src/client/mod.rs`：`process_disconnect` 的断开原因与语言标签有损解码。
+- `src/cipher/mod.rs`：`MAXIMUM_DECOMPRESSED_PACKET_LEN` 在未启用 flate2 时
+  抑制上游 dead_code 警告（`#[cfg_attr(not(feature = "flate2"), allow(dead_code))]`）。
+
+## 升级记录
+
+- 0.61.2 → 0.63.3：全部补丁点在新版本仍然存在（0.63 重构未移除这些严格解码路径），
+  逐一重新移植，无语义变化。
 
 上游 main 分支仍为严格解码，升级 russh 版本时需同步移植上述补丁。

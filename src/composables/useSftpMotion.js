@@ -133,13 +133,13 @@ export function useSftpMotion({
 
   function animateDragState(active) {
     const table = tableBodyRef.value;
-    const browser = table?.closest?.(".sftp-browser");
+    const shell = table?.closest?.(".sftp-browser-shell");
     if (!table) return;
     dropTween?.kill();
     if (!canAnimate()) {
-      if (browser) {
+      if (shell) {
         gsap.set(
-          browser,
+          shell,
           active
             ? { "--sftp-drop-opacity": 1 }
             : { clearProps: "--sftp-drop-opacity,--sftp-drop-ring" },
@@ -147,15 +147,15 @@ export function useSftpMotion({
       }
       return;
     }
-    if (!browser) return;
-    dropTween = gsap.to(browser, {
+    if (!shell) return;
+    dropTween = gsap.to(shell, {
       "--sftp-drop-opacity": active ? 1 : 0,
       "--sftp-drop-ring": active ? "4px" : "0px",
       duration: active ? 0.18 : 0.16,
       ease: active ? "power3.out" : "power2.inOut",
       onComplete: () => {
         if (!active) {
-          gsap.set(browser, {
+          gsap.set(shell, {
             clearProps: "--sftp-drop-opacity,--sftp-drop-ring",
           });
         }

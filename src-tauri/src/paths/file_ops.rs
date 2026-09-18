@@ -1,20 +1,27 @@
 use std::path::{Path, PathBuf};
 
+/// `~` / `~/...` 展开为本地 home 目录下的路径；非 ~ 路径原样返回。
+/// 设置页路径与 SFTP/trzsz 传输的本地路径共用这一份展开逻辑。
+pub(crate) fn expand_home_tilde(path: &str) -> Result<PathBuf, String> {
+    let trimmed = path.trim();
+    if trimmed == "~" || trimmed.starts_with("~/") || trimmed.starts_with("~\\") {
+        let home =
+            dirs::home_dir().ok_or_else(|| "failed to resolve home directory".to_string())?;
+        let rest = trimmed
+            .trim_start_matches('~')
+            .trim_start_matches(['/', '\\']);
+        return Ok(home.join(rest));
+    }
+    Ok(PathBuf::from(trimmed))
+}
+
 pub(super) fn normalize_configured_path(raw: &str, label: &str) -> Result<PathBuf, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(format!("{label} is required"));
     }
-    let resolved = if trimmed == "~" || trimmed.starts_with("~/") || trimmed.starts_with("~\\") {
-        let home = dirs::home_dir()
-            .ok_or_else(|| format!("failed to resolve home directory for {label}"))?;
-        let rest = trimmed
-            .trim_start_matches('~')
-            .trim_start_matches(['/', '\\']);
-        home.join(rest)
-    } else {
-        PathBuf::from(trimmed)
-    };
+    let resolved = expand_home_tilde(trimmed)
+        .map_err(|_| format!("failed to resolve home directory for {label}"))?;
 
     // Resolve `..`, `.`, and symlinks for a clean canonical path.
     // The caller is expected to `create_dir_all` before this returns

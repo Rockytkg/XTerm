@@ -25,12 +25,6 @@ const ACTIVE_TRANSFER_STATUSES = new Set(["running", "pausing", "paused"]);
 const TERMINAL_TRANSFER_STATUSES = new Set(["done", "failed", "canceled"]);
 const MAX_TERMINAL_TRANSFERS = 50;
 const MAX_PENDING_PROGRESS_PAYLOADS = 64;
-const UPLOAD_CONFLICT_ACTION = {
-  CREATE: "create",
-  OVERWRITE: "overwrite",
-  RESUME: "resume",
-  SKIP: "skip",
-};
 
 function localFileName(path) {
   return (
@@ -67,7 +61,7 @@ export function useSftpTransfers({
   remotePath,
   clearDropTarget = () => {},
   remoteFileByName = { value: new Map() },
-  requestUploadConflictAction = () => Promise.resolve(UPLOAD_CONFLICT_ACTION.OVERWRITE),
+  requestUploadConflictAction = () => Promise.resolve(NAME_CONFLICT_ACTION.OVERWRITE),
   selectedEntry,
   selectedNames,
   refreshCurrentDirectoryIncremental = () => {},
@@ -154,7 +148,7 @@ export function useSftpTransfers({
     remotePath: targetRemotePath,
     remoteParentPath,
     remoteName,
-    uploadConflictAction = UPLOAD_CONFLICT_ACTION.CREATE,
+    uploadConflictAction = NAME_CONFLICT_ACTION.CREATE,
   }) {
     logger.info(
       "transfer.run.started",
@@ -324,7 +318,7 @@ export function useSftpTransfers({
     for (const localPath of normalized) {
       const name = localFileName(localPath);
       const existing = targetFileByName.get(name);
-      let uploadConflictAction = UPLOAD_CONFLICT_ACTION.CREATE;
+      let uploadConflictAction = NAME_CONFLICT_ACTION.CREATE;
       if (existing && existing.kind !== "dir") {
         const conflict = await resolveNameConflict({
           sourcePath: "",

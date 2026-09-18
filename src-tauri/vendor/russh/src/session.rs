@@ -128,6 +128,26 @@ impl ChannelFlushResult {
 }
 
 impl<C> CommonSession<C> {
+    pub(crate) fn has_any_pending_data(&self) -> bool {
+        self.encrypted
+            .as_ref()
+            .is_some_and(Encrypted::has_any_pending_data)
+    }
+
+    /// Channel-scoped messages (`CHANNEL_DATA`, `CHANNEL_EOF`, `CHANNEL_CLOSE`,
+    /// `CHANNEL_REQUEST`, ...) operate on an already-open channel. An
+    /// authenticated peer must not be able to drive channel callbacks
+    /// (`data`, `exit_status`, `channel_close`, ...) for a recipient id that
+    /// was never opened or whose local open is still waiting for peer
+    /// confirmation. The encrypted channel table is authoritative for the SSH
+    /// protocol state.
+    pub(crate) fn is_established_channel(&self, channel: ChannelId) -> bool {
+        self.encrypted
+            .as_ref()
+            .and_then(|enc| enc.channels.get(&channel))
+            .is_some_and(|channel| channel.confirmed)
+    }
+
     pub fn newkeys(&mut self, newkeys: NewKeys) {
         if let Some(ref mut enc) = self.encrypted {
             enc.exchange = Some(newkeys.exchange);
@@ -337,10 +357,15 @@ impl Encrypted {
         write: &mut Vec<u8>,
         writer: &mut PacketWriter,
         channel: &mut ChannelParams,
+        is_rekeying: bool,
     ) -> Result<ChannelFlushResult, crate::Error> {
         let mut pending_size = 0;
         while let Some((buf, a, from)) = channel.pending_data.pop_front() {
-            let size = if write.is_empty() {
+            // While a kex is in flight, stage into `write` instead of the wire:
+            // RFC 4253 s7.1 allows only transport-layer messages between
+            // KEXINIT and NEWKEYS, and `Encrypted::flush` holds `write` back
+            // until the kex completes.
+            let size = if write.is_empty() && !is_rekeying {
                 Self::data_noqueue_direct(writer, channel, &buf, a, from)?
             } else {
                 Self::data_noqueue(write, channel, &buf, a, from)?
@@ -391,9 +416,10 @@ impl Encrypted {
         &mut self,
         writer: &mut PacketWriter,
         channel: ChannelId,
+        is_rekeying: bool,
     ) -> Result<usize, crate::Error> {
         let flush_result = match self.channels.get_mut(&channel) {
-            Some(ch) => Self::flush_channel_with_writer(&mut self.write, writer, ch)?,
+            Some(ch) => Self::flush_channel_with_writer(&mut self.write, writer, ch, is_rekeying)?,
             None => return Ok(0),
         };
         let wrote = flush_result.wrote();
@@ -413,10 +439,11 @@ impl Encrypted {
     pub fn flush_all_pending_with_writer(
         &mut self,
         writer: &mut PacketWriter,
+        is_rekeying: bool,
     ) -> Result<(), crate::Error> {
         let channel_ids: Vec<ChannelId> = self.channels.keys().copied().collect();
         for channel_id in channel_ids {
-            self.flush_pending_with_writer(writer, channel_id)?;
+            self.flush_pending_with_writer(writer, channel_id, is_rekeying)?;
         }
         Ok(())
     }
@@ -435,6 +462,12 @@ impl Encrypted {
         }
     }
 
+    pub(crate) fn has_any_pending_data(&self) -> bool {
+        self.channels
+            .values()
+            .any(|channel| !channel.pending_data.is_empty())
+    }
+
     /// Push the largest amount of `&buf0[from..]` that can fit into
     /// the window, dividing it into packets if it is too large, and
     /// return the length that was written.
@@ -448,9 +481,7 @@ impl Encrypted {
         if from >= buf0.len() {
             return Ok(0);
         }
-        let window_end = from
-            .checked_add(channel.recipient_window_size as usize)
-            .unwrap_or(usize::MAX);
+        let window_end = from.saturating_add(channel.recipient_window_size as usize);
         let end = std::cmp::min(buf0.len(), window_end);
         #[allow(clippy::indexing_slicing)] // length checked
         let mut buf = &buf0[from..end];
@@ -510,9 +541,7 @@ impl Encrypted {
             return Ok(0);
         }
         let buf0 = buf0.as_ref();
-        let window_end = from
-            .checked_add(channel.recipient_window_size as usize)
-            .unwrap_or(usize::MAX);
+        let window_end = from.saturating_add(channel.recipient_window_size as usize);
         let end = std::cmp::min(buf0.len(), window_end);
         #[allow(clippy::indexing_slicing)] // length checked
         let mut buf = &buf0[from..end];
@@ -665,7 +694,15 @@ impl Encrypted {
         &mut self,
         limits: &Limits,
         writer: &mut PacketWriter,
+        is_rekeying: bool,
     ) -> Result<bool, crate::Error> {
+        if is_rekeying {
+            // Only transport-layer messages may go out between KEXINIT and
+            // NEWKEYS (RFC 4253 s7.1); `write` holds connection-layer ones.
+            // The post-kex flush drains them.
+            return Ok(false);
+        }
+
         // If there are pending packets (and we've not started to rekey), flush them.
         {
             while self.write_cursor < self.write.len() {
@@ -674,7 +711,11 @@ impl Encrypted {
                 let len = BigEndian::read_u32(&self.write[self.write_cursor..]) as usize;
                 #[allow(clippy::indexing_slicing)]
                 let to_write = &self.write[(self.write_cursor + 4)..(self.write_cursor + 4 + len)];
-                trace!("session_write_encrypted, buf = {to_write:?}");
+                trace!(
+                    "session_write_encrypted, msg type {:?}, len {}",
+                    to_write.first(),
+                    to_write.len()
+                );
 
                 writer.packet_raw(to_write)?;
                 self.write_cursor += 4 + len
@@ -1120,12 +1161,12 @@ mod tests {
         let mut staged_writer = PacketWriter::clear();
         staged.flush_pending(channel_id).unwrap();
         staged
-            .flush(&Limits::default(), &mut staged_writer)
+            .flush(&Limits::default(), &mut staged_writer, false)
             .unwrap();
 
         let mut direct_writer = PacketWriter::clear();
         direct
-            .flush_pending_with_writer(&mut direct_writer, channel_id)
+            .flush_pending_with_writer(&mut direct_writer, channel_id, false)
             .unwrap();
 
         assert_eq!(direct_writer.buffer().buffer, staged_writer.buffer().buffer);
@@ -1153,12 +1194,12 @@ mod tests {
         let mut staged_writer = PacketWriter::clear();
         staged.flush_pending(channel_id).unwrap();
         staged
-            .flush(&Limits::default(), &mut staged_writer)
+            .flush(&Limits::default(), &mut staged_writer, false)
             .unwrap();
 
         let mut direct_writer = PacketWriter::clear();
         direct
-            .flush_pending_with_writer(&mut direct_writer, channel_id)
+            .flush_pending_with_writer(&mut direct_writer, channel_id, false)
             .unwrap();
 
         assert_eq!(direct_writer.buffer().buffer, staged_writer.buffer().buffer);
@@ -1176,7 +1217,7 @@ mod tests {
 
         let mut writer = PacketWriter::clear();
         encrypted
-            .flush_pending_with_writer(&mut writer, channel_id)
+            .flush_pending_with_writer(&mut writer, channel_id, false)
             .unwrap();
 
         assert!(writer.buffer().buffer.is_empty());
@@ -1197,7 +1238,7 @@ mod tests {
 
         let mut writer = PacketWriter::clear();
         encrypted
-            .flush_pending_with_writer(&mut writer, channel_id)
+            .flush_pending_with_writer(&mut writer, channel_id, false)
             .unwrap();
 
         let channel = &encrypted.channels[&channel_id];
@@ -1223,15 +1264,40 @@ mod tests {
 
         let mut writer = PacketWriter::clear();
         encrypted
-            .flush_pending_with_writer(&mut writer, channel_id)
+            .flush_pending_with_writer(&mut writer, channel_id, false)
             .unwrap();
-        encrypted.flush(&Limits::default(), &mut writer).unwrap();
+        encrypted.flush(&Limits::default(), &mut writer, false).unwrap();
 
         assert_eq!(
             clear_packet_types(&writer.buffer().buffer),
             vec![msg::CHANNEL_DATA, msg::CHANNEL_EOF, msg::CHANNEL_CLOSE]
         );
         assert!(!encrypted.channels.contains_key(&channel_id));
+    }
+
+    #[test]
+    fn nothing_reaches_the_wire_while_rekeying() {
+        // RFC 4253 s7.1: only transport-layer messages may go out between
+        // KEXINIT and NEWKEYS. Regression test for #761.
+        let channel_id = ChannelId(15);
+        let mut encrypted = test_encrypted();
+        encrypted
+            .channels
+            .insert(channel_id, test_channel(channel_id, 42, true, true));
+
+        let mut writer = PacketWriter::clear();
+        encrypted
+            .flush_pending_with_writer(&mut writer, channel_id, true)
+            .unwrap();
+        encrypted.flush(&Limits::default(), &mut writer, true).unwrap();
+        assert!(clear_packet_types(&writer.buffer().buffer).is_empty());
+
+        // ...and it all comes out, in order, once the kex is done.
+        encrypted.flush(&Limits::default(), &mut writer, false).unwrap();
+        assert_eq!(
+            clear_packet_types(&writer.buffer().buffer),
+            vec![msg::CHANNEL_DATA, msg::CHANNEL_EOF, msg::CHANNEL_CLOSE]
+        );
     }
 
     #[test]
@@ -1250,7 +1316,7 @@ mod tests {
         let mut staged_writer = PacketWriter::clear();
         staged.data(channel_id, payload.clone(), false).unwrap();
         staged
-            .flush(&Limits::default(), &mut staged_writer)
+            .flush(&Limits::default(), &mut staged_writer, false)
             .unwrap();
 
         let mut direct_writer = PacketWriter::clear();
@@ -1287,7 +1353,7 @@ mod tests {
             .extended_data(channel_id, 1, payload.clone(), false)
             .unwrap();
         staged
-            .flush(&Limits::default(), &mut staged_writer)
+            .flush(&Limits::default(), &mut staged_writer, false)
             .unwrap();
 
         let mut direct_writer = PacketWriter::clear();
@@ -1326,7 +1392,7 @@ mod tests {
             vec![msg::REQUEST_SUCCESS, msg::CHANNEL_DATA]
         );
 
-        encrypted.flush(&Limits::default(), &mut writer).unwrap();
+        encrypted.flush(&Limits::default(), &mut writer, false).unwrap();
         assert_eq!(
             clear_packet_types(&writer.buffer().buffer),
             vec![msg::REQUEST_SUCCESS, msg::CHANNEL_DATA]

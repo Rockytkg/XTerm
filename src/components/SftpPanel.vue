@@ -1,22 +1,21 @@
 <script setup>
-import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { AlertCircle, File, Folder, X } from "@lucide/vue";
-import { TabsList, TabsRoot, TabsTrigger } from "reka-ui";
+import { AlertCircle, File, Folder } from "@lucide/vue";
 import { storeToRefs } from "pinia";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import SftpFileTable from "./sftp/SftpFileTable.vue";
+import SftpOpenFileView from "./sftp/SftpOpenFileView.vue";
 import SftpPathBar from "./sftp/SftpPathBar.vue";
 import "../styles/sftp.scss";
-const CodeEditor = defineAsyncComponent(() => import("./CodeEditor.vue"));
 import SftpToolbar from "./sftp/SftpToolbar.vue";
 import SftpTransferQueue from "./sftp/SftpTransferQueue.vue";
 import { useSftpBrowser } from "../composables/useSftpBrowser";
 import { useSftpDialogStates } from "../composables/useSftpDialogStates";
 import { useSftpDragDrop } from "../composables/useSftpDragDrop";
-import { useSftpEditors } from "../composables/useSftpEditors";
 import { useSftpMotion } from "../composables/useSftpMotion";
 import { useSftpMoveDrag } from "../composables/useSftpMoveDrag";
+import { useSftpOpenFiles } from "../composables/useSftpOpenFiles";
 import { useSftpTransfers } from "../composables/useSftpTransfers";
 import { dismissContextMenu, openContextMenu } from "../services/contextMenu";
 import { writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
@@ -39,7 +38,6 @@ const { t, locale } = useI18n();
 const { preferences, resolvedTheme } = storeToRefs(useWorkspaceStore());
 const logger = createLogger("frontend.sftp.panel");
 
-const editorMode = ref(false);
 const queueCollapsed = ref(true);
 const queueListRef = ref(null);
 
@@ -155,11 +153,7 @@ const {
   requestRenameConflictAction,
 });
 
-const hasEditorTabs = computed(() => editorTabs.value.length > 0);
-const currentEditorDirty = computed(
-  () =>
-    !!activeEditorTab.value && activeEditorTab.value.content !== activeEditorTab.value.savedContent,
-);
+const hasOpenFile = computed(() => !!openFile.value);
 const parentDirectoryEntry = computed(() =>
   remoteParent.value
     ? {
@@ -278,6 +272,7 @@ function buildSftpContextMenuItems(entry, selection) {
   if (!contextEntry) return buildBlankContextMenuItems();
   const canRename = selection.length === 1;
   const canEdit = selection.length === 1 && contextEntry?.kind !== "dir";
+  const previewableEntries = selection.filter((item) => item?.kind !== "dir");
   const hasSelection = selection.length > 0;
 
   return [
@@ -290,6 +285,13 @@ function buildSftpContextMenuItems(entry, selection) {
       : []),
     contextMenuItem("sftp-download", t("sftp.download"), "download", selection.length === 1, () =>
       downloadEntry(selection[0]),
+    ),
+    contextMenuItem(
+      "sftp-preview",
+      t("sftp.context.preview"),
+      "preview",
+      previewableEntries.length > 0,
+      () => openPreviewFromContext(previewableEntries),
     ),
     contextMenuItem("sftp-edit", t("sftp.context.edit"), "edit", canEdit, () =>
       openEditorFromContext(selection[0]),
@@ -489,15 +491,14 @@ const {
 });
 
 const {
-  activeEditorPath,
-  activeEditorTab,
   closeEditor,
-  discardEditorChanges,
-  editorTabs,
+  convertToEdit,
   openEditor,
+  openFile,
+  openPreview,
   saveEditor,
   updateEditorContent,
-} = useSftpEditors({
+} = useSftpOpenFiles({
   props,
   t,
   refreshCurrentDirectoryIncremental,
@@ -530,41 +531,41 @@ watch(
   { immediate: true },
 );
 
-watch(hasEditorTabs, (value) => {
-  if (!value) editorMode.value = false;
-});
-
 function downloadEntry(entry = selectedEntry.value) {
   return downloadEntryViaTransfers(entry, closeContextMenu);
 }
 
+function downloadOpenFile(file) {
+  const entry = remoteFileByName.value.get(file.name) || {
+    name: file.name,
+    path: file.path,
+    kind: "file",
+  };
+  return downloadEntry(entry);
+}
+
+function openEntryOrPreview(entry) {
+  if (!entry) return;
+  if (entry.kind === "dir") {
+    openEntry(entry);
+    return;
+  }
+  openPreview([entry]);
+}
+
+function openPreviewFromContext(entries) {
+  closeContextMenu();
+  return openPreview(entries);
+}
+
 function openEditorFromContext(entry) {
   closeContextMenu();
-  editorMode.value = true;
   return openEditor(entry);
 }
 
-async function saveEditorAndReturn(tab = activeEditorTab.value) {
-  const saved = await saveEditor(tab);
-  if (saved) editorMode.value = false;
-}
-
-async function returnToFileManager() {
-  if (currentEditorDirty.value) {
-    const action = await requestDirtyEditorAction({
-      kind: "leave",
-      tab: activeEditorTab.value,
-    });
-    if (action === "save") {
-      const saved = await saveEditor(activeEditorTab.value);
-      if (!saved) return;
-    } else if (action === "discard") {
-      discardEditorChanges(activeEditorTab.value);
-    } else {
-      return;
-    }
-  }
-  editorMode.value = false;
+async function saveEditorAndClose() {
+  const saved = await saveEditor();
+  if (saved) await closeEditor();
 }
 
 function openParentDirectory() {
@@ -600,80 +601,25 @@ function setQueueListRef(element) {
     class="sftp-root"
     :class="{
       'is-dragging': dragActive || moveDragActive,
-      'sftp-root-editor-mode': editorMode && hasEditorTabs,
+      'sftp-root-editor-mode': hasOpenFile,
       'sftp-root-queue-collapsed': queueCollapsed,
     }"
     @contextmenu="provideContextMenu"
   >
-    <TabsRoot
-      v-if="editorMode && hasEditorTabs"
-      v-model="activeEditorPath"
-      class="sftp-editor-panel"
-      activation-mode="manual"
-    >
-      <TabsList
-        class="sftp-editor-tabs"
-        :aria-label="t('sftp.editor.tabs')"
-      >
-        <div
-          v-for="tab in editorTabs"
-          :key="tab.path"
-          class="sftp-editor-tab"
-          :class="{
-            'is-dirty': tab.content !== tab.savedContent,
-          }"
-        >
-          <TabsTrigger
-            :value="tab.path"
-            class="sftp-editor-tab-activate"
-          >
-            <span class="sftp-editor-tab-name">{{ tab.name }}</span>
-          </TabsTrigger>
-          <span
-            v-if="tab.content !== tab.savedContent"
-            class="sftp-editor-tab-dirty"
-            aria-hidden="true"
-          />
-          <button
-            type="button"
-            class="sftp-editor-tab-close"
-            :aria-label="t('sftp.editor.closeTab', { name: tab.name })"
-            @click.stop="closeEditor(tab)"
-          >
-            <X
-              :size="13"
-              stroke-width="2"
-            />
-          </button>
-        </div>
-      </TabsList>
-
-      <CodeEditor
-        v-if="activeEditorTab"
-        :back-label="t('sftp.editor.backToFiles')"
-        :content="activeEditorTab.content"
-        :dirty="activeEditorTab.content !== activeEditorTab.savedContent"
-        :error="activeEditorTab.error"
-        :font-family="preferences.editorFontFamily"
-        :font-size="preferences.editorFontSize"
-        :highlight-current-line="preferences.editorHighlightActiveLine"
-        :line-wrapping="preferences.editorLineWrapping"
-        :loading="activeEditorTab.loading"
-        :loading-label="t('sftp.editor.loading')"
-        :path="activeEditorTab.path"
-        :readonly="false"
-        :resolved-theme="resolvedEditorTheme"
-        :save-label="t('actions.save')"
-        :saving="activeEditorTab.saving"
-        :tab-size="preferences.editorTabSize"
-        :title="activeEditorTab.name"
-        @back="returnToFileManager"
-        @font-size-change="(size) => (preferences.editorFontSize = size)"
-        @save="saveEditor(activeEditorTab)"
-        @save-and-back="saveEditorAndReturn(activeEditorTab)"
-        @update:content="updateEditorContent(activeEditorTab.path, $event)"
-      />
-    </TabsRoot>
+    <SftpOpenFileView
+      v-if="hasOpenFile"
+      :close-file="closeEditor"
+      :convert-to-edit="convertToEdit"
+      :download-file="downloadOpenFile"
+      :file="openFile"
+      :font-size-change="(size) => (preferences.editorFontSize = size)"
+      :preferences="preferences"
+      :resolved-editor-theme="resolvedEditorTheme"
+      :resolved-theme="resolvedTheme"
+      :save-file="saveEditor"
+      :save-file-and-close="saveEditorAndClose"
+      :update-content="updateEditorContent"
+    />
 
     <template v-else>
       <SftpToolbar
@@ -740,7 +686,7 @@ function setQueueListRef(element) {
         @dom-drag-over="onTableDomDragOver"
         @dom-drop="onTableDomDrop"
         @move-mouse-down="onMoveMouseDown"
-        @open-entry="openEntry"
+        @open-entry="openEntryOrPreview"
         @open-parent="openParentDirectory"
         @select-entry="selectEntry"
         @start-rename-entry="startRenameEntry"

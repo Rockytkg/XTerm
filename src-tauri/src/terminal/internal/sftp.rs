@@ -20,6 +20,7 @@ use tokio::{
 };
 
 use crate::{
+    paths::expand_home_tilde,
     state::AppState,
     terminal::{
         events::{emit_sftp_transfer_progress, emit_sftp_transfer_status},
@@ -34,6 +35,7 @@ use crate::{
 };
 
 pub(super) const SFTP_EDIT_MAX_BYTES: u64 = 5 * 1024 * 1024;
+pub(super) const SFTP_PREVIEW_MAX_BYTES: u64 = 20 * 1024 * 1024;
 const SFTP_TRANSFER_MAX_CONCURRENT: usize = 3;
 const SFTP_TRANSFER_MAX_ATTEMPTS: usize = 3;
 const SFTP_TRANSFER_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -548,7 +550,7 @@ async fn prepare_sftp_transfer_record(
     let direction = SftpTransferDirection::parse(&request.direction)?;
     let upload_conflict_action =
         SftpUploadConflictAction::parse(request.upload_conflict_action.as_deref())?;
-    let local_path = expand_local_path(&request.local_path)?;
+    let local_path = expand_home_tilde(&request.local_path)?;
     let name = match direction {
         SftpTransferDirection::Upload => request
             .remote_name
@@ -1604,13 +1606,80 @@ pub(super) fn remote_file_kind(file_type: FileType) -> String {
 pub(super) fn sftp_file_stat_result(
     path: String,
     metadata: &russh_sftp::client::fs::Metadata,
+    mime: Option<String>,
 ) -> SftpFileStatResult {
     SftpFileStatResult {
         path,
         kind: remote_file_kind(metadata.file_type()),
         size: metadata.len(),
         modified: remote_modified_timestamp(metadata),
+        mime,
     }
+}
+
+const SFTP_SNIFF_MAX_BYTES: u64 = 8192;
+
+// 读取远端小文件到内存：resolve + stat + 目录/大小上限校验 + 全量读，
+// 编辑（sftp_read_file）与预览（sftp_read_file_base64）命令共用，purpose 仅用于报错文案。
+// 返回解析后的路径与字节内容，调用方自行做 UTF-8/base64 转换。
+pub(super) async fn read_remote_file_bytes(
+    sftp: &RusshSftpSession,
+    requested_path: &str,
+    max_bytes: u64,
+    purpose: &str,
+) -> Result<(String, Vec<u8>), String> {
+    let path = resolve_remote_input_path(sftp, requested_path).await?;
+    let metadata = sftp
+        .metadata(path.clone())
+        .await
+        .map_err(|error| format!("failed to stat remote file '{path}': {error}"))?;
+    if metadata.file_type().is_dir() {
+        return Err(format!("remote path '{path}' is a directory"));
+    }
+    if metadata.len() > max_bytes {
+        return Err(format!(
+            "remote file '{path}' is too large to {purpose} in memory ({} bytes)",
+            metadata.len()
+        ));
+    }
+
+    let mut file = sftp
+        .open(path.clone())
+        .await
+        .map_err(|error| format!("failed to open remote file '{path}': {error}"))?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.read_to_end(&mut bytes)
+        .await
+        .map_err(|error| format!("failed to read remote file '{path}': {error}"))?;
+    Ok((path, bytes))
+}
+
+// 无扩展名文件的类型嗅探：只读文件头部，魔数命中取具体类型，否则按文本/二进制判定
+pub(super) async fn sniff_remote_file_mime(
+    sftp: &RusshSftpSession,
+    remote_path: &str,
+) -> Result<Option<String>, String> {
+    let file = sftp.open(remote_path.to_string()).await.map_err(|error| {
+        format!("failed to open remote file '{remote_path}' for sniffing: {error}")
+    })?;
+    let mut buffer = Vec::new();
+    file.take(SFTP_SNIFF_MAX_BYTES)
+        .read_to_end(&mut buffer)
+        .await
+        .map_err(|error| {
+            format!("failed to read remote file '{remote_path}' for sniffing: {error}")
+        })?;
+    Ok(detect_mime_from_bytes(&buffer))
+}
+
+fn detect_mime_from_bytes(bytes: &[u8]) -> Option<String> {
+    if let Some(kind) = infer::get(bytes) {
+        return Some(kind.mime_type().to_string());
+    }
+    if bytes.is_empty() || content_inspector::inspect(bytes).is_text() {
+        return Some("text/plain".to_string());
+    }
+    None
 }
 
 pub(super) fn remote_modified_timestamp(
@@ -1682,6 +1751,27 @@ pub(super) fn resolve_remote_child_path(parent_path: &str, name: &str) -> Result
     Ok(normalize_remote_path(&join_remote_path(&parent, &name)))
 }
 
+/// 用户可自由输入的远端路径（路径栏、重命名等 IPC 入口）允许以 ~ 开头。
+/// 服务器支持 expand-path@openssh.com（russh-sftp 3.0 起可探测）时在服务端
+/// 展开——只有服务端才知道远端 home 的真实位置；不支持时按字面路径透传，
+/// 后续调用报 no such file，行为与旧版本一致。
+pub(super) async fn resolve_remote_input_path(
+    sftp: &RusshSftpSession,
+    path: &str,
+) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed == "~" || trimmed.starts_with("~/") {
+        if let Some(expanded) = sftp
+            .expand_path(trimmed)
+            .await
+            .map_err(|error| format!("failed to expand remote path '{trimmed}': {error}"))?
+        {
+            return Ok(normalize_remote_path(&expanded));
+        }
+    }
+    Ok(normalize_remote_path(trimmed))
+}
+
 pub(super) fn remote_parent_path(path: &str) -> Option<String> {
     if path == "/" || path == "." {
         return None;
@@ -1695,22 +1785,6 @@ pub(super) fn remote_parent_path(path: &str) -> Option<String> {
     } else {
         Some(trimmed[..index].to_string())
     }
-}
-
-pub(super) fn expand_local_path(path: &str) -> Result<PathBuf, String> {
-    let trimmed = path.trim();
-    if trimmed == "~" || trimmed.starts_with("~/") || trimmed.starts_with("~\\") {
-        let home = home_dir().ok_or_else(|| "failed to resolve home directory".to_string())?;
-        let rest = trimmed
-            .trim_start_matches('~')
-            .trim_start_matches(['/', '\\']);
-        return Ok(home.join(rest));
-    }
-    Ok(PathBuf::from(trimmed))
-}
-
-pub(super) fn home_dir() -> Option<PathBuf> {
-    dirs::home_dir()
 }
 
 pub(super) async fn delete_remote_path(
