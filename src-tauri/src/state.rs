@@ -995,6 +995,7 @@ mod tests {
             cols: None,
             rows: None,
             jump_hosts: None,
+            vnc_shared: None,
         }
     }
 

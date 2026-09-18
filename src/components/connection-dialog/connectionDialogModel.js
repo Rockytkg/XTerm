@@ -3,19 +3,21 @@ import {
   CONNECTION_PROTOCOLS,
   isSerialProtocol,
   isTelnetProtocol,
+  isVncProtocol,
   normalizeConnectionProtocol,
   requiresHostKeyVerification,
-} from "../../utils/connectionProtocols";
+} from "../../utils/connectionProtocols.js";
 import {
   BACKSPACE_SENDS,
   DEFAULT_TERMINAL_ENCODING,
   DEFAULT_TERMINAL_TYPE,
-} from "../../utils/terminalSessionOptions";
+} from "../../utils/terminalSessionOptions.js";
 
 const PROTOCOL_PORT_DEFAULTS = {
   ssh: 22,
   telnet: 23,
   serial: null,
+  vnc: 5900,
 };
 
 function enabledOrDefault(value, fallback = true) {
@@ -115,6 +117,25 @@ export function createProtocolDraft(protocol, profile = null) {
     };
   }
 
+  if (isVncProtocol(normalizedProtocol)) {
+    return {
+      ...common,
+      host: profile?.host ?? "",
+      port: profile?.port ?? PROTOCOL_PORT_DEFAULTS.vnc,
+      user: profile?.user ?? "",
+      password: "",
+      authMethod: details.authMethod || "password",
+      savedCredentialId: details.savedCredentialId || "",
+      viewOnly: details.viewOnly === true,
+      shared: details.shared !== false,
+      quality: details.quality ?? 6,
+      compression: details.compression ?? 2,
+      scaleMode: details.scaleMode || "fit",
+      clipboardSync: details.clipboardSync !== false,
+      resizeSession: details.resizeSession === true,
+    };
+  }
+
   return {
     ...common,
     host: profile?.host ?? "",
@@ -201,6 +222,27 @@ export function buildConnectionProfile({
         protocol,
         authMethod: "password",
         savedCredentialId: savedCredentialId || undefined,
+      },
+    };
+  }
+
+  if (isVncProtocol(protocol)) {
+    return {
+      ...commonProfile,
+      host: form.host.trim(),
+      port: String(Number(form.port)),
+      user: form.user?.trim?.() ?? "",
+      details: {
+        protocol,
+        authMethod: "password",
+        savedCredentialId: savedCredentialId || undefined,
+        viewOnly: form.viewOnly === true,
+        shared: form.shared !== false,
+        quality: Number(form.quality),
+        compression: Number(form.compression),
+        scaleMode: form.scaleMode || "fit",
+        clipboardSync: form.clipboardSync !== false,
+        resizeSession: form.resizeSession === true,
       },
     };
   }

@@ -46,6 +46,8 @@ pub(crate) struct ConnectionOpenCommand {
     pub rows: Option<u32>,
     #[serde(default)]
     pub ssh_credential: Option<SshCredentialOverride>,
+    #[serde(default)]
+    pub vnc_password: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -63,6 +65,7 @@ pub(crate) enum ConnectionOpenResponse {
         serial_port: Option<String>,
         baud_rate: Option<u32>,
         serial_scores: Option<Vec<SerialProbeResult>>,
+        vnc_bridge: Option<crate::terminal::internal::VncBridgeInfo>,
     },
     HostKeyChallenge {
         awaiting: &'static str,

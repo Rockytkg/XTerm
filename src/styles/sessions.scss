@@ -125,6 +125,11 @@
     color: var(--success);
   }
 
+  .session-card-status-vnc {
+    background: oklch(93% 0.045 300deg);
+    color: oklch(56% 0.17 300deg);
+  }
+
   .session-card-body {
     flex: 1;
     min-width: 0;

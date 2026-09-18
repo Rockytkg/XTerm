@@ -26,6 +26,7 @@ pub(super) fn connection_saved_credential_id(connection: &StoredConnection) -> O
         ConnectionDetails::Ssh(details) => details.saved_credential_id.clone(),
         ConnectionDetails::Telnet(details) => details.saved_credential_id.clone(),
         ConnectionDetails::Serial(details) => details.saved_credential_id.clone(),
+        ConnectionDetails::Vnc(details) => details.saved_credential_id.clone(),
     }
 }
 
@@ -37,6 +38,7 @@ pub(super) fn set_connection_saved_credential_id(
         ConnectionDetails::Ssh(details) => details.saved_credential_id = credential_id,
         ConnectionDetails::Telnet(details) => details.saved_credential_id = credential_id,
         ConnectionDetails::Serial(details) => details.saved_credential_id = credential_id,
+        ConnectionDetails::Vnc(details) => details.saved_credential_id = credential_id,
     }
 }
 

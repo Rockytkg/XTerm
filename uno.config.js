@@ -154,8 +154,9 @@ export default defineConfig({
       "absolute left-[12px] right-[12px] top-[104px] z-[5] m-0 min-h-[34px] flex items-center gap-[8px] rounded-[7px] border border-[color-mix(in_oklch,var(--danger)_35%,transparent)] bg-danger-bg px-[9px] py-[7px] text-[0.7857em] text-danger",
     "sftp-browser":
       "relative ui-fill-block min-h-0 overflow-auto border border-border-light bg-bg-secondary cursor-default select-none [contain:layout_paint]",
-    "sftp-table":
-      "[inline-size:var(--sftp-table-inline-size)] table-fixed border-collapse bg-bg-secondary",
+    // 宽度用 100% 而非 100cqi：容器查询长度不扣除经典滚动条，出现纵向滚动条后会恒宽出
+    // 4px 导致常驻横向滚动条；max(590px,…) 已含最小宽度，无需另写 min-inline-size。
+    "sftp-table": "[inline-size:max(590px,100%)] bg-bg-secondary",
     "sftp-table-head": "bg-bg-secondary text-[0.75em] text-text-tertiary",
     "sftp-row":
       "h-[34px] border-b border-border-light bg-transparent text-left text-text-secondary cursor-default select-none transition-[background-color,color,outline-color] duration-150 hover:bg-bg-tertiary hover:text-text-primary",
@@ -287,7 +288,7 @@ export default defineConfig({
     "conn-seg-tabs": "flex gap-[8px]",
     "conn-seg-tab":
       "flex-1 min-h-[38px] flex items-center justify-center gap-[7px] rounded-[8px] border border-border bg-bg-primary px-[12px] py-[7px] text-[0.8571em] font-600 text-text-secondary transition-[background-color,border-color,box-shadow,color] duration-150 hover:border-[color-mix(in_oklch,var(--accent)_36%,var(--border))] hover:text-text-primary focus-visible:border-[color-mix(in_oklch,var(--accent)_36%,var(--border))] focus-visible:text-text-primary focus-visible:outline-none",
-    "conn-protocol-grid": "grid grid-cols-[repeat(3,minmax(0,1fr))] gap-[8px]",
+    "conn-protocol-grid": "grid grid-cols-[repeat(4,minmax(0,1fr))] gap-[8px]",
     "conn-protocol-card":
       "min-h-[40px] flex items-center justify-center gap-[7px] rounded-[8px] border border-border bg-bg-primary text-[0.8571em] font-600 text-text-secondary transition-[background-color,border-color,box-shadow,color] duration-150 hover:bg-bg-tertiary hover:text-text-primary focus-visible:border-accent focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:cursor-default",
     "conn-browse-btn":

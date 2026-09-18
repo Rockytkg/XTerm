@@ -2,7 +2,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { storeToRefs } from "pinia";
-import { Cable, Globe2, Network, Pencil, Plus, Server, Trash2 } from "@lucide/vue";
+import { Cable, Globe2, Monitor, Network, Pencil, Plus, Server, Trash2 } from "@lucide/vue";
 import "../styles/sessions.scss";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import AddConnectionDialog from "../components/AddConnectionDialog.vue";
@@ -17,6 +17,7 @@ import {
   connectionEndpointLabel,
   isSerialProtocol,
   isTelnetProtocol,
+  isVncProtocol,
   protocolDisplayClass,
 } from "../utils/connectionProtocols";
 
@@ -280,6 +281,13 @@ onBeforeUnmount(() => {
           />
           <Globe2
             v-else-if="isTelnetProtocol(conn.protocol)"
+            class="session-card-protocol-icon"
+            :size="18"
+            stroke-width="1.8"
+            aria-hidden="true"
+          />
+          <Monitor
+            v-else-if="isVncProtocol(conn.protocol)"
             class="session-card-protocol-icon"
             :size="18"
             stroke-width="1.8"

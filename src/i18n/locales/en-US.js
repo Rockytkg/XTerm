@@ -11,6 +11,7 @@ export default {
     done: "Done",
     edit: "Edit",
     newConnection: "New Connection",
+    reconnect: "Reconnect",
     save: "Save",
   },
   common: {
@@ -53,7 +54,7 @@ export default {
   connectionDialog: {
     title: "Create connection",
     titleEdit: "Edit connection",
-    description: "Configure an SSH, Telnet, or serial connection.",
+    description: "Configure an SSH, Telnet, serial, or VNC connection.",
     auto: "Auto",
     noPasswordCredentials: "No saved password credentials.",
     refreshSerialPorts: "Refresh serial ports",
@@ -131,6 +132,52 @@ export default {
       none: "None",
       software: "Software",
       hardware: "Hardware",
+    },
+    vnc: {
+      scaleMode: "Scale mode",
+      scaleModeHint: "How the remote desktop fits into the workspace.",
+      scaleModes: {
+        fit: "Fit to window",
+        none: "Original size",
+        clip: "Clip to viewport",
+      },
+      quality: "Image quality",
+      qualityHint: "JPEG quality level; higher is sharper but uses more bandwidth.",
+      qualityLevels: {
+        0: "0 - Lowest",
+        1: "1 - Very low",
+        2: "2 - Low",
+        3: "3 - Medium-low",
+        4: "4 - Medium",
+        5: "5 - Medium-high",
+        6: "6 - High (default)",
+        7: "7 - Very high",
+        8: "8 - Near lossless",
+        9: "9 - Lossless-grade",
+      },
+      compression: "Compression level",
+      compressionHint: "zlib compression level; higher saves bandwidth at more CPU cost.",
+      compressionLevels: {
+        0: "0 - None",
+        1: "1 - Lowest",
+        2: "2 - Low (default)",
+        3: "3 - Medium-low",
+        4: "4 - Medium",
+        5: "5 - Medium-high",
+        6: "6 - High",
+        7: "7 - Very high",
+        8: "8 - Near maximum",
+        9: "9 - Maximum",
+      },
+      clipboardSync: "Clipboard sync",
+      clipboardSyncHint: "Write remote clipboard changes to the local clipboard.",
+      viewOnly: "View only",
+      viewOnlyHint: "Block keyboard and mouse input to the remote side.",
+      shared: "Shared session",
+      sharedHint: "Allow multiple clients to connect to the same VNC session.",
+      resizeSession: "Resize remote desktop with window",
+      resizeSessionHint:
+        "Requires server support for ExtendedDesktopSize; falls back automatically.",
     },
     validation: {
       nameRequired: "Enter a connection name.",
@@ -309,6 +356,8 @@ export default {
       stopRecording: "Stop recording",
       serialPort: "Serial port",
       user: "Remote user",
+      desktopName: "Desktop name",
+      resolution: "Resolution",
     },
     runtime: {
       title: "Runtime",
@@ -940,6 +989,7 @@ export default {
     connectionConnecting: "Connecting to remote terminal…",
     connectionConnectingSsh: "Connecting to SSH server",
     connectionConnectingTelnet: "Connecting to Telnet server",
+    connectionConnectingVnc: "Connecting to VNC server",
     connectionOpeningSerial: "Opening serial port",
     connectionDetectingSerial: "Detecting serial port and baud rate",
     connectionEstablishingSecureSession: "Establishing secure session",
@@ -966,6 +1016,19 @@ export default {
       savedOneTo: "Saved {count} item to {destination}",
       savedManyTo: "Saved {count} items to {destination}",
     },
+  },
+  vncDesktop: {
+    connectionError: "VNC connection error",
+    sessionClosed: "VNC session disconnected",
+    disconnectedUnexpectedly: "The connection to the VNC bridge dropped unexpectedly.",
+    credentialsTitle: "VNC authentication required",
+    credentialsDescription:
+      "This server requires authentication directly in the session. Enter your credentials.",
+    ctrlAltDel: "Send Ctrl+Alt+Del",
+    sendClipboard: "Send local clipboard to remote",
+    clipboardSendFailed: "Failed to read the local clipboard",
+    scaleMode: "Scale mode: {mode}",
+    fullscreen: "Fullscreen",
   },
   connectionErrors: {
     authentication_failed: "Authentication failed. Check the username, password, or key.",
@@ -1045,6 +1108,16 @@ export default {
     unsupported_connection_protocol: "This connection protocol is not supported: {protocol}",
     validation_error:
       "The connection profile is invalid. Check required fields and parameter formats.",
+    vnc_auth_failed: "VNC password authentication failed. Check the password and try again.",
+    vnc_auth_required:
+      "The VNC server requires password authentication. Enter the password and retry.",
+    vnc_bridge_failed: "Failed to start the local VNC bridge.",
+    vnc_connect_failed: "Could not connect to the VNC server {host}:{port}.",
+    vnc_connect_timeout: "Timed out connecting to the VNC server {host}:{port}.",
+    vnc_credential_failed: "Failed to read the VNC credential linked to this connection.",
+    vnc_handshake_failed:
+      "RFB handshake with the VNC server failed. The target may not be a VNC service.",
+    vnc_host_required: "Enter the VNC host address.",
   },
   workspace: {
     noActiveSessions: "No active sessions",
@@ -1074,7 +1147,7 @@ export default {
     typeChangeConfirm: {
       title: "Confirm credential type change",
       description:
-        "This credential is currently referenced by {count} Telnet or serial connections: {names}. These connection types only support password credentials. Updating the original credential may make those connections unable to use it. Choose how to proceed.",
+        "This credential is currently referenced by {count} Telnet, serial, or VNC connections: {names}. These connection types only support password credentials. Updating the original credential may make those connections unable to use it. Choose how to proceed.",
       updateExisting: "Update original credential",
       createNew: "Save as new credential",
       cancel: "Cancel",

@@ -34,11 +34,14 @@ mod terminal;
 mod transport_events;
 pub(crate) mod trzsz;
 mod util;
+#[path = "protocols/vnc/mod.rs"]
+mod vnc;
 
 pub(crate) use core::{
     resolve_connection_request, ConnectionError, ConnectionOpenRequest, ConnectionOpenResult,
     ConnectionResult, ResolvedConnection, SerialProbeResult, SerialRedetectResult,
     SessionCapabilityCommand, SessionCommand, SshRuntimeMetricsRequest, TerminalSession,
+    VncBridgeInfo,
 };
 pub(crate) use serial::SerialConnectionFactory;
 pub(crate) use sftp::cancel_sftp_transfers_for_session;
@@ -46,3 +49,4 @@ pub(crate) use ssh::{discard_pending_ssh_connection, SshConnectionFactory};
 pub(crate) use ssh_aux::run_runtime_metrics_monitor;
 pub(crate) use telnet::TelnetConnectionFactory;
 pub(crate) use terminal::shutdown_all_sessions;
+pub(crate) use vnc::VncConnectionFactory;

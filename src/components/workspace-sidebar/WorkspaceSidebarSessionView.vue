@@ -1,13 +1,13 @@
 <script setup>
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { Cable, Globe2, Server } from "@lucide/vue";
+import { Cable, Globe2, Monitor, Server } from "@lucide/vue";
 import { useToasts } from "../../composables/useToasts";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { setBackendEncodingDetection, setBackendRuntimeMetricsEnabled } from "../../services/terminalSessions";
 import { connectionCan } from "../../utils/connectionCapabilities";
 import { createLogger } from "../../utils/logger";
-import { isSerialProtocol, isSshProtocol, isTelnetProtocol } from "../../utils/connectionProtocols";
+import { isSerialProtocol, isSshProtocol, isTelnetProtocol, isVncProtocol } from "../../utils/connectionProtocols";
 import UiSwitch from "../UiSwitch.vue";
 import UiSelect from "../UiSelect.vue";
 import {
@@ -32,10 +32,11 @@ const logger = createLogger("frontend.workspace.sidebar-session");
 
 const protocol = computed(() => props.activeConnection?.protocol);
 const protocolLabel = computed(() => protocol.value?.toUpperCase() || "—");
-// 与会话列表保持一致：串口 Cable / Telnet Globe2 / SSH Server
+// 与会话列表保持一致：串口 Cable / Telnet Globe2 / VNC Monitor / SSH Server
 const protocolIcon = computed(() => {
   if (isSerialProtocol(protocol.value)) return Cable;
   if (isTelnetProtocol(protocol.value)) return Globe2;
+  if (isVncProtocol(protocol.value)) return Monitor;
   return Server;
 });
 const statusPillClass = computed(() => {
@@ -45,6 +46,7 @@ const statusPillClass = computed(() => {
 });
 const isSerial = computed(() => connectionCan(props.activeConnection, "serialBaudDetection"));
 const isSsh = computed(() => isSshProtocol(protocol.value));
+const isVnc = computed(() => isVncProtocol(protocol.value));
 const isRemoteShell = computed(
   () =>
     connectionCan(props.activeConnection, "metrics") ||
@@ -70,6 +72,19 @@ const profileConnectionId = computed(
 );
 const frontendSessionId = computed(() => props.activeConnection?.id || "");
 const backendSessionId = computed(() => props.activeConnection?.sessionId || "");
+
+const vncBridgeInfo = computed(() => sessionRegistry.getVncBridge(frontendSessionId.value));
+const vncResolution = computed(() => {
+  const bridge = vncBridgeInfo.value;
+  return bridge && bridge.width && bridge.height ? `${bridge.width} × ${bridge.height}` : "—";
+});
+const vncScaleMode = computed(() => props.activeConnection?.vncScaleMode || "fit");
+const vncScaleModeOptions = computed(() =>
+  ["fit", "none", "clip"].map((mode) => ({
+    label: t(`connectionDialog.vnc.scaleModes.${mode}`),
+    value: mode,
+  })),
+);
 
 async function persistProfileField(field, value) {
   if (!profileConnectionId.value) return;
@@ -190,6 +205,20 @@ async function handleRuntimeMetricsChange(enabled) {
           </div>
         </template>
 
+        <!-- VNC -->
+        <template v-else-if="isVnc">
+          <div class="workspace-sidebar-metric">
+            <span>{{ t("overview.session.desktopName") }}</span>
+            <strong :title="vncBridgeInfo?.desktopName">{{
+              vncBridgeInfo?.desktopName || "—"
+            }}</strong>
+          </div>
+          <div class="workspace-sidebar-metric">
+            <span>{{ t("overview.session.resolution") }}</span>
+            <strong>{{ vncResolution }}</strong>
+          </div>
+        </template>
+
         <!-- Telnet -->
         <template v-else>
           <div class="workspace-sidebar-metric">
@@ -212,7 +241,59 @@ async function handleRuntimeMetricsChange(enabled) {
         {{ t("overview.session.title") }}
       </div>
       <div class="workspace-sidebar-pref-list">
-        <div class="workspace-sidebar-pref-row">
+        <!-- VNC 会话选项：写回 profile，VncDesktopPane 监听变化实时作用于 RFB 实例 -->
+        <template v-if="isVnc">
+          <div class="workspace-sidebar-pref-row">
+            <div class="workspace-sidebar-pref-text">
+              <span class="workspace-sidebar-pref-label">{{
+                t("connectionDialog.vnc.viewOnly")
+              }}</span>
+              <span class="workspace-sidebar-pref-hint">{{
+                t("connectionDialog.vnc.viewOnlyHint")
+              }}</span>
+            </div>
+            <UiSwitch
+              :model-value="activeConnection?.vncViewOnly === true"
+              @update:model-value="persistProfileField('vncViewOnly', $event)"
+            />
+          </div>
+
+          <div class="workspace-sidebar-pref-row">
+            <div class="workspace-sidebar-pref-text">
+              <span class="workspace-sidebar-pref-label">{{
+                t("connectionDialog.vnc.clipboardSync")
+              }}</span>
+              <span class="workspace-sidebar-pref-hint">{{
+                t("connectionDialog.vnc.clipboardSyncHint")
+              }}</span>
+            </div>
+            <UiSwitch
+              :model-value="activeConnection?.vncClipboardSync !== false"
+              @update:model-value="persistProfileField('vncClipboardSync', $event)"
+            />
+          </div>
+
+          <div class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack">
+            <div class="workspace-sidebar-pref-text">
+              <span class="workspace-sidebar-pref-label">{{
+                t("connectionDialog.vnc.scaleMode")
+              }}</span>
+              <span class="workspace-sidebar-pref-hint">{{
+                t("connectionDialog.vnc.scaleModeHint")
+              }}</span>
+            </div>
+            <UiSelect
+              :model-value="vncScaleMode"
+              :options="vncScaleModeOptions"
+              @update:model-value="persistProfileField('vncScaleMode', $event)"
+            />
+          </div>
+        </template>
+
+        <div
+          v-if="!isVnc"
+          class="workspace-sidebar-pref-row"
+        >
           <div class="workspace-sidebar-pref-text">
             <span class="workspace-sidebar-pref-label">{{
               t("overview.session.toggleHighlight")
@@ -227,7 +308,10 @@ async function handleRuntimeMetricsChange(enabled) {
           />
         </div>
 
-        <div class="workspace-sidebar-pref-row">
+        <div
+          v-if="!isVnc"
+          class="workspace-sidebar-pref-row"
+        >
           <div class="workspace-sidebar-pref-text">
             <span class="workspace-sidebar-pref-label">{{
               t("connectionDialog.fields.morePromptCleanup")
@@ -260,7 +344,10 @@ async function handleRuntimeMetricsChange(enabled) {
           />
         </div>
 
-        <div class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack">
+        <div
+          v-if="!isVnc"
+          class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack"
+        >
           <div class="workspace-sidebar-pref-text">
             <span class="workspace-sidebar-pref-label">{{
               t("connectionDialog.fields.terminalType")
@@ -276,7 +363,10 @@ async function handleRuntimeMetricsChange(enabled) {
           />
         </div>
 
-        <div class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack">
+        <div
+          v-if="!isVnc"
+          class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack"
+        >
           <div class="workspace-sidebar-pref-text">
             <span class="workspace-sidebar-pref-label">{{
               t("connectionDialog.fields.encoding")
@@ -292,7 +382,10 @@ async function handleRuntimeMetricsChange(enabled) {
           />
         </div>
 
-        <div class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack">
+        <div
+          v-if="!isVnc"
+          class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack"
+        >
           <div class="workspace-sidebar-pref-text">
             <span class="workspace-sidebar-pref-label">{{
               t("connectionDialog.fields.backspaceSends")

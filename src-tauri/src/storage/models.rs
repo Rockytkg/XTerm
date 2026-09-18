@@ -124,6 +124,7 @@ pub enum ConnectionDetails {
     Ssh(SshConnectionDetails),
     Telnet(TelnetConnectionDetails),
     Serial(SerialConnectionDetails),
+    Vnc(VncConnectionDetails),
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -149,6 +150,19 @@ pub struct SerialConnectionDetails {
     pub flow_control: Option<String>,
     pub parity: Option<String>,
     pub stop_bits: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct VncConnectionDetails {
+    pub auth_method: Option<String>,
+    pub saved_credential_id: Option<String>,
+    pub view_only: Option<bool>,
+    pub shared: Option<bool>,
+    pub quality: Option<i64>,
+    pub compression: Option<i64>,
+    pub scale_mode: Option<String>,
+    pub clipboard_sync: Option<bool>,
+    pub resize_session: Option<bool>,
 }
 
 /// Persisted connection record.

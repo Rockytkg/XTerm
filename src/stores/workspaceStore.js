@@ -430,6 +430,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       get status() {
         return connectionRuntimeStatus(sessionId);
       },
+      get vncBridge() {
+        return sessionRegistry.getVncBridge(sessionId);
+      },
     };
   }
 

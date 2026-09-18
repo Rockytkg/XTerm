@@ -48,6 +48,7 @@ pub enum ConnectionProfileDetails {
     Ssh(ConnectionProfileSshDetails),
     Telnet(ConnectionProfileTelnetDetails),
     Serial(ConnectionProfileSerialDetails),
+    Vnc(ConnectionProfileVncDetails),
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -76,6 +77,20 @@ pub struct ConnectionProfileSerialDetails {
     pub(crate) flow_control: Option<String>,
     pub(crate) parity: Option<String>,
     pub(crate) stop_bits: Option<u8>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionProfileVncDetails {
+    pub(crate) auth_method: Option<String>,
+    pub(crate) saved_credential_id: Option<String>,
+    pub(crate) view_only: Option<bool>,
+    pub(crate) shared: Option<bool>,
+    pub(crate) quality: Option<i64>,
+    pub(crate) compression: Option<i64>,
+    pub(crate) scale_mode: Option<String>,
+    pub(crate) clipboard_sync: Option<bool>,
+    pub(crate) resize_session: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -113,11 +128,19 @@ impl ConnectionProfile {
         }
     }
 
+    pub(crate) fn vnc_details(&self) -> Option<&ConnectionProfileVncDetails> {
+        match &self.details {
+            ConnectionProfileDetails::Vnc(details) => Some(details),
+            _ => None,
+        }
+    }
+
     pub(crate) fn auth_method(&self) -> Option<&str> {
         match &self.details {
             ConnectionProfileDetails::Ssh(details) => details.auth_method.as_deref(),
             ConnectionProfileDetails::Telnet(details) => details.auth_method.as_deref(),
             ConnectionProfileDetails::Serial(details) => details.auth_method.as_deref(),
+            ConnectionProfileDetails::Vnc(details) => details.auth_method.as_deref(),
         }
     }
 
@@ -126,6 +149,7 @@ impl ConnectionProfile {
             ConnectionProfileDetails::Ssh(details) => details.saved_credential_id.as_deref(),
             ConnectionProfileDetails::Telnet(details) => details.saved_credential_id.as_deref(),
             ConnectionProfileDetails::Serial(details) => details.saved_credential_id.as_deref(),
+            ConnectionProfileDetails::Vnc(details) => details.saved_credential_id.as_deref(),
         }
     }
 
@@ -175,6 +199,13 @@ impl ConnectionProfile {
             _ => None,
         }
     }
+
+    fn vnc_details_mut(&mut self) -> Option<&mut ConnectionProfileVncDetails> {
+        match &mut self.details {
+            ConnectionProfileDetails::Vnc(details) => Some(details),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -215,6 +246,20 @@ pub struct ConnectionListItem {
     pub terminal_more_prompt_cleanup: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_metrics: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc_view_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc_shared: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc_quality: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc_compression: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc_scale_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc_clipboard_sync: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc_resize_session: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -428,7 +473,7 @@ fn update_connection_credential_in_store(
         .ok_or_else(|| format!("connection '{connection_id}' not found"))?;
     if ProtocolKind::from_str(&profile.protocol).is_none() {
         return Err(
-            "only SSH, Telnet, and serial connections can use saved credentials".to_string(),
+            "only SSH, Telnet, serial, and VNC connections can use saved credentials".to_string(),
         );
     }
     match &mut profile.details {
@@ -439,6 +484,9 @@ fn update_connection_credential_in_store(
             details.saved_credential_id = credential_id.map(str::to_string);
         }
         ConnectionProfileDetails::Serial(details) => {
+            details.saved_credential_id = credential_id.map(str::to_string);
+        }
+        ConnectionProfileDetails::Vnc(details) => {
             details.saved_credential_id = credential_id.map(str::to_string);
         }
     }
@@ -539,6 +587,10 @@ fn clear_protocol_scoped_fields(connection: &mut ConnectionProfile) {
                 details.auth_method = None;
                 details.saved_credential_id = None;
             }
+            ConnectionProfileDetails::Vnc(details) => {
+                details.auth_method = None;
+                details.saved_credential_id = None;
+            }
         }
     }
 
@@ -550,6 +602,18 @@ fn clear_protocol_scoped_fields(connection: &mut ConnectionProfile) {
             details.flow_control = None;
             details.parity = None;
             details.stop_bits = None;
+        }
+    }
+
+    if let Some(details) = connection.vnc_details_mut() {
+        if protocol != Some(ProtocolKind::Vnc) {
+            details.view_only = None;
+            details.shared = None;
+            details.quality = None;
+            details.compression = None;
+            details.scale_mode = None;
+            details.clipboard_sync = None;
+            details.resize_session = None;
         }
     }
 }
@@ -595,6 +659,9 @@ fn apply_connection_defaults(connection: &mut ConnectionProfile, credential_type
             ConnectionProfileDetails::Serial(details) => {
                 details.auth_method = Some(credential_type.to_string());
             }
+            ConnectionProfileDetails::Vnc(details) => {
+                details.auth_method = Some(credential_type.to_string());
+            }
         }
     } else if ProtocolKind::from_str(&connection.protocol)
         .is_some_and(|protocol| protocol.requires_password_credential())
@@ -609,11 +676,40 @@ fn apply_connection_defaults(connection: &mut ConnectionProfile, credential_type
             ConnectionProfileDetails::Serial(details) => {
                 details.auth_method = Some("password".to_string());
             }
+            ConnectionProfileDetails::Vnc(details) => {
+                details.auth_method = Some("password".to_string());
+            }
+        }
+    }
+    if protocol == Some(ProtocolKind::Vnc) {
+        if !matches!(connection.details, ConnectionProfileDetails::Vnc(_)) {
+            connection.details =
+                ConnectionProfileDetails::Vnc(ConnectionProfileVncDetails::default());
+        }
+        if let Some(details) = connection.vnc_details_mut() {
+            details.view_only = Some(details.view_only.unwrap_or(false));
+            details.shared = Some(details.shared.unwrap_or(true));
+            details.quality = Some(details.quality.unwrap_or(6).clamp(0, 9));
+            details.compression = Some(details.compression.unwrap_or(2).clamp(0, 9));
+            details.scale_mode = Some(normalize_vnc_scale_mode(details.scale_mode.as_deref()));
+            details.clipboard_sync = Some(details.clipboard_sync.unwrap_or(true));
+            details.resize_session = Some(details.resize_session.unwrap_or(false));
+            if details.auth_method.is_none() {
+                details.auth_method = Some("password".to_string());
+            }
         }
     }
     connection.password = None;
     connection.key_path = None;
     connection.key_passphrase = None;
+}
+
+fn normalize_vnc_scale_mode(value: Option<&str>) -> String {
+    match value.map(|raw| raw.trim().to_ascii_lowercase()).as_deref() {
+        Some("none") => "none".to_string(),
+        Some("clip") => "clip".to_string(),
+        _ => "fit".to_string(),
+    }
 }
 
 fn normalize_serial_text_setting(value: Option<&str>, default: &str) -> String {
@@ -650,6 +746,7 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
         parity,
         stop_bits,
         jump_hosts,
+        vnc_options,
     ) = match c.details {
         crate::storage::ConnectionDetails::Ssh(details) => (
             details.auth_method,
@@ -661,10 +758,12 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
             None,
             None,
             parse_jump_hosts(details.jump_hosts),
+            None,
         ),
         crate::storage::ConnectionDetails::Telnet(details) => (
             details.auth_method,
             details.saved_credential_id,
+            None,
             None,
             None,
             None,
@@ -689,8 +788,38 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
             details.parity,
             details.stop_bits.and_then(|v| u8::try_from(v).ok()),
             None,
+            None,
+        ),
+        crate::storage::ConnectionDetails::Vnc(details) => (
+            details.auth_method,
+            details.saved_credential_id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some((
+                details.view_only,
+                details.shared,
+                details.quality,
+                details.compression,
+                details.scale_mode,
+                details.clipboard_sync,
+                details.resize_session,
+            )),
         ),
     };
+    let (
+        vnc_view_only,
+        vnc_shared,
+        vnc_quality,
+        vnc_compression,
+        vnc_scale_mode,
+        vnc_clipboard_sync,
+        vnc_resize_session,
+    ) = vnc_options.unwrap_or_default();
 
     ConnectionListItem {
         id,
@@ -715,6 +844,13 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
         backspace_sends: c.options.backspace_sends,
         terminal_more_prompt_cleanup: c.options.terminal_more_prompt_cleanup,
         runtime_metrics: c.options.runtime_metrics,
+        vnc_view_only,
+        vnc_shared,
+        vnc_quality,
+        vnc_compression,
+        vnc_scale_mode,
+        vnc_clipboard_sync,
+        vnc_resize_session,
     }
 }
 
@@ -744,6 +880,17 @@ fn connection_profile_from_stored(id: String, c: StoredConnection) -> Connection
             flow_control: item.flow_control,
             parity: item.parity,
             stop_bits: item.stop_bits,
+        }),
+        "vnc" => ConnectionProfileDetails::Vnc(ConnectionProfileVncDetails {
+            auth_method: item.auth_method,
+            saved_credential_id: item.saved_credential_id,
+            view_only: item.vnc_view_only,
+            shared: item.vnc_shared,
+            quality: item.vnc_quality,
+            compression: item.vnc_compression,
+            scale_mode: item.vnc_scale_mode,
+            clipboard_sync: item.vnc_clipboard_sync,
+            resize_session: item.vnc_resize_session,
         }),
         _ => ConnectionProfileDetails::Telnet(ConnectionProfileTelnetDetails {
             auth_method: item.auth_method,
@@ -802,6 +949,20 @@ impl From<&ConnectionProfile> for StoredConnection {
                     flow_control: c.flow_control().map(str::to_string),
                     parity: c.parity().map(str::to_string),
                     stop_bits: c.stop_bits().map(i64::from),
+                })
+            }
+            "vnc" => {
+                let vnc = c.vnc_details();
+                crate::storage::ConnectionDetails::Vnc(crate::storage::VncConnectionDetails {
+                    auth_method: c.auth_method().map(str::to_string),
+                    saved_credential_id: c.saved_credential_id().map(str::to_string),
+                    view_only: vnc.and_then(|details| details.view_only),
+                    shared: vnc.and_then(|details| details.shared),
+                    quality: vnc.and_then(|details| details.quality),
+                    compression: vnc.and_then(|details| details.compression),
+                    scale_mode: vnc.and_then(|details| details.scale_mode.clone()),
+                    clipboard_sync: vnc.and_then(|details| details.clipboard_sync),
+                    resize_session: vnc.and_then(|details| details.resize_session),
                 })
             }
             _ => {

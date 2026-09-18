@@ -47,6 +47,7 @@ export function createWorkspaceSessionRegistry({ onRetireBackendSession } = {}) 
       connectionState: IDLE_CONNECTION_STATE,
       openRequestId: "",
       runtimeMetrics: null,
+      vncBridge: null,
       workingDirectory: "",
     };
   }
@@ -101,6 +102,7 @@ export function createWorkspaceSessionRegistry({ onRetireBackendSession } = {}) 
       backendSessionId: "",
       capabilities: EMPTY_CONNECTION_CAPABILITIES,
       runtimeMetrics: null,
+      vncBridge: null,
       workingDirectory: "",
     });
     return backendSessionId;
@@ -264,6 +266,15 @@ export function createWorkspaceSessionRegistry({ onRetireBackendSession } = {}) 
     });
   }
 
+  function getVncBridge(frontendSessionId) {
+    return recordFor(frontendSessionId)?.vncBridge ?? null;
+  }
+
+  function setSessionVncBridge(frontendSessionId, bridge) {
+    if (!frontendSessionId) return;
+    patchRecord(frontendSessionId, { vncBridge: bridge || null });
+  }
+
   function setSessionWorkingDirectory(frontendSessionId, path) {
     if (!frontendSessionId || getWorkingDirectoryByConnection(frontendSessionId) === path) return;
     patchRecord(frontendSessionId, { workingDirectory: path || "" });
@@ -300,10 +311,12 @@ export function createWorkspaceSessionRegistry({ onRetireBackendSession } = {}) 
     getFrontendSessionIdForOpenRequest,
     getOpenRequestId,
     getRuntimeMetrics,
+    getVncBridge,
     getWorkingDirectoryByConnection,
     setActiveSessionChannel,
     setConnectionCapabilities,
     setRuntimeMetrics,
+    setSessionVncBridge,
     setSessionWorkingDirectory,
     unbindBackendSession,
   };

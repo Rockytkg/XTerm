@@ -52,6 +52,7 @@ export function createWorkspaceConnectionOpener({
         encoding,
         realtimeEncodingDetection,
         sshCredential: options.sshCredential,
+        vncPassword: options.vncPassword || undefined,
         ...resolveTerminalGeometry(activeTerminalSize),
       });
       if (!connectionRuntime.isCurrent(frontendSessionId, attemptToken)) {

@@ -21,6 +21,7 @@ import { createConnection, getConnection, updateConnectionProfile } from "../ser
 import {
   CONNECTION_PROTOCOLS,
   isSerialProtocol,
+  isVncProtocol,
   requiresPasswordCredential,
   requiresHostKeyVerification,
   supportsSavedCredential,
@@ -32,6 +33,7 @@ import JumpHostEditorDialog from "./connection-dialog/JumpHostEditorDialog.vue";
 import SerialConnectionFields from "./connection-dialog/SerialConnectionFields.vue";
 import SshConnectionFields from "./connection-dialog/SshConnectionFields.vue";
 import TelnetConnectionFields from "./connection-dialog/TelnetConnectionFields.vue";
+import VncConnectionFields from "./connection-dialog/VncConnectionFields.vue";
 import {
   buildConnectionProfile,
   createProtocolDraft,
@@ -73,16 +75,19 @@ const protocolDrafts = reactive({
   ssh: createProtocolDraft("ssh"),
   telnet: createProtocolDraft("telnet"),
   serial: createProtocolDraft("serial"),
+  vnc: createProtocolDraft("vnc"),
 });
 const fieldErrors = reactive({
   ssh: {},
   telnet: {},
   serial: {},
+  vnc: {},
 });
 const sessionOptionsOpen = reactive({
   ssh: false,
   telnet: false,
   serial: false,
+  vnc: false,
 });
 
 const detectedSerialPorts = ref([]);
@@ -94,6 +99,7 @@ const activeErrors = computed(() => fieldErrors[activeProtocol.value]);
 const isEdit = computed(() => !!props.editConnection);
 const isSSH = computed(() => requiresHostKeyVerification(activeProtocol.value));
 const isSerial = computed(() => isSerialProtocol(activeProtocol.value));
+const isVnc = computed(() => isVncProtocol(activeProtocol.value));
 const activeProtocolSupportsCredentials = computed(() =>
   supportsSavedCredential(activeProtocol.value),
 );
@@ -675,6 +681,20 @@ async function saveConnection() {
             @update-field="updateActiveField"
           />
 
+          <VncConnectionFields
+            v-else-if="isVnc"
+            :form="activeForm"
+            :errors="activeErrors"
+            :filtered-credentials="filteredCredentials"
+            :selected-credential="selectedCredential"
+            @auth-method-change="onAuthMethodChange"
+            @clear-field="clearFieldError"
+            @credential-select="onCredentialSelect"
+            @normalize-port="normalizePort"
+            @port-input="onPortInput"
+            @update-field="updateActiveField"
+          />
+
           <TelnetConnectionFields
             v-else
             :form="activeForm"
@@ -690,6 +710,7 @@ async function saveConnection() {
           />
 
           <ConnectionSessionOptions
+            v-if="!isVnc"
             :form="activeForm"
             :protocol="activeProtocol"
             :open="sessionOptionsOpen[activeProtocol]"

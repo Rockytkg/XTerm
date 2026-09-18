@@ -64,14 +64,6 @@
     will-change: opacity, transform, box-shadow;
   }
 
-  .sftp-table {
-    --sftp-table-inline-size: max(590px, 100%);
-    /* stylelint-disable-next-line declaration-block-no-duplicate-custom-properties */
-    --sftp-table-inline-size: max(590px, 100cqi);
-
-    min-inline-size: 590px;
-  }
-
   .sftp-table-head {
     position: sticky;
     top: 0;
@@ -128,13 +120,6 @@
     vertical-align: middle;
     cursor: default;
     user-select: none;
-  }
-
-  .sftp-name-cell > span:last-child {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .sftp-row > div:first-child,
@@ -206,6 +191,7 @@
   .sftp-skeleton-bar {
     position: relative;
     display: block;
+    min-width: 0;
     overflow: hidden;
     background:
       linear-gradient(

@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端中整合 SSH / Telnet / 串口连接、交互式终端（XTerm.js）、SFTP 文件管理、内置 TFTP/FTP/SFTP 文件服务器、凭证管理、会话记录和设置。
+XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端中整合 SSH / Telnet / 串口 / VNC 连接、交互式终端（XTerm.js）、VNC 远程桌面（noVNC）、SFTP 文件管理、内置 TFTP/FTP/SFTP 文件服务器、凭证管理、会话记录和设置。
 
 - 前端：Vue 3（`<script setup>`）+ Vite + Pinia + vue-router + vue-i18n（中英文）+ UnoCSS + SCSS + XTerm.js 6 + CodeMirror 6。
 - 后端：Rust + Tauri 2，tokio 异步运行时。SSH/SFTP 用 `russh` / `russh-sftp`，FTP 服务端用 `libunftp`，串口、本地存储（`redb`）、keyring 加密凭证、防火墙管理等均为原生实现。
@@ -16,7 +16,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 
 - `index.html`：Vite HTML 入口；`src/main.js` 创建 Vue 应用并注册 i18n、router、UnoCSS、全局 SCSS；`src/App.vue` 挂载应用壳层。
 - `src/views/`：页面（会话、工作区、凭证、密钥、脚本、Dashboard、设置）。
-- `src/components/`：终端、SFTP、连接弹窗、通知、选择器等组件。右键菜单始终在主窗口内以 DOM 渲染（`ContextMenu.vue`，条目渲染共用 `ContextMenuPanel.vue`，图标映射共用 `contextMenuIcons.js`），状态与动作分发在 `src/services/contextMenu.js`。
+- `src/components/`：终端、SFTP、连接弹窗、通知、选择器等组件。右键菜单始终在主窗口内以 DOM 渲染（`ContextMenu.vue`，条目渲染共用 `ContextMenuPanel.vue`，图标映射共用 `contextMenuIcons.js`），状态与动作分发在 `src/services/contextMenu.js`。VNC 会话在 `TerminalWorkspacePane.vue` 的会话循环中渲染 `VncDesktopPane.vue`（noVNC RFB 客户端）替代 `TerminalPanel.vue`，tab 切换复用会话切换；后端为每个 VNC 会话起 127.0.0.1 回环 WebSocket↔TCP 桥（`terminal/internal/protocols/vnc/`，URL 带一次性 token），并在 Rust 侧终止 RFB 握手（None + VNC-DES，密码从 keyring 取、不出后端），服务器只提供其它安全类型时退化为透传模式由 noVNC 自行应答认证。
 - `src/composables/`：可复用逻辑（工作区状态、偏好设置、SFTP 操作、终端运行时等，均以 `use*` 命名）。
 - `src/stores/`：Pinia store（连接状态机、工作区会话、终端几何、主机公钥提示、用户脚本等）。
 - `src/services/`：前端到 Tauri Rust 命令的封装（`ipc/` 子目录为底层调用；`scripting/` 子目录为脚本引擎：终端桥接、运行器、弹窗交互）。组件中不要散落裸 `invoke`，应在 service 中添加明确封装。

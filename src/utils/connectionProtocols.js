@@ -1,10 +1,11 @@
-export const CONNECTION_PROTOCOLS = Object.freeze(["ssh", "telnet", "serial"]);
+export const CONNECTION_PROTOCOLS = Object.freeze(["ssh", "telnet", "serial", "vnc"]);
 export const CONNECTION_PROTOCOL = Object.freeze({
   SSH: "ssh",
   TELNET: "telnet",
   SERIAL: "serial",
+  VNC: "vnc",
 });
-const PASSWORD_ONLY_CREDENTIAL_PROTOCOLS = Object.freeze(["telnet", "serial"]);
+const PASSWORD_ONLY_CREDENTIAL_PROTOCOLS = Object.freeze(["telnet", "serial", "vnc"]);
 
 function cleanConnectionProtocol(protocol) {
   return String(protocol || "")
@@ -43,12 +44,17 @@ export function isSshProtocol(protocol) {
   return normalizeConnectionProtocol(protocol) === CONNECTION_PROTOCOL.SSH;
 }
 
+export function isVncProtocol(protocol) {
+  return normalizeConnectionProtocol(protocol) === CONNECTION_PROTOCOL.VNC;
+}
+
 export function protocolDisplayClass(protocol) {
   const normalized = normalizeConnectionProtocol(protocol);
   return {
     "session-card-status-serial": normalized === CONNECTION_PROTOCOL.SERIAL,
     "session-card-status-telnet": normalized === CONNECTION_PROTOCOL.TELNET,
     "session-card-status-ssh": normalized === CONNECTION_PROTOCOL.SSH,
+    "session-card-status-vnc": normalized === CONNECTION_PROTOCOL.VNC,
   };
 }
 

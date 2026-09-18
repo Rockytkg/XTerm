@@ -77,6 +77,8 @@ pub struct ConnectionOpenRequest {
     pub(crate) cols: Option<u32>,
     pub(crate) rows: Option<u32>,
     pub(crate) ssh_credential: Option<SshCredentialOverride>,
+    /// Password supplied for a VNC auth retry; applied as `inline_password`.
+    pub(crate) vnc_password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,6 +101,7 @@ pub enum ConnectionOpenResult {
         serial_port: Option<String>,
         baud_rate: Option<u32>,
         serial_scores: Option<Vec<SerialProbeResult>>,
+        vnc_bridge: Option<VncBridgeInfo>,
     },
     HostKeyPrompt {
         host: String,
@@ -106,6 +109,22 @@ pub enum ConnectionOpenResult {
         algorithm: String,
         fingerprint: String,
     },
+}
+
+/// Loopback WebSocket bridge endpoint for a VNC session. The frontend's RFB
+/// client connects here; the bridge forwards to the VNC server over TCP.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VncBridgeInfo {
+    pub(crate) url: String,
+    pub(crate) desktop_name: Option<String>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    /// True when the backend could not terminate the RFB security handshake
+    /// (server only offers security types other than None/VNC-auth). The
+    /// frontend RFB client must then answer the server's auth challenge
+    /// itself; stored credentials are never exposed for this.
+    pub(crate) auth_passthrough: bool,
 }
 
 impl ConnectionOpenResult {
@@ -121,6 +140,7 @@ impl ConnectionOpenResult {
             serial_port: None,
             baud_rate: None,
             serial_scores: None,
+            vnc_bridge: None,
         }
     }
 
@@ -138,6 +158,19 @@ impl ConnectionOpenResult {
             serial_port: Some(serial_port),
             baud_rate: Some(baud_rate),
             serial_scores: Some(serial_scores),
+            vnc_bridge: None,
+        }
+    }
+
+    pub(super) fn connected_vnc(session_id: String, bridge: VncBridgeInfo) -> Self {
+        Self::Connected {
+            session_id,
+            protocol: ProtocolKind::Vnc.as_str().to_string(),
+            encoding: "binary".to_string(),
+            serial_port: None,
+            baud_rate: None,
+            serial_scores: None,
+            vnc_bridge: Some(bridge),
         }
     }
 }
@@ -835,6 +868,7 @@ pub(crate) struct ResolvedConnection {
     pub(crate) cols: Option<u32>,
     pub(crate) rows: Option<u32>,
     pub(crate) jump_hosts: Option<Vec<JumpHostHop>>,
+    pub(crate) vnc_shared: Option<bool>,
 }
 
 pub(crate) struct SessionOpenContext {
@@ -929,8 +963,10 @@ impl ResolvedConnection {
             cols: request.cols,
             rows: request.rows,
             jump_hosts: profile.jump_hosts().cloned(),
+            vnc_shared: profile.vnc_details().and_then(|details| details.shared),
         }
-        .with_ssh_credential_override(request.ssh_credential))
+        .with_ssh_credential_override(request.ssh_credential)
+        .with_vnc_password_override(request.vnc_password))
     }
 
     pub(crate) fn with_open_request(mut self, request: ConnectionOpenRequest) -> Self {
@@ -959,6 +995,14 @@ impl ResolvedConnection {
 
     fn with_ssh_credential_override(mut self, credential: Option<SshCredentialOverride>) -> Self {
         self.apply_ssh_credential_override(credential);
+        self
+    }
+
+    fn with_vnc_password_override(mut self, password: Option<String>) -> Self {
+        if let Some(password) = password.filter(|value| !value.is_empty()) {
+            self.auth_method = Some("password".to_string());
+            self.inline_password = Some(password);
+        }
         self
     }
 

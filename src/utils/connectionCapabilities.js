@@ -9,6 +9,7 @@ export const EMPTY_CONNECTION_CAPABILITIES = Object.freeze({
   serialSignals: false,
   rawOutput: false,
   serialBaudDetection: false,
+  video: false,
 });
 
 export function normalizeConnectionCapabilities(capabilities) {

@@ -12,7 +12,10 @@ use crate::{
     },
 };
 
-use super::{serial::SerialProtocolDriver, ssh::SshProtocolDriver, telnet::TelnetProtocolDriver};
+use super::{
+    serial::SerialProtocolDriver, ssh::SshProtocolDriver, telnet::TelnetProtocolDriver,
+    vnc::VncProtocolDriver,
+};
 
 pub(crate) type DriverFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -55,7 +58,9 @@ pub(crate) trait ProtocolDriver: Send + Sync {
 static SSH_DRIVER: SshProtocolDriver = SshProtocolDriver;
 static TELNET_DRIVER: TelnetProtocolDriver = TelnetProtocolDriver;
 static SERIAL_DRIVER: SerialProtocolDriver = SerialProtocolDriver;
-static PROTOCOL_DRIVERS: [&dyn ProtocolDriver; 3] = [&SSH_DRIVER, &TELNET_DRIVER, &SERIAL_DRIVER];
+static VNC_DRIVER: VncProtocolDriver = VncProtocolDriver;
+static PROTOCOL_DRIVERS: [&dyn ProtocolDriver; 4] =
+    [&SSH_DRIVER, &TELNET_DRIVER, &SERIAL_DRIVER, &VNC_DRIVER];
 
 pub(crate) struct ProtocolRegistry;
 

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref } from "vue";
 import { File, Folder } from "@lucide/vue";
+import MarqueeText from "../MarqueeText.vue";
 import { formatBytes } from "../../utils/formatBytes";
 import { createRafThrottle } from "../../utils/schedulers";
 import { iconForSftpEntry } from "../../utils/sftpEntryPresentation";
@@ -359,7 +360,10 @@ onBeforeUnmount(() => {
                     @keydown.esc.prevent="cancelInlineEdit"
                     @blur="commitInlineEdit"
                   >
-                  <span v-else>{{ row.entry.name }}</span>
+                  <MarqueeText
+                    v-else
+                    :text="row.entry.name"
+                  />
                 </span>
               </div>
               <div role="cell">
