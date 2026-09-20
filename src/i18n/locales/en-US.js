@@ -986,6 +986,7 @@ export default {
       edit: "Edit",
       loadFailed: "Load failed",
       modifiedLabel: "Modified",
+      saveFailed: "Save failed",
       sizeLabel: "Size",
       tooLarge: "The file is too large to preview.",
     },

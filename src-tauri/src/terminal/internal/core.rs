@@ -465,6 +465,14 @@ pub struct SftpChooseDownloadPathRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SftpSavePreviewResourceRequest {
+    pub(super) default_file_name: String,
+    pub(super) content_base64: String,
+    pub(super) title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SftpChooseUploadFilesRequest {
     pub(super) title: Option<String>,
     pub(super) all_files_label: Option<String>,

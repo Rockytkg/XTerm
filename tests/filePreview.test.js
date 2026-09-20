@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   base64ToBytes,
+  bytesFromIpcResult,
+  bytesToBase64,
   classifySftpPreview,
   isEditableTextFile,
   PREVIEW_BINARY_MAX_BYTES,
@@ -120,14 +122,35 @@ test("resolveSniffedPreview disables edit for sniffed text over the editor limit
   assert.equal(atLimit.editable, true);
 });
 
-test("resolveSniffedPreview ignores sniffed mime when the name has an extension", () => {
+// 回归：压缩包改名 .hcl（扩展名无映射）之前会因"有扩展名"完全忽略嗅探而无法预览；
+// 魔数命中的具体类型必须覆盖扩展名映射，同时关掉"转编辑"入口。
+test("resolveSniffedPreview prefers magic-sniffed mime over extension mapping", () => {
+  assert.deepEqual(resolveSniffedPreview("bundle.hcl", 4096, "application/zip"), {
+    mime: "application/zip",
+    editable: false,
+  });
+  // 真实图片改成文本扩展名：以内容为准预览图片，且不可转编辑
+  assert.deepEqual(resolveSniffedPreview("notes.txt", 2048, "image/png"), {
+    mime: "image/png",
+    editable: false,
+  });
+  // 扩展名与魔数一致时结果不变
+  assert.deepEqual(resolveSniffedPreview("photo.png", 100, "image/png"), {
+    mime: "image/png",
+    editable: false,
+  });
+});
+
+test("resolveSniffedPreview keeps text/plain from overriding the extension", () => {
+  // text/plain 只是"是文本"的弱信号：.md 仍按扩展名匹配，保住 markdown 渲染与编辑判定
   assert.deepEqual(resolveSniffedPreview("notes.md", 100, "text/plain"), {
     mime: null,
     editable: true,
   });
-  assert.deepEqual(resolveSniffedPreview("photo.png", 100, "image/png"), {
+  // 未知扩展名的文本文件沿用扩展名行为（预览库按文件名匹配），且可转编辑
+  assert.deepEqual(resolveSniffedPreview("app.log", 100, "text/plain"), {
     mime: null,
-    editable: false,
+    editable: true,
   });
 });
 
@@ -144,4 +167,21 @@ test("base64ToBytes round-trips arbitrary bytes", () => {
 
 test("base64ToBytes decodes empty input to empty bytes", () => {
   assert.equal(base64ToBytes("").length, 0);
+});
+
+test("bytesToBase64 round-trips arbitrary bytes, including large inputs", () => {
+  const original = Uint8Array.from({ length: 100_000 }, (_, index) => index % 256);
+  const encoded = bytesToBase64(original);
+  assert.equal(encoded, Buffer.from(original).toString("base64"));
+  assert.deepEqual([...base64ToBytes(encoded)], [...original]);
+  assert.equal(bytesToBase64(new Uint8Array(0)), "");
+});
+
+test("bytesFromIpcResult normalizes ArrayBuffer, views, and JSON-channel arrays", () => {
+  const bytes = [1, 2, 255];
+  assert.deepEqual([...bytesFromIpcResult(Uint8Array.from(bytes).buffer)], bytes);
+  assert.deepEqual([...bytesFromIpcResult(Uint8Array.from(bytes))], bytes);
+  assert.deepEqual([...bytesFromIpcResult([...bytes])], bytes);
+  assert.deepEqual([...bytesFromIpcResult(null)], []);
+  assert.deepEqual([...bytesFromIpcResult(undefined)], []);
 });

@@ -19,7 +19,7 @@ import { useSftpOpenFiles } from "../composables/useSftpOpenFiles";
 import { useSftpTransfers } from "../composables/useSftpTransfers";
 import { dismissContextMenu, openContextMenu } from "../services/contextMenu";
 import { writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
-import { closeSftpSession } from "../services/sftp";
+import { closeSftpSession, saveSftpPreviewResource } from "../services/sftp";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { contextMenuItem, isEditableContextTarget } from "../utils/editableContext";
 import { resolveEditorTheme } from "../utils/editorTheme";
@@ -544,6 +544,19 @@ function downloadOpenFile(file) {
   return downloadEntry(entry);
 }
 
+// 预览内部子资源（如邮件附件）没有远端路径，内容已在前端：经保存对话框落盘
+async function downloadPreviewResource({ name, contentBase64 }) {
+  try {
+    await saveSftpPreviewResource({
+      defaultFileName: name,
+      contentBase64,
+      title: t("sftp.chooseDownloadTitle"),
+    });
+  } catch (error) {
+    errorMessage.value = `${t("sftp.preview.saveFailed")}: ${String(error?.message || error)}`;
+  }
+}
+
 function openEntryOrPreview(entry) {
   if (!entry) return;
   if (entry.kind === "dir") {
@@ -611,6 +624,7 @@ function setQueueListRef(element) {
       :close-file="closeEditor"
       :convert-to-edit="convertToEdit"
       :download-file="downloadOpenFile"
+      :download-resource="downloadPreviewResource"
       :file="openFile"
       :font-size-change="(size) => (preferences.editorFontSize = size)"
       :preferences="preferences"

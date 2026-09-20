@@ -7,6 +7,8 @@ dist/
 dist-ssr/
 *.local
 target/
+# 由 vite.config.js 从 pdfjs-dist 同步生成的静态资源（CMap/标准字体）
+public/pdfjs/
 
 # 运行时数据与日志
 data/

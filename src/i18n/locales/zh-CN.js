@@ -986,6 +986,7 @@ export default {
       edit: "编辑",
       loadFailed: "加载失败",
       modifiedLabel: "修改时间",
+      saveFailed: "保存失败",
       sizeLabel: "大小",
       tooLarge: "文件过大，无法预览。",
     },

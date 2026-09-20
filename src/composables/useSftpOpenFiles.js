@@ -1,14 +1,13 @@
 import { onBeforeUnmount, shallowRef, watch } from "vue";
 import {
   readRemoteSftpFile,
-  readRemoteSftpFileBase64,
+  readRemoteSftpFileBytes,
   statRemoteSftpFile,
   writeRemoteSftpFile,
 } from "../services/sftp";
 import { createSftpSessionScope } from "./sftpSessionScope";
 import { remoteNameFromPath } from "./sftpRemoteOperations";
 import {
-  base64ToBytes,
   classifySftpPreview,
   PREVIEW_BINARY_MAX_BYTES,
   resolveSniffedPreview,
@@ -101,9 +100,10 @@ export function useSftpOpenFiles({
         return;
       }
 
-      // 无扩展名文件采用后端嗅探 mime（有扩展名时 resolveSniffedPreview 返回 null，按扩展名匹配）
+      // 类型判定以内容为准：魔数嗅探命中具体类型时 mime/editable 均以嗅探结果为准
+      // （覆盖扩展名映射与"转编辑"入口）；否则维持扩展名判定并吸收无扩展名的嗅探结果
       const sniffed = resolveSniffedPreview(tab.name, meta.size, stat?.mime);
-      const base64 = await readRemoteSftpFileBase64(
+      const bytes = await readRemoteSftpFileBytes(
         session.connectionId,
         session.sessionId,
         tab.path,
@@ -113,8 +113,8 @@ export function useSftpOpenFiles({
         ...meta,
         tooLarge: false,
         mime: sniffed.mime,
-        editable: tab.editable || sniffed.editable,
-        blob: new Blob([base64ToBytes(base64)], { type: sniffed.mime || tab.mime }),
+        editable: sniffed.mime ? sniffed.editable : tab.editable || sniffed.editable,
+        blob: new Blob([bytes], { type: sniffed.mime || tab.mime }),
         loading: false,
         error: "",
       });

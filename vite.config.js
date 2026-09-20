@@ -1,6 +1,22 @@
+import { cpSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import UnoCSS from "unocss/vite";
+
+// pdfjs 的 CMap 与标准字体默认从 jsdelivr CDN 加载，桌面端 CSP 不允许外网请求；
+// 同步进 publicDir（已 gitignore）后，dev 由 Vite 直接静态服务、build 随 public 拷入 dist，
+// 预览插件以 /pdfjs/cmaps/、/pdfjs/standard_fonts/ 引用。
+function syncPdfjsAssets() {
+  const pkgDir = path.dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
+  const targetRoot = fileURLToPath(new URL("./public/pdfjs", import.meta.url));
+  for (const dir of ["cmaps", "standard_fonts"]) {
+    cpSync(path.join(pkgDir, dir), path.join(targetRoot, dir), { recursive: true });
+  }
+}
+syncPdfjsAssets();
 
 export default defineConfig({
   resolve: {

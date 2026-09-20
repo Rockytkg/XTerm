@@ -11,7 +11,8 @@ use crate::{
             SftpChooseDownloadPathRequest, SftpChooseUploadFilesRequest, SftpCloseSessionRequest,
             SftpCreateDirRequest, SftpCreateFileRequest, SftpDeleteRequest, SftpEntry,
             SftpFileStatResult, SftpListRemoteRequest, SftpListResult, SftpReadFileRequest,
-            SftpRenameRequest, SftpStatFileRequest, SftpWriteFileRequest,
+            SftpRenameRequest, SftpSavePreviewResourceRequest, SftpStatFileRequest,
+            SftpWriteFileRequest,
         },
         sftp::{
             delete_remote_path, ensure_remote_dir, join_remote_path, read_remote_file_bytes,
@@ -20,7 +21,9 @@ use crate::{
             sniff_remote_file_mime, sort_sftp_entries, SftpNameConflictAction, SFTP_EDIT_MAX_BYTES,
             SFTP_PREVIEW_MAX_BYTES,
         },
-        sftp_dialogs::{choose_sftp_download_path, choose_sftp_upload_files},
+        sftp_dialogs::{
+            choose_sftp_download_path, choose_sftp_upload_files, save_sftp_preview_resource,
+        },
         ssh_aux::get_or_create_sftp_session,
     },
 };
@@ -221,9 +224,41 @@ pub(crate) async fn sftp_read_file_base64(
         .field("session_id", &request.session_id)
         .field("path", &request.path)
         .debug();
+    let bytes = read_remote_preview_file(state.inner(), request).await?;
+    Ok(STANDARD_NO_PAD.encode(&bytes))
+}
+
+// 与 sftp_read_file_base64 相同的内容，但以原始字节响应，免去 base64 编解码与体积膨胀。
+// 原始字节仅在自定义协议 IPC（Windows/Linux）下可用；macOS/iOS 的 WKWebView 只走
+// postMessage+JSON 通道，Raw 响应会退化为数字数组（比 base64 更差），
+// 前端经 sftp_ipc_bytes_probe 探测后自行选择命令。
+#[tauri::command]
+pub(crate) async fn sftp_read_file_bytes(
+    state: tauri::State<'_, AppState>,
+    request: SftpReadFileRequest,
+) -> Result<tauri::ipc::Response, String> {
+    logging::event("terminal.sftp", "sftp.read_file_bytes.start")
+        .field("connection_id", &request.connection_id)
+        .field("session_id", &request.session_id)
+        .field("path", &request.path)
+        .debug();
+    let bytes = read_remote_preview_file(state.inner(), request).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+// IPC 原始字节通道探测：返回空 Raw 响应。自定义协议下前端收到 ArrayBuffer，
+// JSON 通道下收到数字数组，前端据此在 bytes/base64 两个读取命令间分流。
+#[tauri::command]
+pub(crate) fn sftp_ipc_bytes_probe() -> tauri::ipc::Response {
+    tauri::ipc::Response::new(Vec::new())
+}
+
+async fn read_remote_preview_file(
+    state: &AppState,
+    request: SftpReadFileRequest,
+) -> Result<Vec<u8>, String> {
     let sftp_session =
-        get_or_create_sftp_session(state.inner(), &request.connection_id, &request.session_id)
-            .await?;
+        get_or_create_sftp_session(state, &request.connection_id, &request.session_id).await?;
     let requested_path = request.path;
     sftp_session
         .run_with_timeout(SFTP_COMMAND_TIMEOUT, move |sftp| {
@@ -235,7 +270,7 @@ pub(crate) async fn sftp_read_file_base64(
                     "preview",
                 )
                 .await?;
-                Ok(STANDARD_NO_PAD.encode(&bytes))
+                Ok(bytes)
             })
         })
         .await
@@ -355,6 +390,18 @@ pub(crate) async fn sftp_choose_download_path(
         .field("default_file_name", request.default_file_name.clone())
         .debug();
     choose_sftp_download_path(&app, &request).await
+}
+
+#[tauri::command]
+pub(crate) async fn sftp_save_preview_resource(
+    app: AppHandle,
+    request: SftpSavePreviewResourceRequest,
+) -> Result<Option<String>, String> {
+    logging::event("terminal.sftp", "sftp.save_preview_resource")
+        .maybe_field("title", request.title.clone())
+        .field("default_file_name", request.default_file_name.clone())
+        .debug();
+    save_sftp_preview_resource(&app, &request).await
 }
 
 #[tauri::command]

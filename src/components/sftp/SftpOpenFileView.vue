@@ -12,6 +12,7 @@ const props = defineProps({
   closeFile: { type: Function, required: true },
   convertToEdit: { type: Function, required: true },
   downloadFile: { type: Function, required: true },
+  downloadResource: { type: Function, required: true },
   file: { type: Object, default: null },
   fontSizeChange: { type: Function, required: true },
   preferences: { type: Object, required: true },
@@ -37,6 +38,11 @@ const viewerTheme = computed(() => (props.resolvedTheme === "dark" ? "dark" : "l
 
 function formatMtime(file) {
   return file?.mtime ? new Date(file.mtime * 1000).toLocaleString() : "-";
+}
+
+// 预览库内部下载链接（fallback 等）经 SftpOpenFileViewer 拦截后回调到这里
+function downloadCurrentFile() {
+  if (props.file) props.downloadFile(props.file);
 }
 </script>
 
@@ -159,6 +165,8 @@ function formatMtime(file) {
             :file-name="file.name"
             :locale="viewerLocale"
             :mime-type="file.mime || undefined"
+            :on-download="downloadCurrentFile"
+            :on-download-resource="downloadResource"
             :theme="viewerTheme"
           />
         </template>

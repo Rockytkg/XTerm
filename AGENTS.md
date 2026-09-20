@@ -7,7 +7,7 @@
 XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端中整合 SSH / Telnet / 串口 / VNC 连接、交互式终端（XTerm.js）、VNC 远程桌面（noVNC）、SFTP 文件管理、内置 TFTP/FTP/SFTP 文件服务器、凭证管理、会话记录和设置。
 
 - 前端：Vue 3（`<script setup>`）+ Vite + Pinia + vue-router + vue-i18n（中英文）+ UnoCSS + SCSS + XTerm.js 6 + CodeMirror 6。
-- 后端：Rust + Tauri 2，tokio 异步运行时。SSH/SFTP 用 `russh` / `russh-sftp`，FTP 服务端用 `libunftp`，串口、本地存储（`redb`）、keyring 加密凭证、防火墙管理等均为原生实现。SFTP 文件预览的内容嗅探（无扩展名文件类型判别）用 `infer`（魔数）+ `content_inspector`（文本/二进制）。
+- 后端：Rust + Tauri 2，tokio 异步运行时。SSH/SFTP 用 `russh` / `russh-sftp`，FTP 服务端用 `libunftp`，串口、本地存储（`redb`）、keyring 加密凭证、防火墙管理等均为原生实现。SFTP 文件预览的内容嗅探用 `infer`（魔数）+ `content_inspector`（文本/二进制），随 `sftp_stat_file` 下发；前端判定以内容为准——魔数命中的具体类型覆盖扩展名映射（`text/plain` 弱信号除外），无扩展名文件采用嗅探 mime。
 - 包管理：`pnpm`（锁文件 `pnpm-lock.yaml`）。
 - 应用标识：`com.liushicong.xterm`；`tauri.conf.json` 中 `bundle.targets` 为 `"all"`，本地 `pnpm tauri build` 按平台默认出包（Windows：NSIS+MSI；Linux：deb+rpm+AppImage；macOS：app+dmg）。
 - 发版走 CI（`.github/workflows/build-release.yml`）：打 `v*` tag → 全平台构建（linux deb/rpm/appimage、win/mac 的 x64+arm64、Arch 的 xterm-workspace 包）并自动创建 GitHub Release；推送 main / 手动触发 → `<版本>-dev.<commit数>+<短sha>` 快照，仅上传 workflow artifacts。版本号由 `version` job 按 git ref 计算，经 `tauri build --config '{"version":"..."}'` 注入。
@@ -61,6 +61,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 
 - UI 状态和交互留在 `src/`；原生能力、网络连接、文件系统、加密、日志、SQLite/redb 和系统集成留在 `src-tauri/`。
 - 连接、凭证、路径、日志、会话记录等跨边界功能，需要同时维护前端 service、Rust 命令和存储行为。
+- 大二进制内容过 IPC：优先 `tauri::ipc::Response` 原始字节响应（Windows/Linux 自定义协议），但 macOS/iOS 的 WKWebView 只走 postMessage+JSON 通道，Raw 会退化为数字数组（比 base64 更差）——必须保留 base64 变体命令并由前端按 `sftp_ipc_bytes_probe` 探测结果分流（参考 `sftp_read_file_bytes` / `readRemoteSftpFileBytes`）。事件推送只支持 JSON payload，终端输出等高频通道的 base64 不可省略。
 - 新增或删除会话选项开关（`ConnectionProfileOptions`）时必须同步整条链路：`storage/models.rs` 的 `ConnectionOptions`（含旧格式反序列化）→ `workspace/mod.rs` 的 `ConnectionListItem`/`ConnectionProfileOptions` 与双向映射 → 前端 `src/utils/connectionProfileOptions.js` 白名单 → 连接弹窗 `ConnectionSessionOptions.vue` → 工作区侧边栏 `WorkspaceSidebarSessionView.vue`。侧边栏开关必须实时生效（更新后端会话能力并立即启停对应功能，参考 `terminal_session_set_metrics_enabled`），不能只在下次连接时生效；会话实际能力经 open 响应的 `capabilities` 下发，不要用协议默认值代替。
 - 终端附加能力（搜索、剪贴板 OSC 52、超链接、Unicode 11、连字、进度序列）默认通过 xterm addon 加载；WebGL 渲染器有独立开关。OSC 1337 CurrentDir 用于 SFTP 跟随 shell 目录（应用不自动注入 shell 集成脚本）。
 

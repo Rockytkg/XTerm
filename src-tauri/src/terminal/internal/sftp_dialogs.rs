@@ -1,8 +1,9 @@
 use crate::session_recording::{dialog_file_name, dialog_label};
 use crate::terminal::internal::core::{
-    SftpChooseDownloadPathRequest, SftpChooseUploadFilesRequest,
+    SftpChooseDownloadPathRequest, SftpChooseUploadFilesRequest, SftpSavePreviewResourceRequest,
     TrzszChooseDownloadDirectoryRequest, TrzszChooseUploadFilesRequest,
 };
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_dialog::FilePath;
@@ -63,6 +64,35 @@ pub(super) async fn choose_sftp_download_path(
         .await?
         .map(|path| file_path_to_string(path, "failed to resolve save path"))
         .transpose()
+}
+
+/// 预览内部子资源（如邮件附件）的保存：内容已随预览读到前端，后端只负责
+/// 保存对话框与落盘；用户取消返回 None，成功时返回写入路径。
+pub(super) async fn save_sftp_preview_resource(
+    app: &AppHandle,
+    request: &SftpSavePreviewResourceRequest,
+) -> Result<Option<String>, String> {
+    let title = dialog_label(&request.title, "Save file");
+    let safe_name = dialog_file_name(&request.default_file_name, "download");
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title(title)
+        .set_file_name(safe_name)
+        .save_file(move |path| {
+            let _ = sender.send(path);
+        });
+    let Some(path) = wait_for_dialog_result(receiver, "SFTP preview resource save").await? else {
+        return Ok(None);
+    };
+    let path = file_path_to_string(path, "failed to resolve save path")?;
+    let bytes = STANDARD
+        .decode(&request.content_base64)
+        .map_err(|error| format!("failed to decode resource content: {error}"))?;
+    tokio::fs::write(&path, &bytes)
+        .await
+        .map_err(|error| format!("failed to write file '{path}': {error}"))?;
+    Ok(Some(path))
 }
 
 pub(super) async fn choose_sftp_upload_files(

@@ -1,7 +1,7 @@
 import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 
-// 与后端读取上限保持一致：编辑走 sftp_read_file（5 MiB），预览走 base64（20 MiB）
+// 与后端读取上限保持一致：编辑走 sftp_read_file（5 MiB），预览走 sftp_read_file_bytes（20 MiB）
 export const PREVIEW_TEXT_MAX_BYTES = 5 * 1024 * 1024;
 export const PREVIEW_BINARY_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -40,7 +40,8 @@ const PREVIEW_VIDEO_MIME_BY_EXTENSION = {
   m2ts: "video/mp2t",
 };
 
-// 预览 Blob 的 mime 提示：识别主要靠文件名扩展名，未知类型留空由预览库自行探测
+// 预览 Blob 的 mime 提示：基础识别靠文件名扩展名，未知类型留空由预览库自行探测；
+// 后端魔数嗅探命中具体类型时覆盖此映射（见 resolveSniffedPreview）
 const PREVIEW_MIME_BY_EXTENSION = {
   ...PREVIEW_IMAGE_MIME_BY_EXTENSION,
   ...PREVIEW_AUDIO_MIME_BY_EXTENSION,
@@ -91,7 +92,7 @@ export function isEditableTextFile(name) {
   return EDITABLE_TEXT_FALLBACK_EXTENSIONS.has(extensionOfFileName(fileName));
 }
 
-// 预览标签分类：editable 供"转编辑"入口与图标，tooLarge 为 base64 预览上限预判
+// 预览标签分类：editable 供"转编辑"入口与图标，tooLarge 为预览读取上限预判
 export function classifySftpPreview({ name, size } = {}) {
   const bytes = Number(size);
   const tooLarge = Number.isFinite(bytes) && bytes > PREVIEW_BINARY_MAX_BYTES;
@@ -104,15 +105,22 @@ export function classifySftpPreview({ name, size } = {}) {
   };
 }
 
-// 后端内容嗅探结果的应用规则：仅无扩展名文件采用嗅探 mime（有扩展名时按扩展名匹配，
-// 避免 .md 被嗅探成 text/plain 后失去 markdown 渲染）；无扩展名文本可转编辑
+// 后端内容嗅探结果的应用规则：
+// - 魔数（infer）命中的具体类型优先于扩展名映射——扩展名可篡改，内容才是真实类型
+//   （如压缩包改名 .hcl 仍应按压缩包预览，且不得因文本扩展名出现"转编辑"入口）；
+// - text/plain 只是 content_inspector "是文本"的弱信号，不覆盖扩展名
+//   （避免 .md 被嗅探成 text/plain 后失去按扩展名的渲染）；
+// - 无扩展名文件采用嗅探 mime，文本可转编辑。
 export function resolveSniffedPreview(name, size, sniffedMime) {
   const bytes = Number(size);
   const withinEditLimit = !(Number.isFinite(bytes) && bytes > PREVIEW_TEXT_MAX_BYTES);
+  const mime = typeof sniffedMime === "string" && sniffedMime ? sniffedMime : null;
+  if (mime && mime !== "text/plain") {
+    return { mime, editable: false };
+  }
   if (extensionOfFileName(name)) {
     return { mime: null, editable: isEditableTextFile(name) && withinEditLimit };
   }
-  const mime = typeof sniffedMime === "string" && sniffedMime ? sniffedMime : null;
   return { mime, editable: !!mime && mime.startsWith("text/") && withinEditLimit };
 }
 
@@ -123,4 +131,25 @@ export function base64ToBytes(base64) {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+// 分块转换避免 String.fromCharCode 展开大数组时超出参数数量上限
+export function bytesToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+// 归一化 IPC 原始字节响应：自定义协议通道恒为 ArrayBuffer；
+// JSON 通道（macOS/iOS 的 WKWebView 或自定义协议失效回退）下退化为数字数组
+export function bytesFromIpcResult(result) {
+  if (result instanceof ArrayBuffer) return new Uint8Array(result);
+  if (ArrayBuffer.isView(result)) {
+    return new Uint8Array(result.buffer, result.byteOffset, result.byteLength);
+  }
+  if (Array.isArray(result)) return Uint8Array.from(result);
+  return new Uint8Array(0);
 }

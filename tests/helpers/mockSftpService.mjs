@@ -52,6 +52,9 @@ export function readRemoteSftpFile() {
 export function readRemoteSftpFileBase64() {
   return Promise.resolve("aGVsbG8=");
 }
+export function readRemoteSftpFileBytes() {
+  return Promise.resolve(Uint8Array.from("hello", (char) => char.charCodeAt(0)));
+}
 export function writeRemoteSftpFile() {
   return Promise.resolve({ modified: 1700000001 });
 }

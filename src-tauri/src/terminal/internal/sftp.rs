@@ -1620,8 +1620,8 @@ pub(super) fn sftp_file_stat_result(
 const SFTP_SNIFF_MAX_BYTES: u64 = 8192;
 
 // 读取远端小文件到内存：resolve + stat + 目录/大小上限校验 + 全量读，
-// 编辑（sftp_read_file）与预览（sftp_read_file_base64）命令共用，purpose 仅用于报错文案。
-// 返回解析后的路径与字节内容，调用方自行做 UTF-8/base64 转换。
+// 编辑（sftp_read_file）与预览（sftp_read_file_bytes / sftp_read_file_base64）命令共用，
+// purpose 仅用于报错文案。返回解析后的路径与字节内容，调用方自行做 UTF-8/base64 转换。
 pub(super) async fn read_remote_file_bytes(
     sftp: &RusshSftpSession,
     requested_path: &str,
