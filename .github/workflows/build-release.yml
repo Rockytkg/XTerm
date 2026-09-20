@@ -1,13 +1,19 @@
 # XTerm 多平台构建与发布工作流
 #
 # 版本号策略(由 version job 统一计算,经 `tauri build --config` 注入,不改仓库文件):
-#   - 推送 tag v1.2.3             -> 版本 1.2.3,打全平台包并创建 GitHub Release
-#   - 推送 main / 手动触发        -> 版本 <上一tag>-dev.<commit数>+<commit数> 快照,只上传 workflow artifacts,不发布
+#   - 推送 tag v1.2.3             -> 版本 1.2.3,打全平台 release 包并创建 GitHub Release
+#   - 推送 main / 手动触发        -> 版本 <上一tag>-dev.<commit数>+<commit数> 快照,
+#     每平台打 release + debug 两套包(debug 仅作 workflow artifacts,文件名带 -debug 后缀),
+#     并发布 tag 为 v<上一tag>-dev.<commit数> 的 prerelease,作为 dev 通道的应用更新源
 #
 # 发布策略(逐平台即时发布,不等全部编译完):
-#   - release-init 在 version 确定后立即创建 Release(含发行说明)
-#   - 各平台 job 编译完成后马上 `gh release upload` 上传自己的安装包,先完成的先上
+#   - release-init 在 version 确定后立即创建 Release(正式版)或 dev prerelease(快照)
+#   - 各平台 job 编译完成后马上 `gh release upload` 上传自己的 release 安装包,先完成的先上
 #   - 各 job 上传时若 Release 尚未创建则先创建空壳(幂等),避免竞态
+#   - dev prerelease 只保留最近 5 个,更旧的连同 git tag 一并清理
+#
+# 注意:dev prerelease 会在仓库留下 v*-dev.* 标签,所有 `git describe --tags`
+#   必须带 `--exclude='v*-dev.*'`,否则基版本与发行说明会被 dev tag 污染。
 #
 # 平台矩阵(全部原生编译,无交叉):
 #   - linux   x64  (ubuntu-22.04)       deb / rpm / appimage
@@ -59,7 +65,7 @@ jobs:
             IS_RELEASE=true
             TAG="${GITHUB_REF_NAME}"
           else
-            BASE=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
+            BASE=$(git describe --tags --abbrev=0 --exclude='v*-dev.*' 2>/dev/null | sed 's/^v//' || true)
             if [[ -z "$BASE" ]]; then
               # 仓库尚无 tag 时,退回 tauri.conf.json 中声明的版本
               BASE=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -n1)
@@ -68,7 +74,8 @@ jobs:
             # Windows MSI 要求版本号 build metadata 为纯数字且 ≤65535,短 sha 含字母会导致打包失败
             VERSION="${BASE}-dev.${N}+${N}"
             IS_RELEASE=false
-            TAG=""
+            # dev 快照也发布 prerelease(tag 不含 build metadata),作为 dev 通道更新源
+            TAG="v${BASE}-dev.${N}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "is_release=${IS_RELEASE}" >> "$GITHUB_OUTPUT"
@@ -80,13 +87,13 @@ jobs:
   # ---------------------------------------------------------------------------
   release-init:
     needs: [version]
-    if: needs.version.outputs.is_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       TAG: ${{ needs.version.outputs.tag }}
       VERSION: ${{ needs.version.outputs.version }}
+      IS_RELEASE: ${{ needs.version.outputs.is_release }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -96,11 +103,15 @@ jobs:
         run: |
           set -euo pipefail
           # 发行说明 = 从上一 tag(或首次发布的所有 commit)到当前 tag 的 commit,按类型分组
-          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          PREV=$(git describe --tags --abbrev=0 --exclude='v*-dev.*' HEAD^ 2>/dev/null || true)
           if [[ -n "$PREV" ]]; then RANGE="${PREV}..HEAD"; else RANGE="HEAD"; fi
           NOTES="release-notes.md"
 
-          echo "# XTerm v${VERSION}" > "$NOTES"
+          if [[ "$IS_RELEASE" == "true" ]]; then
+            echo "# XTerm v${VERSION}" > "$NOTES"
+          else
+            echo "# XTerm v${VERSION} (dev 快照)" > "$NOTES"
+          fi
           echo "" >> "$NOTES"
           echo "> 基于合并 commit 自动生成的发行说明(${RANGE})。" >> "$NOTES"
 
@@ -127,13 +138,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # 幂等:若某平台已抢先创建了空壳 Release,这里只补齐发行说明
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+          if [[ "$IS_RELEASE" == "true" ]]; then
+            # 幂等:若某平台已抢先创建了空壳 Release,这里只补齐发行说明
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+            else
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+                --notes-file release-notes.md
+            fi
           else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
-              --notes-file release-notes.md
+            # dev 快照:tag 尚不存在,由 gh 创建在触发 commit 上,标记为 prerelease
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+            else
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
+                --target "$GITHUB_SHA" --title "XTerm ${VERSION} (dev 快照)" \
+                --notes-file release-notes.md
+            fi
           fi
+
+      - name: Prune old dev prereleases
+        if: needs.version.outputs.is_release == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 每次 main 推送都会发布一个 dev prerelease,只保留最近 5 个,避免无限堆积
+          TAGS=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '[.[] | select(.prerelease and (.tag_name | test("-dev\\.[0-9]+$"))) | .tag_name] | .[5:] | .[]')
+          for OLD in $TAGS; do
+            gh release delete "$OLD" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          done
 
   # ---------------------------------------------------------------------------
   # Linux x86_64:deb / rpm / AppImage
@@ -197,6 +232,25 @@ jobs:
           pnpm exec tauri build --bundles deb,rpm,appimage \
             --config "{\"version\":\"${VERSION}\"}"
 
+      - name: Build debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          # dev 快照同时打 debug 包,便于排查问题;只作 workflow artifacts,不进 Release
+          pnpm exec tauri build --debug --bundles deb,rpm,appimage \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Stage debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p debug-dist
+          for f in src-tauri/target/debug/bundle/deb/*.deb \
+                   src-tauri/target/debug/bundle/rpm/*.rpm \
+                   src-tauri/target/debug/bundle/appimage/*.AppImage; do
+            base=$(basename "$f")
+            cp "$f" "debug-dist/${base%.*}-debug.${base##*.}"
+          done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -209,15 +263,29 @@ jobs:
             # 裸二进制,供 arch job 组装 pacman 包
             src-tauri/target/release/xterm
 
+      - name: Upload debug artifacts (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-x64-debug
+          if-no-files-found: error
+          path: debug-dist/*
+
       - name: Publish to release
-        if: needs.version.outputs.is_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
+          IS_RELEASE: ${{ needs.version.outputs.is_release }}
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            else
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
+                --target "$GITHUB_SHA" --title "XTerm ${VERSION} (dev 快照)" \
+                --notes "Dev snapshot ${VERSION}"
+            fi
           fi
           gh release upload "$TAG" \
             src-tauri/target/release/bundle/deb/*.deb \
@@ -284,6 +352,24 @@ jobs:
             --bundles deb \
             --config "{\"version\":\"${VERSION}\"}"
 
+      - name: Build debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          # dev 快照同时打 debug 包,便于排查问题;只作 workflow artifacts,不进 Release
+          pnpm exec tauri build --debug --target aarch64-unknown-linux-gnu \
+            --bundles deb \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Stage debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p debug-dist
+          for f in src-tauri/target/aarch64-unknown-linux-gnu/debug/bundle/deb/*.deb; do
+            base=$(basename "$f")
+            cp "$f" "debug-dist/${base%.*}-debug.${base##*.}"
+          done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -291,15 +377,29 @@ jobs:
           if-no-files-found: error
           path: src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb
 
+      - name: Upload debug artifacts (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-arm64-debug
+          if-no-files-found: error
+          path: debug-dist/*
+
       - name: Publish to release
-        if: needs.version.outputs.is_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
+          IS_RELEASE: ${{ needs.version.outputs.is_release }}
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            else
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
+                --target "$GITHUB_SHA" --title "XTerm ${VERSION} (dev 快照)" \
+                --notes "Dev snapshot ${VERSION}"
+            fi
           fi
           gh release upload "$TAG" \
             src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb \
@@ -359,6 +459,24 @@ jobs:
           pnpm exec tauri build --bundles nsis,msi \
             --config "{\"version\":\"${VERSION}\"}"
 
+      - name: Build debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          # dev 快照同时打 debug 包,便于排查问题;只作 workflow artifacts,不进 Release
+          pnpm exec tauri build --debug --bundles nsis,msi \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Stage debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p debug-dist
+          for f in src-tauri/target/debug/bundle/nsis/*.exe \
+                   src-tauri/target/debug/bundle/msi/*.msi; do
+            base=$(basename "$f")
+            cp "$f" "debug-dist/${base%.*}-debug.${base##*.}"
+          done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -368,15 +486,29 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
 
+      - name: Upload debug artifacts (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-x64-debug
+          if-no-files-found: error
+          path: debug-dist/*
+
       - name: Publish to release
-        if: needs.version.outputs.is_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
+          IS_RELEASE: ${{ needs.version.outputs.is_release }}
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            else
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
+                --target "$GITHUB_SHA" --title "XTerm ${VERSION} (dev 快照)" \
+                --notes "Dev snapshot ${VERSION}"
+            fi
           fi
           gh release upload "$TAG" \
             src-tauri/target/release/bundle/nsis/*.exe \
@@ -438,6 +570,25 @@ jobs:
             --bundles nsis,msi \
             --config "{\"version\":\"${VERSION}\"}"
 
+      - name: Build debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          # dev 快照同时打 debug 包,便于排查问题;只作 workflow artifacts,不进 Release
+          pnpm exec tauri build --debug --target aarch64-pc-windows-msvc \
+            --bundles nsis,msi \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Stage debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p debug-dist
+          for f in src-tauri/target/aarch64-pc-windows-msvc/debug/bundle/nsis/*.exe \
+                   src-tauri/target/aarch64-pc-windows-msvc/debug/bundle/msi/*.msi; do
+            base=$(basename "$f")
+            cp "$f" "debug-dist/${base%.*}-debug.${base##*.}"
+          done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -447,15 +598,29 @@ jobs:
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/msi/*.msi
 
+      - name: Upload debug artifacts (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-arm64-debug
+          if-no-files-found: error
+          path: debug-dist/*
+
       - name: Publish to release
-        if: needs.version.outputs.is_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
+          IS_RELEASE: ${{ needs.version.outputs.is_release }}
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            else
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
+                --target "$GITHUB_SHA" --title "XTerm ${VERSION} (dev 快照)" \
+                --notes "Dev snapshot ${VERSION}"
+            fi
           fi
           gh release upload "$TAG" \
             src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe \
@@ -521,6 +686,26 @@ jobs:
           cd src-tauri/target/aarch64-apple-darwin/release/bundle/macos
           zip -rqy "${GITHUB_WORKSPACE}/XTerm-${VERSION}-darwin-arm64.zip" XTerm.app
 
+      - name: Build debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          # dev 快照同时打 debug 包,便于排查问题;只作 workflow artifacts,不进 Release
+          pnpm exec tauri build --debug --target aarch64-apple-darwin \
+            --bundles app,dmg \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Stage debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p debug-dist
+          for f in src-tauri/target/aarch64-apple-darwin/debug/bundle/dmg/*.dmg; do
+            base=$(basename "$f")
+            cp "$f" "debug-dist/${base%.*}-debug.${base##*.}"
+          done
+          cd src-tauri/target/aarch64-apple-darwin/debug/bundle/macos
+          zip -rqy "${GITHUB_WORKSPACE}/debug-dist/XTerm-${VERSION}-darwin-arm64-debug.zip" XTerm.app
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -530,15 +715,29 @@ jobs:
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             XTerm-*.zip
 
+      - name: Upload debug artifacts (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-arm64-debug
+          if-no-files-found: error
+          path: debug-dist/*
+
       - name: Publish to release
-        if: needs.version.outputs.is_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
+          IS_RELEASE: ${{ needs.version.outputs.is_release }}
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            else
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
+                --target "$GITHUB_SHA" --title "XTerm ${VERSION} (dev 快照)" \
+                --notes "Dev snapshot ${VERSION}"
+            fi
           fi
           gh release upload "$TAG" \
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg \
@@ -604,6 +803,26 @@ jobs:
           cd src-tauri/target/x86_64-apple-darwin/release/bundle/macos
           zip -rqy "${GITHUB_WORKSPACE}/XTerm-${VERSION}-darwin-x64.zip" XTerm.app
 
+      - name: Build debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          # dev 快照同时打 debug 包,便于排查问题;只作 workflow artifacts,不进 Release
+          pnpm exec tauri build --debug --target x86_64-apple-darwin \
+            --bundles app,dmg \
+            --config "{\"version\":\"${VERSION}\"}"
+
+      - name: Stage debug bundles (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p debug-dist
+          for f in src-tauri/target/x86_64-apple-darwin/debug/bundle/dmg/*.dmg; do
+            base=$(basename "$f")
+            cp "$f" "debug-dist/${base%.*}-debug.${base##*.}"
+          done
+          cd src-tauri/target/x86_64-apple-darwin/debug/bundle/macos
+          zip -rqy "${GITHUB_WORKSPACE}/debug-dist/XTerm-${VERSION}-darwin-x64-debug.zip" XTerm.app
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -613,15 +832,29 @@ jobs:
             src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
             XTerm-*.zip
 
+      - name: Upload debug artifacts (dev snapshot)
+        if: needs.version.outputs.is_release == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-x64-debug
+          if-no-files-found: error
+          path: debug-dist/*
+
       - name: Publish to release
-        if: needs.version.outputs.is_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
+          IS_RELEASE: ${{ needs.version.outputs.is_release }}
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes "XTerm $TAG"
+            else
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
+                --target "$GITHUB_SHA" --title "XTerm ${VERSION} (dev 快照)" \
+                --notes "Dev snapshot ${VERSION}"
+            fi
           fi
           gh release upload "$TAG" \
             src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg \

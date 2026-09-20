@@ -10,7 +10,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 - 后端：Rust + Tauri 2，tokio 异步运行时。SSH/SFTP 用 `russh` / `russh-sftp`，FTP 服务端用 `libunftp`，串口、本地存储（`redb`）、keyring 加密凭证、防火墙管理等均为原生实现。SFTP 文件预览的内容嗅探用 `infer`（魔数）+ `content_inspector`（文本/二进制），随 `sftp_stat_file` 下发；前端判定以内容为准——魔数命中的具体类型覆盖扩展名映射（`text/plain` 弱信号除外），无扩展名文件采用嗅探 mime。
 - 包管理：`pnpm`（锁文件 `pnpm-lock.yaml`）。
 - 应用标识：`com.liushicong.xterm`；`tauri.conf.json` 中 `bundle.targets` 为 `"all"`，本地 `pnpm tauri build` 按平台默认出包（Windows：NSIS+MSI；Linux：deb+rpm+AppImage；macOS：app+dmg）。
-- 发版走 CI（`.github/workflows/build-release.yml`）：打 `v*` tag → 全平台构建（linux deb/rpm/appimage、win/mac 的 x64+arm64、Arch 的 xterm-workspace 包）并自动创建 GitHub Release；推送 main / 手动触发 → `<版本>-dev.<commit数>+<短sha>` 快照，仅上传 workflow artifacts。版本号由 `version` job 按 git ref 计算，经 `tauri build --config '{"version":"..."}'` 注入。
+- 发版走 CI（`.github/workflows/build-release.yml`）：打 `v*` tag → 全平台构建（linux deb/rpm/appimage、win/mac 的 x64+arm64、Arch 的 xterm-workspace 包）并自动创建 GitHub Release；推送 main / 手动触发 → `<上一tag>-dev.<commit数>+<commit数>` 快照（build metadata 用 commit 数而非短 sha，因为 Windows MSI 要求纯数字），每平台出 release + debug 两套包（debug 仅 workflow artifacts、文件名带 `-debug`），并发布 `v<上一tag>-dev.<commit数>` prerelease 作为 dev 更新通道（只保留最近 5 个）。版本号由 `version` job 按 git ref 计算，经 `tauri build --config '{"version":"..."}'` 注入。应用更新检测（`src-tauri/src/app_info/mod.rs`）：正式版只与正式版比较；dev 快照只认"基版本更高的正式版"或"更新的 dev 快照"，不会被同基版本的正式版误判为新版本。注意仓库会留下 `v*-dev.*` 标签，所有 `git describe --tags` 必须带 `--exclude='v*-dev.*'`，否则基版本与发行说明会被 dev tag 污染。
 
 ## 项目结构
 

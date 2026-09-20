@@ -89,7 +89,7 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 xterm
 pnpm exec tauri build --bundles deb       # 或 rpm / appimage
 ```
 
-> 🌐 完整的**多平台自动打包与发布**由 [`.github/workflows/build-release.yml`](.github/workflows/build-release.yml) 承担:打 `v*` tag 即自动构建 Windows / macOS / Linux(x64 + arm64)与 Arch 包,并创建 GitHub Release,发行说明自动整理合并的 commit。
+> 🌐 完整的**多平台自动打包与发布**由 [`.github/workflows/build-release.yml`](.github/workflows/build-release.yml) 承担:打 `v*` tag 即自动构建 Windows / macOS / Linux(x64 + arm64)与 Arch 包,并创建 GitHub Release,发行说明自动整理合并的 commit。推送 main 的快照构建会发布 `v<base>-dev.<N>` 的 dev prerelease 作为 dev 通道的应用更新源(只保留最近 5 个),并附带仅作 workflow artifacts 的 debug 安装包。
 
 ## 🗂️ 项目结构
 
