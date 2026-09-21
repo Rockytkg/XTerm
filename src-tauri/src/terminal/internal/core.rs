@@ -79,6 +79,8 @@ pub struct ConnectionOpenRequest {
     pub(crate) ssh_credential: Option<SshCredentialOverride>,
     /// Password supplied for a VNC auth retry; applied as `inline_password`.
     pub(crate) vnc_password: Option<String>,
+    /// Password supplied for an RDP auth retry; applied as `inline_password`.
+    pub(crate) rdp_password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +104,7 @@ pub enum ConnectionOpenResult {
         baud_rate: Option<u32>,
         serial_scores: Option<Vec<SerialProbeResult>>,
         vnc_bridge: Option<VncBridgeInfo>,
+        rdp_bridge: Option<RdpBridgeInfo>,
     },
     HostKeyPrompt {
         host: String,
@@ -127,6 +130,18 @@ pub struct VncBridgeInfo {
     pub(crate) auth_passthrough: bool,
 }
 
+/// Loopback WebSocket bridge endpoint for an RDP session. The frontend's RDP
+/// client connects here; the bridge speaks the custom binary frame protocol
+/// (see `internal::protocols::rdp::codec`) between the frontend and the
+/// backend-driven IronRDP session.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RdpBridgeInfo {
+    pub(crate) url: String,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
 impl ConnectionOpenResult {
     pub(super) fn connected_shell(
         session_id: String,
@@ -141,6 +156,7 @@ impl ConnectionOpenResult {
             baud_rate: None,
             serial_scores: None,
             vnc_bridge: None,
+            rdp_bridge: None,
         }
     }
 
@@ -159,6 +175,7 @@ impl ConnectionOpenResult {
             baud_rate: Some(baud_rate),
             serial_scores: Some(serial_scores),
             vnc_bridge: None,
+            rdp_bridge: None,
         }
     }
 
@@ -171,6 +188,21 @@ impl ConnectionOpenResult {
             baud_rate: None,
             serial_scores: None,
             vnc_bridge: Some(bridge),
+            rdp_bridge: None,
+        }
+    }
+
+    #[cfg_attr(not(feature = "rdp"), allow(dead_code))]
+    pub(super) fn connected_rdp(session_id: String, bridge: RdpBridgeInfo) -> Self {
+        Self::Connected {
+            session_id,
+            protocol: ProtocolKind::Rdp.as_str().to_string(),
+            encoding: "binary".to_string(),
+            serial_port: None,
+            baud_rate: None,
+            serial_scores: None,
+            vnc_bridge: None,
+            rdp_bridge: Some(bridge),
         }
     }
 }
@@ -884,6 +916,15 @@ pub(crate) struct ResolvedConnection {
     pub(crate) rows: Option<u32>,
     pub(crate) jump_hosts: Option<Vec<JumpHostHop>>,
     pub(crate) vnc_shared: Option<bool>,
+    // 仅 RDP 会话工厂（feature "rdp"）读取；feature 关闭时只写不读。
+    #[cfg_attr(not(feature = "rdp"), allow(dead_code))]
+    pub(crate) rdp_domain: Option<String>,
+    #[cfg_attr(not(feature = "rdp"), allow(dead_code))]
+    pub(crate) rdp_scale_mode: Option<String>,
+    #[cfg_attr(not(feature = "rdp"), allow(dead_code))]
+    pub(crate) rdp_clipboard_sync: Option<bool>,
+    #[cfg_attr(not(feature = "rdp"), allow(dead_code))]
+    pub(crate) rdp_resize_session: Option<bool>,
 }
 
 pub(crate) struct SessionOpenContext {
@@ -979,9 +1020,22 @@ impl ResolvedConnection {
             rows: request.rows,
             jump_hosts: profile.jump_hosts().cloned(),
             vnc_shared: profile.vnc_details().and_then(|details| details.shared),
+            rdp_domain: profile
+                .rdp_details()
+                .and_then(|details| details.domain.clone()),
+            rdp_scale_mode: profile
+                .rdp_details()
+                .and_then(|details| details.scale_mode.clone()),
+            rdp_clipboard_sync: profile
+                .rdp_details()
+                .and_then(|details| details.clipboard_sync),
+            rdp_resize_session: profile
+                .rdp_details()
+                .and_then(|details| details.resize_session),
         }
         .with_ssh_credential_override(request.ssh_credential)
-        .with_vnc_password_override(request.vnc_password))
+        .with_vnc_password_override(request.vnc_password)
+        .with_rdp_password_override(request.rdp_password))
     }
 
     pub(crate) fn with_open_request(mut self, request: ConnectionOpenRequest) -> Self {
@@ -1014,6 +1068,14 @@ impl ResolvedConnection {
     }
 
     fn with_vnc_password_override(mut self, password: Option<String>) -> Self {
+        if let Some(password) = password.filter(|value| !value.is_empty()) {
+            self.auth_method = Some("password".to_string());
+            self.inline_password = Some(password);
+        }
+        self
+    }
+
+    fn with_rdp_password_override(mut self, password: Option<String>) -> Self {
         if let Some(password) = password.filter(|value| !value.is_empty()) {
             self.auth_method = Some("password".to_string());
             self.inline_password = Some(password);

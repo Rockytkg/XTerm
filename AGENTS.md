@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端中整合 SSH / Telnet / 串口 / VNC 连接、交互式终端（XTerm.js）、VNC 远程桌面（noVNC）、SFTP 文件管理、内置 TFTP/FTP/SFTP 文件服务器、凭证管理、会话记录和设置。
+XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端中整合 SSH / Telnet / 串口 / VNC / RDP 连接、交互式终端（XTerm.js）、VNC 远程桌面（noVNC）、SFTP 文件管理、内置 TFTP/FTP/SFTP 文件服务器、凭证管理、会话记录和设置。
 
 - 前端：Vue 3（`<script setup>`）+ Vite + Pinia + vue-router + vue-i18n（中英文）+ UnoCSS + SCSS + XTerm.js 6 + CodeMirror 6。
 - 后端：Rust + Tauri 2，tokio 异步运行时。SSH/SFTP 用 `russh` / `russh-sftp`，FTP 服务端用 `libunftp`，串口、本地存储（`redb`）、keyring 加密凭证、防火墙管理等均为原生实现。SFTP 文件预览的内容嗅探用 `infer`（魔数）+ `content_inspector`（文本/二进制），随 `sftp_stat_file` 下发；前端判定以内容为准——魔数命中的具体类型覆盖扩展名映射（`text/plain` 弱信号除外），无扩展名文件采用嗅探 mime。
@@ -16,13 +16,13 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 
 - `index.html`：Vite HTML 入口；`src/main.js` 创建 Vue 应用并注册 i18n、router、UnoCSS、全局 SCSS；`src/App.vue` 挂载应用壳层。
 - `src/views/`：页面（会话、工作区、凭证、密钥、脚本、Dashboard、设置）。
-- `src/components/`：终端、SFTP、连接弹窗、通知、选择器等组件。右键菜单始终在主窗口内以 DOM 渲染（`ContextMenu.vue`，条目渲染共用 `ContextMenuPanel.vue`，图标映射共用 `contextMenuIcons.js`），状态与动作分发在 `src/services/contextMenu.js`。VNC 会话在 `TerminalWorkspacePane.vue` 的会话循环中渲染 `VncDesktopPane.vue`（noVNC RFB 客户端）替代 `TerminalPanel.vue`，tab 切换复用会话切换；后端为每个 VNC 会话起 127.0.0.1 回环 WebSocket↔TCP 桥（`terminal/internal/protocols/vnc/`，URL 带一次性 token），并在 Rust 侧终止 RFB 握手（None + VNC-DES，密码从 keyring 取、不出后端），服务器只提供其它安全类型时退化为透传模式由 noVNC 自行应答认证。
+- `src/components/`：终端、SFTP、连接弹窗、通知、选择器等组件。右键菜单始终在主窗口内以 DOM 渲染（`ContextMenu.vue`，条目渲染共用 `ContextMenuPanel.vue`，图标映射共用 `contextMenuIcons.js`），状态与动作分发在 `src/services/contextMenu.js`。VNC 会话在 `TerminalWorkspacePane.vue` 的会话循环中渲染 `VncDesktopPane.vue`（noVNC RFB 客户端）替代 `TerminalPanel.vue`，tab 切换复用会话切换；后端为每个 VNC 会话起 127.0.0.1 回环 WebSocket↔TCP 桥（`terminal/internal/protocols/vnc/`，URL 带一次性 token），并在 Rust 侧终止 RFB 握手（None + VNC-DES，密码从 keyring 取、不出后端），服务器只提供其它安全类型时退化为透传模式由 noVNC 自行应答认证。RDP 会话后端为 `terminal/internal/protocols/rdp/`（`rdp` cargo feature 门控，IronRDP 协议栈）：协议状态机完全在 Rust 侧（TLS/NLA 凭据从 keyring 取、不出后端，证书 accept-all），同样起 127.0.0.1 回环 WebSocket 桥（复用 `loopback_bridge.rs`），但桥上是自定义二进制帧协议（脏矩形 RGBA 下行、键鼠/缩放/剪贴板上行），而非字节透传。
 - `src/composables/`：可复用逻辑（工作区状态、偏好设置、SFTP 操作、终端运行时等，均以 `use*` 命名）。
 - `src/stores/`：Pinia store（连接状态机、工作区会话、终端几何、主机公钥提示、用户脚本等）。
 - `src/services/`：前端到 Tauri Rust 命令的封装（`ipc/` 子目录为底层调用；`scripting/` 子目录为脚本引擎：终端桥接、运行器、弹窗交互）。组件中不要散落裸 `invoke`，应在 service 中添加明确封装。
 - `src/i18n/`：中英文案。`src/utils/`：通用工具（如 `eventBridge.js`）。
 - `src-tauri/src/`：Rust 后端。`lib.rs` 初始化状态、插件并注册 `tauri::generate_handler!`；模块包括 `terminal/`（api/app/domain/protocol 分层）、`credentials/`、`file_service/`、`tftp/`、`storage/`、`session_recording/`、`paths/`、`logging/`、`proxy/`、`firewall.rs` 等。
-- `src-tauri/vendor/`：vendored 依赖。`libtelnet/` 为 C 源码；`russh/` 为 russh 0.63.3 的本地补丁副本，经 `Cargo.toml` 的 `[patch.crates-io]` 对所有依赖方生效（补丁内容与升级注意事项见 `vendor/russh/UPSTREAM.md`，补丁点以 `PATCH(xterm)` 注释标注）。
+- `src-tauri/vendor/`：vendored 依赖。`libtelnet/` 为 C 源码；`russh/` 为 russh 0.63.3 的本地补丁副本，经 `Cargo.toml` 的 `[patch.crates-io]` 对所有依赖方生效（补丁内容与升级注意事项见 `vendor/russh/UPSTREAM.md`，补丁点以 `PATCH(xterm)` 注释标注）。`picky/`、`sspi/` 为 RDP 协议栈（IronRDP）的传递依赖补丁副本：上游 rc 版本携带的 RustCrypto pre-release 依赖 pin 与本仓库正式版冲突，副本仅放宽/删除这些 Cargo.toml 声明、未动源码（详见各自 `UPSTREAM.md`；上游放宽后删除）。RDP 协议栈依赖为 ironrdp 0.17 + ironrdp-tokio + ironrdp-tls（rustls-ring），挂在默认开启的 `rdp` cargo feature 下，`cargo check --no-default-features` 必须可编译。
 - 日志体系：`src-tauri/src/logging/`（`level`/`event`/`writer`/`retention`/`panic`/`commands` 子模块）。后端写日志一律用 `crate::logging::event(scope, action)` 结构化事件或带显式 `target: "<scope>"` 的 `log::<level>!`，scope 为点分逻辑名（如 `terminal.serial`），不使用默认模块路径 target；panic/启动应急路径除外。日志按日写入 `<log_dir>/YYYYMMDD.log`（无缓冲逐条 flush，保留 7 天 / 最多 14 个文件），`panic.log`、`startup-error.log` 超 4 MiB 截尾。级别持久化于 settings（`logLevel`），`log_level_set` 立即生效；嘈杂依赖 crate（russh/keyring/mio/tao）在级别低于 debug 时被钳制。前端统一用 `createLogger("frontend.<area>.<module>")` + 点分事件名（`src/utils/logger.js`），启动时经 `src/services/logging.js` 同步后端级别；生产模式 error/warn 转发到后端日志文件。日志相关 Tauri 命令：`log_level_get/set`、`log_files_list`、`log_file_tail`、`log_files_prune`、`log_dir_open`；设置页"通用"内置日志查看对话框。
 - `src-tauri/capabilities/default.json`：Tauri 2 权限能力配置。
 - `src-tauri/tauri.conf.json`：开发地址（`http://127.0.0.1:1420`）、`dist` 输出、无边框窗口（`decorations: false`）、deep-link scheme（`ssh`、`telnet`）和打包配置。

@@ -96,6 +96,7 @@ impl ConnectionApplicationService {
                 baud_rate,
                 serial_scores,
                 vnc_bridge,
+                rdp_bridge,
                 ..
             }) => {
                 if !open_scope
@@ -143,6 +144,7 @@ impl ConnectionApplicationService {
                     baud_rate,
                     serial_scores,
                     vnc_bridge,
+                    rdp_bridge,
                 })
             }
             Ok(ConnectionOpenResult::HostKeyPrompt {
@@ -290,6 +292,7 @@ impl ConnectionApplicationService {
             rows: request.rows,
             ssh_credential: request.ssh_credential,
             vnc_password: None,
+            rdp_password: None,
         };
         let resolved =
             resolve_connection_request(state, open_request).map_err(TerminalApiError::from)?;

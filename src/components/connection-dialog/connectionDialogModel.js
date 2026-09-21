@@ -1,6 +1,7 @@
 import {
   CONNECTION_PROTOCOL,
   CONNECTION_PROTOCOLS,
+  isRdpProtocol,
   isSerialProtocol,
   isTelnetProtocol,
   isVncProtocol,
@@ -18,6 +19,7 @@ const PROTOCOL_PORT_DEFAULTS = {
   telnet: 23,
   serial: null,
   vnc: 5900,
+  rdp: 3389,
 };
 
 function enabledOrDefault(value, fallback = true) {
@@ -136,6 +138,22 @@ export function createProtocolDraft(protocol, profile = null) {
     };
   }
 
+  if (isRdpProtocol(normalizedProtocol)) {
+    return {
+      ...common,
+      host: profile?.host ?? "",
+      port: profile?.port ?? PROTOCOL_PORT_DEFAULTS.rdp,
+      user: profile?.user ?? "",
+      password: "",
+      authMethod: details.authMethod || "password",
+      savedCredentialId: details.savedCredentialId || "",
+      domain: details.domain || "",
+      scaleMode: details.scaleMode || "fit",
+      clipboardSync: details.clipboardSync !== false,
+      resizeSession: details.resizeSession === true,
+    };
+  }
+
   return {
     ...common,
     host: profile?.host ?? "",
@@ -240,6 +258,26 @@ export function buildConnectionProfile({
         shared: form.shared !== false,
         quality: Number(form.quality),
         compression: Number(form.compression),
+        scaleMode: form.scaleMode || "fit",
+        clipboardSync: form.clipboardSync !== false,
+        resizeSession: form.resizeSession === true,
+      },
+    };
+  }
+
+  if (isRdpProtocol(protocol)) {
+    const domain = form.domain?.trim?.() || "";
+    return {
+      ...commonProfile,
+      host: form.host.trim(),
+      port: String(Number(form.port)),
+      user: form.user?.trim?.() ?? "",
+      details: {
+        protocol,
+        authMethod: "password",
+        savedCredentialId: savedCredentialId || undefined,
+        // 域可选项：空值不写 details，避免后端反序列化出空串参与认证。
+        ...(domain ? { domain } : {}),
         scaleMode: form.scaleMode || "fit",
         clipboardSync: form.clipboardSync !== false,
         resizeSession: form.resizeSession === true,

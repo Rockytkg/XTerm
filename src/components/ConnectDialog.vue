@@ -11,11 +11,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "reka-ui";
-import { ArrowRight, Cable, Globe2, ListChecks, Monitor, Plus, Server, X } from "@lucide/vue";
+import { AppWindow, ArrowRight, Cable, Globe2, ListChecks, Monitor, Plus, Server, X } from "@lucide/vue";
 import AddConnectionDialog from "./AddConnectionDialog.vue";
 import { createLogger } from "../utils/logger";
 import {
   connectionEndpointLabel,
+  isRdpProtocol,
   isSerialProtocol,
   isTelnetProtocol,
   isVncProtocol,
@@ -63,6 +64,7 @@ function protocolIcon(protocol) {
   if (isSerialProtocol(protocol)) return Cable;
   if (isTelnetProtocol(protocol)) return Globe2;
   if (isVncProtocol(protocol)) return Monitor;
+  if (isRdpProtocol(protocol)) return AppWindow;
   return Server;
 }
 

@@ -30,6 +30,7 @@ import { useToasts } from "../composables/useToasts";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import {
   connectionEndpointLabel,
+  isRdpProtocol,
   isSerialProtocol,
   isTelnetProtocol,
   isVncProtocol,
@@ -681,14 +682,18 @@ function nodePalette(properties) {
         ? cssVar("--success")
         : isVncProtocol(protocol)
           ? toCytoscapeColor("light-dark(oklch(56% 0.17 300deg), oklch(76% 0.12 300deg))")
-          : cssVar("--accent");
+          : isRdpProtocol(protocol)
+            ? toCytoscapeColor("light-dark(oklch(54% 0.15 230deg), oklch(76% 0.11 230deg))")
+            : cssVar("--accent");
     const accentBg = isTelnetProtocol(protocol)
       ? toCytoscapeColor("light-dark(oklch(95% 0.03 55deg), oklch(31% 0.038 48deg))")
       : isSerialProtocol(protocol)
         ? cssVar("--success-bg")
         : isVncProtocol(protocol)
           ? toCytoscapeColor("light-dark(oklch(93% 0.045 300deg), oklch(30% 0.04 300deg))")
-          : cssVar("--accent-light");
+          : isRdpProtocol(protocol)
+            ? toCytoscapeColor("light-dark(oklch(93% 0.045 230deg), oklch(30% 0.045 230deg))")
+            : cssVar("--accent-light");
     return {
       ...base,
       iconBg: accentBg,
@@ -724,6 +729,9 @@ function nodeIconSvg(properties, color, x, y, size) {
   }
   if (isVncProtocol(properties.protocol)) {
     return `<svg x="${x}" y="${y}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>`;
+  }
+  if (isRdpProtocol(properties.protocol)) {
+    return `<svg x="${x}" y="${y}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/></svg>`;
   }
   return `<svg x="${x}" y="${y}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>`;
 }

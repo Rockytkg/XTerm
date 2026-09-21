@@ -38,6 +38,7 @@ pub(crate) async fn terminal_connection_open(
                 rows: request.rows,
                 ssh_credential: request.ssh_credential,
                 vnc_password: request.vnc_password,
+                rdp_password: request.rdp_password,
             },
         )
         .await

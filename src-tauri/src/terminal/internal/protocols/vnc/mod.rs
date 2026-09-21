@@ -19,6 +19,7 @@ use crate::{
                 ConnectionError, ConnectionOpenResult, ConnectionResult, ResolvedConnection,
                 TerminalSessionResources, VncBridgeInfo, CONNECT_TIMEOUT_MS,
             },
+            loopback_bridge::bind_loopback_bridge,
             terminal::{spawn_bound_session, BoundSessionOptions},
             util::{cancelable_open, ensure_open_current, ensure_open_not_cancelled, required},
         },
@@ -96,26 +97,20 @@ impl VncConnectionFactory {
         })
         .await?;
 
-        let token = bridge_token();
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        let bridge = bind_loopback_bridge("vnc")
             .await
             .map_err(|error| bridge_failed_error(&error))?;
-        let bridge_port = listener
-            .local_addr()
-            .map_err(|error| bridge_failed_error(&error))?
-            .port();
-        let url = format!("ws://127.0.0.1:{bridge_port}/vnc?token={token}");
 
         let bridge_info = match &handshake {
             ServerHandshake::Terminated(terminated) => VncBridgeInfo {
-                url: url.clone(),
+                url: bridge.url.clone(),
                 desktop_name: Some(terminated.desktop_name.clone()),
                 width: u32::from(terminated.width),
                 height: u32::from(terminated.height),
                 auth_passthrough: false,
             },
             ServerHandshake::Passthrough(_) => VncBridgeInfo {
-                url: url.clone(),
+                url: bridge.url.clone(),
                 desktop_name: None,
                 width: 0,
                 height: 0,
@@ -133,8 +128,8 @@ impl VncConnectionFactory {
                 session_prefix: "vnc",
                 connection_id: open_context.connection_id,
                 transport: Box::new(VncSessionTransport {
-                    listener,
-                    token,
+                    listener: bridge.listener,
+                    token: bridge.token,
                     server: stream,
                     handshake,
                 }),
@@ -240,9 +235,4 @@ fn bridge_failed_error(error: &std::io::Error) -> ConnectionError {
         serde_json::json!({ "detail": error.to_string() }),
         true,
     )
-}
-
-fn bridge_token() -> String {
-    let bytes: [u8; 16] = rand::random();
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

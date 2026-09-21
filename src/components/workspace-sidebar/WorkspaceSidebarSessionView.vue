@@ -1,13 +1,13 @@
 <script setup>
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { Cable, Globe2, Monitor, Server } from "@lucide/vue";
+import { AppWindow, Cable, Globe2, Monitor, Server } from "@lucide/vue";
 import { useToasts } from "../../composables/useToasts";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { setBackendEncodingDetection, setBackendRuntimeMetricsEnabled } from "../../services/terminalSessions";
 import { connectionCan } from "../../utils/connectionCapabilities";
 import { createLogger } from "../../utils/logger";
-import { isSerialProtocol, isSshProtocol, isTelnetProtocol, isVncProtocol } from "../../utils/connectionProtocols";
+import { isRdpProtocol, isSerialProtocol, isSshProtocol, isTelnetProtocol, isVncProtocol } from "../../utils/connectionProtocols";
 import UiSwitch from "../UiSwitch.vue";
 import UiSelect from "../UiSelect.vue";
 import {
@@ -32,11 +32,12 @@ const logger = createLogger("frontend.workspace.sidebar-session");
 
 const protocol = computed(() => props.activeConnection?.protocol);
 const protocolLabel = computed(() => protocol.value?.toUpperCase() || "—");
-// 与会话列表保持一致：串口 Cable / Telnet Globe2 / VNC Monitor / SSH Server
+// 与会话列表保持一致：串口 Cable / Telnet Globe2 / VNC Monitor / RDP AppWindow / SSH Server
 const protocolIcon = computed(() => {
   if (isSerialProtocol(protocol.value)) return Cable;
   if (isTelnetProtocol(protocol.value)) return Globe2;
   if (isVncProtocol(protocol.value)) return Monitor;
+  if (isRdpProtocol(protocol.value)) return AppWindow;
   return Server;
 });
 const statusPillClass = computed(() => {
@@ -47,6 +48,9 @@ const statusPillClass = computed(() => {
 const isSerial = computed(() => connectionCan(props.activeConnection, "serialBaudDetection"));
 const isSsh = computed(() => isSshProtocol(protocol.value));
 const isVnc = computed(() => isVncProtocol(protocol.value));
+const isRdp = computed(() => isRdpProtocol(protocol.value));
+// 桌面类会话（VNC/RDP）没有终端类开关，侧边栏统一隐藏。
+const isDesktop = computed(() => isVnc.value || isRdp.value);
 const isRemoteShell = computed(
   () =>
     connectionCan(props.activeConnection, "metrics") ||
@@ -82,6 +86,19 @@ const vncScaleMode = computed(() => props.activeConnection?.vncScaleMode || "fit
 const vncScaleModeOptions = computed(() =>
   ["fit", "none", "clip"].map((mode) => ({
     label: t(`connectionDialog.vnc.scaleModes.${mode}`),
+    value: mode,
+  })),
+);
+
+const rdpBridgeInfo = computed(() => sessionRegistry.getRdpBridge(frontendSessionId.value));
+const rdpResolution = computed(() => {
+  const bridge = rdpBridgeInfo.value;
+  return bridge && bridge.width && bridge.height ? `${bridge.width} × ${bridge.height}` : "—";
+});
+const rdpScaleMode = computed(() => props.activeConnection?.rdpScaleMode || "fit");
+const rdpScaleModeOptions = computed(() =>
+  ["fit", "none", "clip"].map((mode) => ({
+    label: t(`connectionDialog.rdp.scaleModes.${mode}`),
     value: mode,
   })),
 );
@@ -219,6 +236,18 @@ async function handleRuntimeMetricsChange(enabled) {
           </div>
         </template>
 
+        <!-- RDP -->
+        <template v-else-if="isRdp">
+          <div class="workspace-sidebar-metric">
+            <span>{{ t("overview.session.user") }}</span>
+            <strong :title="activeConnection.user">{{ activeConnection.user || "—" }}</strong>
+          </div>
+          <div class="workspace-sidebar-metric">
+            <span>{{ t("overview.session.resolution") }}</span>
+            <strong>{{ rdpResolution }}</strong>
+          </div>
+        </template>
+
         <!-- Telnet -->
         <template v-else>
           <div class="workspace-sidebar-metric">
@@ -290,8 +319,59 @@ async function handleRuntimeMetricsChange(enabled) {
           </div>
         </template>
 
+        <!-- RDP 会话选项：写回 profile，RdpDesktopPane 监听变化实时生效
+             （后端 cliprdr 剪贴板通道与 Display Control DVC 始终注册，
+             缩放/剪贴板/动态分辨率开关为纯前端门控，随改随生效无需重连） -->
+        <template v-if="isRdp">
+          <div class="workspace-sidebar-pref-row">
+            <div class="workspace-sidebar-pref-text">
+              <span class="workspace-sidebar-pref-label">{{
+                t("connectionDialog.rdp.clipboardSync")
+              }}</span>
+              <span class="workspace-sidebar-pref-hint">{{
+                t("connectionDialog.rdp.clipboardSyncHint")
+              }}</span>
+            </div>
+            <UiSwitch
+              :model-value="activeConnection?.rdpClipboardSync !== false"
+              @update:model-value="persistProfileField('rdpClipboardSync', $event)"
+            />
+          </div>
+
+          <div class="workspace-sidebar-pref-row">
+            <div class="workspace-sidebar-pref-text">
+              <span class="workspace-sidebar-pref-label">{{
+                t("connectionDialog.rdp.resizeSession")
+              }}</span>
+              <span class="workspace-sidebar-pref-hint">{{
+                t("connectionDialog.rdp.resizeSessionHint")
+              }}</span>
+            </div>
+            <UiSwitch
+              :model-value="activeConnection?.rdpResizeSession === true"
+              @update:model-value="persistProfileField('rdpResizeSession', $event)"
+            />
+          </div>
+
+          <div class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack">
+            <div class="workspace-sidebar-pref-text">
+              <span class="workspace-sidebar-pref-label">{{
+                t("connectionDialog.rdp.scaleMode")
+              }}</span>
+              <span class="workspace-sidebar-pref-hint">{{
+                t("connectionDialog.rdp.scaleModeHint")
+              }}</span>
+            </div>
+            <UiSelect
+              :model-value="rdpScaleMode"
+              :options="rdpScaleModeOptions"
+              @update:model-value="persistProfileField('rdpScaleMode', $event)"
+            />
+          </div>
+        </template>
+
         <div
-          v-if="!isVnc"
+          v-if="!isDesktop"
           class="workspace-sidebar-pref-row"
         >
           <div class="workspace-sidebar-pref-text">
@@ -309,7 +389,7 @@ async function handleRuntimeMetricsChange(enabled) {
         </div>
 
         <div
-          v-if="!isVnc"
+          v-if="!isDesktop"
           class="workspace-sidebar-pref-row"
         >
           <div class="workspace-sidebar-pref-text">
@@ -345,7 +425,7 @@ async function handleRuntimeMetricsChange(enabled) {
         </div>
 
         <div
-          v-if="!isVnc"
+          v-if="!isDesktop"
           class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack"
         >
           <div class="workspace-sidebar-pref-text">
@@ -364,7 +444,7 @@ async function handleRuntimeMetricsChange(enabled) {
         </div>
 
         <div
-          v-if="!isVnc"
+          v-if="!isDesktop"
           class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack"
         >
           <div class="workspace-sidebar-pref-text">
@@ -383,7 +463,7 @@ async function handleRuntimeMetricsChange(enabled) {
         </div>
 
         <div
-          v-if="!isVnc"
+          v-if="!isDesktop"
           class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack"
         >
           <div class="workspace-sidebar-pref-text">

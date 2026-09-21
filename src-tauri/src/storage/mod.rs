@@ -7,9 +7,9 @@ mod schema;
 mod settings;
 
 pub use models::{
-    AppPreferences, ConnectionDetails, ConnectionOptions, SerialConnectionDetails,
-    SshConnectionDetails, Store, StoredConnection, StoredConnectionRecord, StoredCredential,
-    StoredCredentialRecord, TelnetConnectionDetails, VncConnectionDetails,
+    AppPreferences, ConnectionDetails, ConnectionOptions, RdpConnectionDetails,
+    SerialConnectionDetails, SshConnectionDetails, Store, StoredConnection, StoredConnectionRecord,
+    StoredCredential, StoredCredentialRecord, TelnetConnectionDetails, VncConnectionDetails,
 };
 pub(crate) use repository::SettingsRepository;
 

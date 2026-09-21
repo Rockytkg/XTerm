@@ -1,13 +1,21 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ClipboardPaste, Keyboard, Maximize, Scaling } from "@lucide/vue";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useToasts } from "../composables/useToasts";
 import { createLogger } from "../utils/logger";
+import { createWheelAccumulator } from "../utils/wheelAccumulator";
 
 const SCALE_MODES = ["fit", "none", "clip"];
 const AUTH_RETRY_ERROR_CODES = new Set(["vnc_auth_required", "vnc_auth_failed"]);
+
+// noVNC 内部以 50px（WHEEL_STEP）为一步且每步直接清零余量，快速滚动丢量、反向
+// 滚动余量互相抵消，表现为滚不动/抖动。这里在捕获阶段拦截垂直滚轮，归一化累积
+// （见 utils/wheelAccumulator）后向 RFB canvas 派发合成脉冲，并阻止事件到达
+// noVNC 自身的 wheel 监听以免重复。阈值一行 ≈ 一个滚轮刻度（3 line），
+// 行高 19px 与 noVNC 的 WHEEL_LINE_HEIGHT 一致。
+const NOVNC_WHEEL_STEP_PX = 50; // noVNC 的 WHEEL_STEP，保证每个合成脉冲恰好一步
 
 const props = defineProps({
   activeConnection: { type: Object, default: null },
@@ -38,6 +46,41 @@ const rfbError = ref("");
 
 let rfb = null;
 let rfbLoadPromise = null;
+
+const wheelAccumulator = createWheelAccumulator({
+  send: (direction, event) => dispatchWheelPulse(event, direction),
+  getPageHeightPx: () => desktopMount.value?.clientHeight || 600,
+});
+
+function dispatchWheelPulse(event, direction) {
+  const canvas = desktopMount.value?.querySelector("canvas");
+  if (!canvas) return false;
+  // noVNC 没有公开的滚轮输入 API（只有 sendKey/clipboardPasteFrom 等），
+  // 只能向 canvas 派发合成 WheelEvent；deltaY 取 ±WHEEL_STEP 使其恰好触发一次
+  // RFB 滚轮步进。isTrusted=false 的合成事件会被 handleDesktopWheel 跳过，不会递归。
+  canvas.dispatchEvent(
+    new WheelEvent("wheel", {
+      deltaY: direction * NOVNC_WHEEL_STEP_PX,
+      deltaMode: 0,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      buttons: event.buttons,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  return true;
+}
+
+function handleDesktopWheel(event) {
+  if (!event.isTrusted) return;
+  if (!rfb || !rfbConnected.value || rfb.viewOnly) return;
+  // 横向滚动仍交给 noVNC 自己处理。
+  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  wheelAccumulator.feed(event);
+}
 
 const connectionStatus = computed(() => props.connectionState?.status || "idle");
 const authRetryRequested = computed(() =>
@@ -162,6 +205,7 @@ function destroyRfb() {
   const instance = rfb;
   rfb = null;
   rfbConnected.value = false;
+  wheelAccumulator.reset();
   if (instance) {
     try {
       instance.disconnect();
@@ -335,7 +379,18 @@ watch(scaleMode, (mode) => {
   if (rfb) applyScaleMode(rfb, mode);
 });
 
+onMounted(() => {
+  // 捕获阶段 + 非 passive：必须先于 noVNC 的 canvas 监听拿到事件才能拦截，
+  // 且需要 preventDefault 阻止页面滚动。
+  desktopMount.value?.addEventListener("wheel", handleDesktopWheel, {
+    capture: true,
+    passive: false,
+  });
+});
+
 onBeforeUnmount(() => {
+  desktopMount.value?.removeEventListener("wheel", handleDesktopWheel, { capture: true });
+  wheelAccumulator.reset();
   destroyRfb();
 });
 </script>

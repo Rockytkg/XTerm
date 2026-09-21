@@ -81,6 +81,15 @@ impl ConnectionCapabilities {
             video: true,
         }
     }
+
+    pub fn rdp() -> Self {
+        Self {
+            video: true,
+            // RDP 桌面尺寸可随窗口变化（Display Control DVC 动态分辨率）。
+            resize: true,
+            ..Self::vnc()
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -90,6 +99,7 @@ pub(crate) enum ProtocolKind {
     Telnet,
     Serial,
     Vnc,
+    Rdp,
 }
 
 impl ProtocolKind {
@@ -99,6 +109,7 @@ impl ProtocolKind {
             "telnet" => Some(Self::Telnet),
             "serial" => Some(Self::Serial),
             "vnc" => Some(Self::Vnc),
+            "rdp" => Some(Self::Rdp),
             _ => None,
         }
     }
@@ -109,11 +120,12 @@ impl ProtocolKind {
             Self::Telnet => "telnet",
             Self::Serial => "serial",
             Self::Vnc => "vnc",
+            Self::Rdp => "rdp",
         }
     }
 
     pub fn requires_password_credential(&self) -> bool {
-        matches!(self, Self::Telnet | Self::Serial | Self::Vnc)
+        matches!(self, Self::Telnet | Self::Serial | Self::Vnc | Self::Rdp)
     }
 }
 
@@ -150,5 +162,23 @@ mod tests {
         assert!(ProtocolKind::Vnc.requires_password_credential());
         assert_eq!(ProtocolKind::from_str("VNC"), Some(ProtocolKind::Vnc));
         assert_eq!(ProtocolKind::Vnc.as_str(), "vnc");
+    }
+
+    #[test]
+    fn rdp_capabilities_are_video_with_resize() {
+        let capabilities = ConnectionCapabilities::rdp();
+        assert!(capabilities.video);
+        assert!(capabilities.resize);
+        assert!(!capabilities.shell);
+        assert!(!capabilities.sftp);
+        assert!(!capabilities.serial_signals);
+        assert!(!capabilities.serial_baud_detection);
+    }
+
+    #[test]
+    fn rdp_is_a_password_credential_protocol() {
+        assert!(ProtocolKind::Rdp.requires_password_credential());
+        assert_eq!(ProtocolKind::from_str("RDP"), Some(ProtocolKind::Rdp));
+        assert_eq!(ProtocolKind::Rdp.as_str(), "rdp");
     }
 }

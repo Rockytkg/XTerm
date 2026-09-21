@@ -1,10 +1,12 @@
 <script setup>
 import { computed, defineAsyncComponent } from "vue";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { isVncProtocol } from "../../utils/connectionProtocols";
+import { capabilitiesCan } from "../../utils/connectionCapabilities";
+import { isRdpProtocol, isVncProtocol } from "../../utils/connectionProtocols";
 
 const TerminalPanel = defineAsyncComponent(() => import("../../components/TerminalPanel.vue"));
 const VncDesktopPane = defineAsyncComponent(() => import("../../components/VncDesktopPane.vue"));
+const RdpDesktopPane = defineAsyncComponent(() => import("../../components/RdpDesktopPane.vue"));
 
 const props = defineProps({
   activeConnectionId: { type: String, default: "" },
@@ -32,25 +34,47 @@ const sessionsWithRuntime = computed(() =>
   })),
 );
 
-const vncSessions = computed(() =>
-  sessionsWithRuntime.value.filter((session) => isVncProtocol(session.protocol)),
+// 桌面会话优先按 open 响应回读的 capabilities.video 判定；连接中 capabilities
+// 尚未到达时回退到协议判断，保证 VNC/RDP 在握手期间也能渲染桌面面板。
+const isDesktopSession = (session) =>
+  capabilitiesCan(session.capabilities, "video") ||
+  isVncProtocol(session.protocol) ||
+  isRdpProtocol(session.protocol);
+
+const desktopSessions = computed(() => sessionsWithRuntime.value.filter(isDesktopSession));
+const vncDesktopSessions = computed(() =>
+  desktopSessions.value.filter((session) => isVncProtocol(session.protocol)),
+);
+const rdpDesktopSessions = computed(() =>
+  desktopSessions.value.filter((session) => isRdpProtocol(session.protocol)),
 );
 const terminalSessions = computed(() =>
-  sessionsWithRuntime.value.filter((session) => !isVncProtocol(session.protocol)),
+  sessionsWithRuntime.value.filter((session) => !isDesktopSession(session)),
 );
 </script>
 
 <template>
   <section class="relative flex flex-1 min-h-0 overflow-hidden">
-    <!-- VNC 会话本身就是远程桌面，渲染桌面面板替代终端；tab 切换复用会话切换。 -->
+    <!-- 桌面会话渲染远程桌面面板替代终端；tab 切换复用会话切换。 -->
     <VncDesktopPane
-      v-for="session in vncSessions"
+      v-for="session in vncDesktopSessions"
       v-show="session.id === activeConnectionId"
       :key="session.terminalKey || session.id"
       class="absolute inset-0"
       :active-connection="session"
       :connection-state="session.connectionState"
       :vnc-bridge="session.vncBridge"
+      @retry-connection="(options) => emit('retryConnection', session.id, options)"
+    />
+    <RdpDesktopPane
+      v-for="session in rdpDesktopSessions"
+      v-show="session.id === activeConnectionId"
+      :key="session.terminalKey || session.id"
+      class="absolute inset-0"
+      :active-connection="session"
+      :connection-state="session.connectionState"
+      :frontend-session-id="session.id"
+      :rdp-bridge="session.rdpBridge"
       @retry-connection="(options) => emit('retryConnection', session.id, options)"
     />
     <TerminalPanel

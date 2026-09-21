@@ -54,7 +54,7 @@ export default {
   connectionDialog: {
     title: "Create connection",
     titleEdit: "Edit connection",
-    description: "Configure an SSH, Telnet, serial, or VNC connection.",
+    description: "Configure an SSH, Telnet, serial, VNC, or RDP connection.",
     auto: "Auto",
     noPasswordCredentials: "No saved password credentials.",
     refreshSerialPorts: "Refresh serial ports",
@@ -178,6 +178,21 @@ export default {
       resizeSession: "Resize remote desktop with window",
       resizeSessionHint:
         "Requires server support for ExtendedDesktopSize; falls back automatically.",
+    },
+    rdp: {
+      domain: "Domain",
+      domainHint: "Optional. Fill in for domain-joined Windows hosts.",
+      scaleMode: "Scale mode",
+      scaleModeHint: "How the remote desktop fits into the workspace.",
+      scaleModes: {
+        fit: "Fit to window",
+        none: "Original size",
+        clip: "Clip to viewport",
+      },
+      clipboardSync: "Clipboard sync",
+      clipboardSyncHint: "Write remote clipboard changes to the local clipboard.",
+      resizeSession: "Resize remote desktop with window",
+      resizeSessionHint: "Ask the server to resize the desktop when the window size changes.",
     },
     validation: {
       nameRequired: "Enter a connection name.",
@@ -997,6 +1012,7 @@ export default {
     connectionConnectingSsh: "Connecting to SSH server",
     connectionConnectingTelnet: "Connecting to Telnet server",
     connectionConnectingVnc: "Connecting to VNC server",
+    connectionConnectingRdp: "Connecting to RDP server",
     connectionOpeningSerial: "Opening serial port",
     connectionDetectingSerial: "Detecting serial port and baud rate",
     connectionEstablishingSecureSession: "Establishing secure session",
@@ -1031,6 +1047,16 @@ export default {
     credentialsTitle: "VNC authentication required",
     credentialsDescription:
       "This server requires authentication directly in the session. Enter your credentials.",
+    ctrlAltDel: "Send Ctrl+Alt+Del",
+    sendClipboard: "Send local clipboard to remote",
+    clipboardSendFailed: "Failed to read the local clipboard",
+    scaleMode: "Scale mode: {mode}",
+    fullscreen: "Fullscreen",
+  },
+  rdpDesktop: {
+    connectionError: "RDP connection error",
+    sessionClosed: "RDP session disconnected",
+    disconnectedUnexpectedly: "The connection to the RDP bridge dropped unexpectedly.",
     ctrlAltDel: "Send Ctrl+Alt+Del",
     sendClipboard: "Send local clipboard to remote",
     clipboardSendFailed: "Failed to read the local clipboard",
@@ -1125,6 +1151,17 @@ export default {
     vnc_handshake_failed:
       "RFB handshake with the VNC server failed. The target may not be a VNC service.",
     vnc_host_required: "Enter the VNC host address.",
+    rdp_auth_failed: "RDP authentication failed. Check the username, password, and domain.",
+    rdp_auth_required: "The RDP server requires authentication. Enter the password and retry.",
+    rdp_bridge_failed: "Failed to start the local RDP bridge.",
+    rdp_connect_failed: "Could not connect to the RDP server {host}:{port}.",
+    rdp_connect_timeout: "Timed out connecting to the RDP server {host}:{port}.",
+    rdp_credential_failed: "Failed to read the RDP credential linked to this connection.",
+    rdp_host_required: "Enter the RDP host address.",
+    rdp_not_supported: "RDP support is not available in this build.",
+    rdp_session_failed: "The RDP connection opened, but the desktop session failed to start.",
+    rdp_tls_failed: "Failed to establish the TLS channel with the RDP server.",
+    rdp_username_required: "Enter the RDP username.",
   },
   workspace: {
     noActiveSessions: "No active sessions",
@@ -1154,7 +1191,7 @@ export default {
     typeChangeConfirm: {
       title: "Confirm credential type change",
       description:
-        "This credential is currently referenced by {count} Telnet, serial, or VNC connections: {names}. These connection types only support password credentials. Updating the original credential may make those connections unable to use it. Choose how to proceed.",
+        "This credential is currently referenced by {count} Telnet, serial, VNC, or RDP connections: {names}. These connection types only support password credentials. Updating the original credential may make those connections unable to use it. Choose how to proceed.",
       updateExisting: "Update original credential",
       createNew: "Save as new credential",
       cancel: "Cancel",

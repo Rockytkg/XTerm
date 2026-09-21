@@ -27,6 +27,7 @@ test("vnc is a first-class password-only protocol", () => {
     "session-card-status-telnet": false,
     "session-card-status-ssh": false,
     "session-card-status-vnc": true,
+    "session-card-status-rdp": false,
   });
 });
 

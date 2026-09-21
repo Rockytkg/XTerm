@@ -1,4 +1,5 @@
 mod common;
+mod rdp;
 mod serial;
 mod ssh;
 mod telnet;

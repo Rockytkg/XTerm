@@ -19,10 +19,10 @@
 #   - linux   x64  (ubuntu-22.04)       deb / rpm / appimage
 #   - linux   arm64(ubuntu-22.04-arm)   deb(GitHub ARM runner 仅公共仓库可用)
 #   - windows x64  (windows-latest)     nsis / msi
-#   - windows arm64(windows-11-arm)     nsis / msi
+#   - windows arm64(windows-11-vs2026-arm) nsis / msi
 #   - macos   arm64(macos-latest)       app / dmg
 #   - macos   x64  (macos-latest 交叉)   app / dmg
-#   - arch    x86_64(ubuntu-latest + archlinux:base-devel 容器) .pkg.tar.zst
+#   - arch    x86_64(ubuntu-24.04 + archlinux:base-devel 容器) .pkg.tar.zst
 #
 # 缓存:Rust 依赖与编译产物用 Swatinem/rust-cache 缓存,前端依赖用 pnpm 缓存,
 #   避免每次构建都重新下载依赖。构建失败也保存缓存,加速重试。
@@ -47,7 +47,7 @@ jobs:
   # 统一版本号计算
   # ---------------------------------------------------------------------------
   version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.compute.outputs.version }}
       is_release: ${{ steps.compute.outputs.is_release }}
@@ -87,7 +87,7 @@ jobs:
   # ---------------------------------------------------------------------------
   release-init:
     needs: [version]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
@@ -520,7 +520,8 @@ jobs:
   # ---------------------------------------------------------------------------
   windows-arm64:
     needs: [version]
-    runs-on: windows-11-arm
+    # windows-11-arm 将于 2026-09 迁移为默认 VS 2026,直接显式使用该镜像消除警告
+    runs-on: windows-11-vs2026-arm
     permissions:
       contents: write
     defaults:
@@ -867,7 +868,7 @@ jobs:
   # ---------------------------------------------------------------------------
   arch:
     needs: [version, linux-x64]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:

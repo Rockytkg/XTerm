@@ -127,6 +127,7 @@ pub enum ConnectionDetails {
     Telnet(TelnetConnectionDetails),
     Serial(SerialConnectionDetails),
     Vnc(VncConnectionDetails),
+    Rdp(RdpConnectionDetails),
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -162,6 +163,16 @@ pub struct VncConnectionDetails {
     pub shared: Option<bool>,
     pub quality: Option<i64>,
     pub compression: Option<i64>,
+    pub scale_mode: Option<String>,
+    pub clipboard_sync: Option<bool>,
+    pub resize_session: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RdpConnectionDetails {
+    pub auth_method: Option<String>,
+    pub saved_credential_id: Option<String>,
+    pub domain: Option<String>,
     pub scale_mode: Option<String>,
     pub clipboard_sync: Option<bool>,
     pub resize_session: Option<bool>,
@@ -255,6 +266,24 @@ impl<'de> Deserialize<'de> for StoredConnection {
                         .or_else(|| take_string(obj, "flowControl")),
                     parity: take_string(obj, "parity"),
                     stop_bits: take_i64(obj, "stop_bits").or_else(|| take_i64(obj, "stopBits")),
+                }),
+                // RDP 是新协议，历史上不存在扁平记录；这里仍给出显式臂，避免旧导出/手工
+                // 编辑的扁平 RDP 记录落入 `_ => Err` 而整个库无法读取。
+                "rdp" => ConnectionDetails::Rdp(RdpConnectionDetails {
+                    auth_method: take_string(obj, "auth_method")
+                        .or_else(|| take_string(obj, "authMethod")),
+                    saved_credential_id: take_string(obj, "saved_credential_id")
+                        .or_else(|| take_string(obj, "savedCredentialId")),
+                    domain: take_string(obj, "domain").or_else(|| take_string(obj, "rdp_domain")),
+                    scale_mode: take_string(obj, "scale_mode")
+                        .or_else(|| take_string(obj, "scaleMode"))
+                        .or_else(|| take_string(obj, "rdp_scale_mode")),
+                    clipboard_sync: take_bool(obj, "clipboard_sync")
+                        .or_else(|| take_bool(obj, "clipboardSync"))
+                        .or_else(|| take_bool(obj, "rdp_clipboard_sync")),
+                    resize_session: take_bool(obj, "resize_session")
+                        .or_else(|| take_bool(obj, "resizeSession"))
+                        .or_else(|| take_bool(obj, "rdp_resize_session")),
                 }),
                 _ => {
                     return Err(D::Error::custom(format!(

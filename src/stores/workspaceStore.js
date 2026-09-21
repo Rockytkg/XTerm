@@ -433,6 +433,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       get vncBridge() {
         return sessionRegistry.getVncBridge(sessionId);
       },
+      get rdpBridge() {
+        return sessionRegistry.getRdpBridge(sessionId);
+      },
     };
   }
 

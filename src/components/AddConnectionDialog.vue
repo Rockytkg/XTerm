@@ -20,6 +20,7 @@ import { usePrivateKeyPicker } from "../composables/usePrivateKeyPicker";
 import { createConnection, getConnection, updateConnectionProfile } from "../services/workspace";
 import {
   CONNECTION_PROTOCOLS,
+  isRdpProtocol,
   isSerialProtocol,
   isVncProtocol,
   requiresPasswordCredential,
@@ -30,6 +31,7 @@ import { createLogger } from "../utils/logger";
 import ConnectionProtocolPicker from "./connection-dialog/ConnectionProtocolPicker.vue";
 import ConnectionSessionOptions from "./connection-dialog/ConnectionSessionOptions.vue";
 import JumpHostEditorDialog from "./connection-dialog/JumpHostEditorDialog.vue";
+import RdpConnectionFields from "./connection-dialog/RdpConnectionFields.vue";
 import SerialConnectionFields from "./connection-dialog/SerialConnectionFields.vue";
 import SshConnectionFields from "./connection-dialog/SshConnectionFields.vue";
 import TelnetConnectionFields from "./connection-dialog/TelnetConnectionFields.vue";
@@ -76,18 +78,21 @@ const protocolDrafts = reactive({
   telnet: createProtocolDraft("telnet"),
   serial: createProtocolDraft("serial"),
   vnc: createProtocolDraft("vnc"),
+  rdp: createProtocolDraft("rdp"),
 });
 const fieldErrors = reactive({
   ssh: {},
   telnet: {},
   serial: {},
   vnc: {},
+  rdp: {},
 });
 const sessionOptionsOpen = reactive({
   ssh: false,
   telnet: false,
   serial: false,
   vnc: false,
+  rdp: false,
 });
 
 const detectedSerialPorts = ref([]);
@@ -100,6 +105,7 @@ const isEdit = computed(() => !!props.editConnection);
 const isSSH = computed(() => requiresHostKeyVerification(activeProtocol.value));
 const isSerial = computed(() => isSerialProtocol(activeProtocol.value));
 const isVnc = computed(() => isVncProtocol(activeProtocol.value));
+const isRdp = computed(() => isRdpProtocol(activeProtocol.value));
 const activeProtocolSupportsCredentials = computed(() =>
   supportsSavedCredential(activeProtocol.value),
 );
@@ -302,6 +308,11 @@ function validateConnection(commitErrors = true) {
     else if (/\s/.test(host)) nextErrors.host = t("connectionDialog.validation.hostInvalid");
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       nextErrors.port = t("connectionDialog.validation.portInvalid");
+    }
+
+    // 后端 RDP 强制要求用户名（rdp_username_required），在弹窗侧前置拦截。
+    if (isRdpProtocol(protocol) && !user) {
+      nextErrors.user = t("connectionDialog.validation.userRequired");
     }
 
     if (requiresHostKeyVerification(protocol)) {
@@ -695,6 +706,20 @@ async function saveConnection() {
             @update-field="updateActiveField"
           />
 
+          <RdpConnectionFields
+            v-else-if="isRdp"
+            :form="activeForm"
+            :errors="activeErrors"
+            :filtered-credentials="filteredCredentials"
+            :selected-credential="selectedCredential"
+            @auth-method-change="onAuthMethodChange"
+            @clear-field="clearFieldError"
+            @credential-select="onCredentialSelect"
+            @normalize-port="normalizePort"
+            @port-input="onPortInput"
+            @update-field="updateActiveField"
+          />
+
           <TelnetConnectionFields
             v-else
             :form="activeForm"
@@ -710,7 +735,7 @@ async function saveConnection() {
           />
 
           <ConnectionSessionOptions
-            v-if="!isVnc"
+            v-if="!isVnc && !isRdp"
             :form="activeForm"
             :protocol="activeProtocol"
             :open="sessionOptionsOpen[activeProtocol]"

@@ -288,7 +288,7 @@ export default defineConfig({
     "conn-seg-tabs": "flex gap-[8px]",
     "conn-seg-tab":
       "flex-1 min-h-[38px] flex items-center justify-center gap-[7px] rounded-[8px] border border-border bg-bg-primary px-[12px] py-[7px] text-[0.8571em] font-600 text-text-secondary transition-[background-color,border-color,box-shadow,color] duration-150 hover:border-[color-mix(in_oklch,var(--accent)_36%,var(--border))] hover:text-text-primary focus-visible:border-[color-mix(in_oklch,var(--accent)_36%,var(--border))] focus-visible:text-text-primary focus-visible:outline-none",
-    "conn-protocol-grid": "grid grid-cols-[repeat(4,minmax(0,1fr))] gap-[8px]",
+    "conn-protocol-grid": "grid gap-[8px]",
     "conn-protocol-card":
       "min-h-[40px] flex items-center justify-center gap-[7px] rounded-[8px] border border-border bg-bg-primary text-[0.8571em] font-600 text-text-secondary transition-[background-color,border-color,box-shadow,color] duration-150 hover:bg-bg-tertiary hover:text-text-primary focus-visible:border-accent focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:cursor-default",
     "conn-browse-btn":

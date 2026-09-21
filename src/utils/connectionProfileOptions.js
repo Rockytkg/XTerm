@@ -20,17 +20,25 @@ const VNC_DETAIL_FIELDS = new Map([
   ["vncResizeSession", "resizeSession"],
 ]);
 
+// RDP 会话开关同样落在 details；key 为 ListItem 的 rdp* 字段名。
+const RDP_DETAIL_FIELDS = new Map([
+  ["rdpDomain", "domain"],
+  ["rdpScaleMode", "scaleMode"],
+  ["rdpClipboardSync", "clipboardSync"],
+  ["rdpResizeSession", "resizeSession"],
+]);
+
 export function mergeConnectionProfileOptions(profile, patch) {
   const options = { ...(profile?.options || {}) };
   let details = profile?.details || null;
   for (const [field, value] of Object.entries(patch || {})) {
-    const vncDetailField = VNC_DETAIL_FIELDS.get(field);
-    if (vncDetailField && details && typeof details === "object") {
+    const detailField = VNC_DETAIL_FIELDS.get(field) || RDP_DETAIL_FIELDS.get(field);
+    if (detailField && details && typeof details === "object") {
       details = { ...details };
       if (value === undefined) {
-        delete details[vncDetailField];
+        delete details[detailField];
       } else {
-        details[vncDetailField] = value;
+        details[detailField] = value;
       }
       continue;
     }

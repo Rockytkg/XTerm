@@ -49,6 +49,7 @@ pub enum ConnectionProfileDetails {
     Telnet(ConnectionProfileTelnetDetails),
     Serial(ConnectionProfileSerialDetails),
     Vnc(ConnectionProfileVncDetails),
+    Rdp(ConnectionProfileRdpDetails),
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -88,6 +89,17 @@ pub struct ConnectionProfileVncDetails {
     pub(crate) shared: Option<bool>,
     pub(crate) quality: Option<i64>,
     pub(crate) compression: Option<i64>,
+    pub(crate) scale_mode: Option<String>,
+    pub(crate) clipboard_sync: Option<bool>,
+    pub(crate) resize_session: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionProfileRdpDetails {
+    pub(crate) auth_method: Option<String>,
+    pub(crate) saved_credential_id: Option<String>,
+    pub(crate) domain: Option<String>,
     pub(crate) scale_mode: Option<String>,
     pub(crate) clipboard_sync: Option<bool>,
     pub(crate) resize_session: Option<bool>,
@@ -135,12 +147,20 @@ impl ConnectionProfile {
         }
     }
 
+    pub(crate) fn rdp_details(&self) -> Option<&ConnectionProfileRdpDetails> {
+        match &self.details {
+            ConnectionProfileDetails::Rdp(details) => Some(details),
+            _ => None,
+        }
+    }
+
     pub(crate) fn auth_method(&self) -> Option<&str> {
         match &self.details {
             ConnectionProfileDetails::Ssh(details) => details.auth_method.as_deref(),
             ConnectionProfileDetails::Telnet(details) => details.auth_method.as_deref(),
             ConnectionProfileDetails::Serial(details) => details.auth_method.as_deref(),
             ConnectionProfileDetails::Vnc(details) => details.auth_method.as_deref(),
+            ConnectionProfileDetails::Rdp(details) => details.auth_method.as_deref(),
         }
     }
 
@@ -150,6 +170,7 @@ impl ConnectionProfile {
             ConnectionProfileDetails::Telnet(details) => details.saved_credential_id.as_deref(),
             ConnectionProfileDetails::Serial(details) => details.saved_credential_id.as_deref(),
             ConnectionProfileDetails::Vnc(details) => details.saved_credential_id.as_deref(),
+            ConnectionProfileDetails::Rdp(details) => details.saved_credential_id.as_deref(),
         }
     }
 
@@ -203,6 +224,13 @@ impl ConnectionProfile {
     fn vnc_details_mut(&mut self) -> Option<&mut ConnectionProfileVncDetails> {
         match &mut self.details {
             ConnectionProfileDetails::Vnc(details) => Some(details),
+            _ => None,
+        }
+    }
+
+    fn rdp_details_mut(&mut self) -> Option<&mut ConnectionProfileRdpDetails> {
+        match &mut self.details {
+            ConnectionProfileDetails::Rdp(details) => Some(details),
             _ => None,
         }
     }
@@ -260,6 +288,14 @@ pub struct ConnectionListItem {
     pub vnc_clipboard_sync: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vnc_resize_session: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rdp_domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rdp_scale_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rdp_clipboard_sync: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rdp_resize_session: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -473,7 +509,8 @@ fn update_connection_credential_in_store(
         .ok_or_else(|| format!("connection '{connection_id}' not found"))?;
     if ProtocolKind::from_str(&profile.protocol).is_none() {
         return Err(
-            "only SSH, Telnet, serial, and VNC connections can use saved credentials".to_string(),
+            "only SSH, Telnet, serial, VNC, and RDP connections can use saved credentials"
+                .to_string(),
         );
     }
     match &mut profile.details {
@@ -487,6 +524,9 @@ fn update_connection_credential_in_store(
             details.saved_credential_id = credential_id.map(str::to_string);
         }
         ConnectionProfileDetails::Vnc(details) => {
+            details.saved_credential_id = credential_id.map(str::to_string);
+        }
+        ConnectionProfileDetails::Rdp(details) => {
             details.saved_credential_id = credential_id.map(str::to_string);
         }
     }
@@ -591,6 +631,10 @@ fn clear_protocol_scoped_fields(connection: &mut ConnectionProfile) {
                 details.auth_method = None;
                 details.saved_credential_id = None;
             }
+            ConnectionProfileDetails::Rdp(details) => {
+                details.auth_method = None;
+                details.saved_credential_id = None;
+            }
         }
     }
 
@@ -611,6 +655,15 @@ fn clear_protocol_scoped_fields(connection: &mut ConnectionProfile) {
             details.shared = None;
             details.quality = None;
             details.compression = None;
+            details.scale_mode = None;
+            details.clipboard_sync = None;
+            details.resize_session = None;
+        }
+    }
+
+    if let Some(details) = connection.rdp_details_mut() {
+        if protocol != Some(ProtocolKind::Rdp) {
+            details.domain = None;
             details.scale_mode = None;
             details.clipboard_sync = None;
             details.resize_session = None;
@@ -662,6 +715,9 @@ fn apply_connection_defaults(connection: &mut ConnectionProfile, credential_type
             ConnectionProfileDetails::Vnc(details) => {
                 details.auth_method = Some(credential_type.to_string());
             }
+            ConnectionProfileDetails::Rdp(details) => {
+                details.auth_method = Some(credential_type.to_string());
+            }
         }
     } else if ProtocolKind::from_str(&connection.protocol)
         .is_some_and(|protocol| protocol.requires_password_credential())
@@ -679,6 +735,9 @@ fn apply_connection_defaults(connection: &mut ConnectionProfile, credential_type
             ConnectionProfileDetails::Vnc(details) => {
                 details.auth_method = Some("password".to_string());
             }
+            ConnectionProfileDetails::Rdp(details) => {
+                details.auth_method = Some("password".to_string());
+            }
         }
     }
     if protocol == Some(ProtocolKind::Vnc) {
@@ -691,8 +750,23 @@ fn apply_connection_defaults(connection: &mut ConnectionProfile, credential_type
             details.shared = Some(details.shared.unwrap_or(true));
             details.quality = Some(details.quality.unwrap_or(6).clamp(0, 9));
             details.compression = Some(details.compression.unwrap_or(2).clamp(0, 9));
-            details.scale_mode = Some(normalize_vnc_scale_mode(details.scale_mode.as_deref()));
+            details.scale_mode = Some(normalize_desktop_scale_mode(details.scale_mode.as_deref()));
             details.clipboard_sync = Some(details.clipboard_sync.unwrap_or(true));
+            details.resize_session = Some(details.resize_session.unwrap_or(false));
+            if details.auth_method.is_none() {
+                details.auth_method = Some("password".to_string());
+            }
+        }
+    }
+    if protocol == Some(ProtocolKind::Rdp) {
+        if !matches!(connection.details, ConnectionProfileDetails::Rdp(_)) {
+            connection.details =
+                ConnectionProfileDetails::Rdp(ConnectionProfileRdpDetails::default());
+        }
+        if let Some(details) = connection.rdp_details_mut() {
+            details.scale_mode = Some(normalize_desktop_scale_mode(details.scale_mode.as_deref()));
+            details.clipboard_sync = Some(details.clipboard_sync.unwrap_or(true));
+            // 与前端默认值对齐：动态分辨率默认关。
             details.resize_session = Some(details.resize_session.unwrap_or(false));
             if details.auth_method.is_none() {
                 details.auth_method = Some("password".to_string());
@@ -704,7 +778,8 @@ fn apply_connection_defaults(connection: &mut ConnectionProfile, credential_type
     connection.key_passphrase = None;
 }
 
-fn normalize_vnc_scale_mode(value: Option<&str>) -> String {
+/// 桌面前端（VNC/RDP）共用的缩放模式归一化：fit（默认）/none/clip。
+fn normalize_desktop_scale_mode(value: Option<&str>) -> String {
     match value.map(|raw| raw.trim().to_ascii_lowercase()).as_deref() {
         Some("none") => "none".to_string(),
         Some("clip") => "clip".to_string(),
@@ -747,6 +822,7 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
         stop_bits,
         jump_hosts,
         vnc_options,
+        rdp_options,
     ) = match c.details {
         crate::storage::ConnectionDetails::Ssh(details) => (
             details.auth_method,
@@ -759,10 +835,12 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
             None,
             parse_jump_hosts(details.jump_hosts),
             None,
+            None,
         ),
         crate::storage::ConnectionDetails::Telnet(details) => (
             details.auth_method,
             details.saved_credential_id,
+            None,
             None,
             None,
             None,
@@ -789,6 +867,7 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
             details.stop_bits.and_then(|v| u8::try_from(v).ok()),
             None,
             None,
+            None,
         ),
         crate::storage::ConnectionDetails::Vnc(details) => (
             details.auth_method,
@@ -809,6 +888,25 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
                 details.clipboard_sync,
                 details.resize_session,
             )),
+            None,
+        ),
+        crate::storage::ConnectionDetails::Rdp(details) => (
+            details.auth_method,
+            details.saved_credential_id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some((
+                details.domain,
+                details.scale_mode,
+                details.clipboard_sync,
+                details.resize_session,
+            )),
         ),
     };
     let (
@@ -820,6 +918,8 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
         vnc_clipboard_sync,
         vnc_resize_session,
     ) = vnc_options.unwrap_or_default();
+    let (rdp_domain, rdp_scale_mode, rdp_clipboard_sync, rdp_resize_session) =
+        rdp_options.unwrap_or_default();
 
     ConnectionListItem {
         id,
@@ -851,6 +951,10 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
         vnc_scale_mode,
         vnc_clipboard_sync,
         vnc_resize_session,
+        rdp_domain,
+        rdp_scale_mode,
+        rdp_clipboard_sync,
+        rdp_resize_session,
     }
 }
 
@@ -891,6 +995,15 @@ fn connection_profile_from_stored(id: String, c: StoredConnection) -> Connection
             scale_mode: item.vnc_scale_mode,
             clipboard_sync: item.vnc_clipboard_sync,
             resize_session: item.vnc_resize_session,
+        }),
+        // 必须显式列出 Rdp 臂：落到 `_`（Telnet）会静默丢失 domain/scale 等字段。
+        "rdp" => ConnectionProfileDetails::Rdp(ConnectionProfileRdpDetails {
+            auth_method: item.auth_method,
+            saved_credential_id: item.saved_credential_id,
+            domain: item.rdp_domain,
+            scale_mode: item.rdp_scale_mode,
+            clipboard_sync: item.rdp_clipboard_sync,
+            resize_session: item.rdp_resize_session,
         }),
         _ => ConnectionProfileDetails::Telnet(ConnectionProfileTelnetDetails {
             auth_method: item.auth_method,
@@ -963,6 +1076,18 @@ impl From<&ConnectionProfile> for StoredConnection {
                     scale_mode: vnc.and_then(|details| details.scale_mode.clone()),
                     clipboard_sync: vnc.and_then(|details| details.clipboard_sync),
                     resize_session: vnc.and_then(|details| details.resize_session),
+                })
+            }
+            // 必须显式列出 Rdp 臂：`_` 会静默把 RDP 配置写成 Telnet details。
+            "rdp" => {
+                let rdp = c.rdp_details();
+                crate::storage::ConnectionDetails::Rdp(crate::storage::RdpConnectionDetails {
+                    auth_method: c.auth_method().map(str::to_string),
+                    saved_credential_id: c.saved_credential_id().map(str::to_string),
+                    domain: rdp.and_then(|details| details.domain.clone()),
+                    scale_mode: rdp.and_then(|details| details.scale_mode.clone()),
+                    clipboard_sync: rdp.and_then(|details| details.clipboard_sync),
+                    resize_session: rdp.and_then(|details| details.resize_session),
                 })
             }
             _ => {

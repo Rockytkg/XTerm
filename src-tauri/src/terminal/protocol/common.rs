@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    serial::SerialProtocolDriver, ssh::SshProtocolDriver, telnet::TelnetProtocolDriver,
-    vnc::VncProtocolDriver,
+    rdp::RdpProtocolDriver, serial::SerialProtocolDriver, ssh::SshProtocolDriver,
+    telnet::TelnetProtocolDriver, vnc::VncProtocolDriver,
 };
 
 pub(crate) type DriverFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -59,8 +59,16 @@ static SSH_DRIVER: SshProtocolDriver = SshProtocolDriver;
 static TELNET_DRIVER: TelnetProtocolDriver = TelnetProtocolDriver;
 static SERIAL_DRIVER: SerialProtocolDriver = SerialProtocolDriver;
 static VNC_DRIVER: VncProtocolDriver = VncProtocolDriver;
-static PROTOCOL_DRIVERS: [&dyn ProtocolDriver; 4] =
-    [&SSH_DRIVER, &TELNET_DRIVER, &SERIAL_DRIVER, &VNC_DRIVER];
+// RDP 驱动无论 `rdp` cargo feature 是否开启都注册：feature 关闭时 open 返回
+// rdp_not_supported 错误码，前端可据此提示该构建不含 RDP 支持。
+static RDP_DRIVER: RdpProtocolDriver = RdpProtocolDriver;
+static PROTOCOL_DRIVERS: [&dyn ProtocolDriver; 5] = [
+    &SSH_DRIVER,
+    &TELNET_DRIVER,
+    &SERIAL_DRIVER,
+    &VNC_DRIVER,
+    &RDP_DRIVER,
+];
 
 pub(crate) struct ProtocolRegistry;
 

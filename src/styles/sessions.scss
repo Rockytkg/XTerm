@@ -130,6 +130,11 @@
     color: oklch(56% 0.17 300deg);
   }
 
+  .session-card-status-rdp {
+    background: oklch(93% 0.045 230deg);
+    color: oklch(54% 0.15 230deg);
+  }
+
   .session-card-body {
     flex: 1;
     min-width: 0;

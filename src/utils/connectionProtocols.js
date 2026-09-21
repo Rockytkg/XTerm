@@ -1,11 +1,12 @@
-export const CONNECTION_PROTOCOLS = Object.freeze(["ssh", "telnet", "serial", "vnc"]);
+export const CONNECTION_PROTOCOLS = Object.freeze(["ssh", "telnet", "serial", "vnc", "rdp"]);
 export const CONNECTION_PROTOCOL = Object.freeze({
   SSH: "ssh",
   TELNET: "telnet",
   SERIAL: "serial",
   VNC: "vnc",
+  RDP: "rdp",
 });
-const PASSWORD_ONLY_CREDENTIAL_PROTOCOLS = Object.freeze(["telnet", "serial", "vnc"]);
+const PASSWORD_ONLY_CREDENTIAL_PROTOCOLS = Object.freeze(["telnet", "serial", "vnc", "rdp"]);
 
 function cleanConnectionProtocol(protocol) {
   return String(protocol || "")
@@ -48,6 +49,10 @@ export function isVncProtocol(protocol) {
   return normalizeConnectionProtocol(protocol) === CONNECTION_PROTOCOL.VNC;
 }
 
+export function isRdpProtocol(protocol) {
+  return normalizeConnectionProtocol(protocol) === CONNECTION_PROTOCOL.RDP;
+}
+
 export function protocolDisplayClass(protocol) {
   const normalized = normalizeConnectionProtocol(protocol);
   return {
@@ -55,6 +60,7 @@ export function protocolDisplayClass(protocol) {
     "session-card-status-telnet": normalized === CONNECTION_PROTOCOL.TELNET,
     "session-card-status-ssh": normalized === CONNECTION_PROTOCOL.SSH,
     "session-card-status-vnc": normalized === CONNECTION_PROTOCOL.VNC,
+    "session-card-status-rdp": normalized === CONNECTION_PROTOCOL.RDP,
   };
 }
 

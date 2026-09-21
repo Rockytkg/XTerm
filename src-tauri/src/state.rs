@@ -996,6 +996,10 @@ mod tests {
             rows: None,
             jump_hosts: None,
             vnc_shared: None,
+            rdp_domain: None,
+            rdp_scale_mode: None,
+            rdp_clipboard_sync: None,
+            rdp_resize_session: None,
         }
     }
 

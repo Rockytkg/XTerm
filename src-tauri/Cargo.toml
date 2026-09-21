@@ -72,9 +72,17 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-notification = "2"
 chrono = "0.4.45"
 elevated-command = "1.1.3"
+# RDP 协议栈（IronRDP 纯 Rust 实现）：connector 完成 X.224/MCS/许可/NLA 连接序列，
+# session 驱动会话状态机并输出脏矩形图形更新，graphics/input 负责位图与输入 PDU，
+# displaycontrol 支持动态分辨率，cliprdr 负责文本剪贴板。ironrdp-tls 与 russh 一样
+# 选用 ring 后端，避免引入 aws-lc-rs 的 cmake/NASM 构建依赖。
+ironrdp = { version = "0.17", default-features = false, features = ["core", "pdu", "connector", "session", "graphics", "input", "dvc", "svc", "displaycontrol", "cliprdr"], optional = true }
+ironrdp-tokio = { version = "0.10", default-features = false, optional = true }
+ironrdp-tls = { version = "0.2", features = ["rustls-ring"], optional = true }
 
 [features]
-default = []
+default = ["rdp"]
+rdp = ["dep:ironrdp", "dep:ironrdp-tokio", "dep:ironrdp-tls"]
 mcp-bridge = ["dep:tauri-plugin-mcp-bridge"]
 
 [target.'cfg(windows)'.dependencies]
@@ -107,5 +115,12 @@ strip = true
 # russh 使用本地补丁副本（vendor/russh，补丁内容见其 UPSTREAM.md）：放宽
 # banner / keyboard-interactive / disconnect 文本的 UTF-8 严格校验，兼容发送
 # GBK 等非 UTF-8 文本的旧交换机与服务器。升级 russh 版本时需同步移植补丁。
+#
+# picky / sspi 使用本地补丁副本（vendor/picky、vendor/sspi，补丁内容见各自
+# UPSTREAM.md）：ironrdp-connector 钉住的 picky 7.0.0-rc.25 与 sspi 0.21.x 携带
+# RustCrypto pre-release 依赖 pin，与本仓库的正式版冲突；副本仅放宽/删除这些
+# 声明（picky 与上游 rc.26 源码相同，sspi 的死依赖上游 0.22 已删除），不改任何代码。
 [patch.crates-io]
 russh = { path = "vendor/russh" }
+picky = { path = "vendor/picky" }
+sspi = { path = "vendor/sspi" }

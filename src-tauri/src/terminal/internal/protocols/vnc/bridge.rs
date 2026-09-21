@@ -15,17 +15,11 @@ use bytes::{Buf, Bytes};
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{
-    tungstenite::{
-        handshake::server::{ErrorResponse, Request, Response},
-        http::HeaderValue,
-        Message,
-    },
-    WebSocketStream,
-};
+use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 
-use crate::terminal::internal::core::{
-    SessionTransportRuntime, SessionWorkerEvent, TerminalSize, TransportCommand,
+use crate::terminal::internal::{
+    core::{SessionTransportRuntime, SessionWorkerEvent, TerminalSize, TransportCommand},
+    loopback_bridge::accept_bridge_client,
 };
 
 use super::handshake::ServerHandshake;
@@ -196,44 +190,6 @@ async fn run_bridge_actor(
         }
     }
     let _ = server.shutdown().await;
-}
-
-// ErrorResponse is tungstenite's callback signature; boxing it is not an option.
-#[allow(clippy::result_large_err)]
-async fn accept_bridge_client(
-    stream: TcpStream,
-    token: &str,
-) -> Result<WebSocketStream<TcpStream>, String> {
-    let _ = stream.set_nodelay(true);
-    let expected = format!("token={token}");
-    let callback = |request: &Request, mut response: Response| -> Result<Response, ErrorResponse> {
-        let query = request.uri().query().unwrap_or("");
-        if !query.split('&').any(|part| part == expected) {
-            return Err(http_forbidden());
-        }
-        let offers_binary = request
-            .headers()
-            .get("sec-websocket-protocol")
-            .and_then(|value| value.to_str().ok())
-            .map(|value| value.split(',').any(|entry| entry.trim() == "binary"))
-            .unwrap_or(false);
-        if offers_binary {
-            response
-                .headers_mut()
-                .append("Sec-WebSocket-Protocol", HeaderValue::from_static("binary"));
-        }
-        Ok(response)
-    };
-    tokio_tungstenite::accept_hdr_async(stream, callback)
-        .await
-        .map_err(|error| format!("websocket handshake failed: {error}"))
-}
-
-fn http_forbidden() -> ErrorResponse {
-    tokio_tungstenite::tungstenite::http::Response::builder()
-        .status(403)
-        .body(Some("forbidden".to_string()))
-        .expect("static 403 response is valid")
 }
 
 /// Sends the replayed handshake to a freshly connected frontend client and

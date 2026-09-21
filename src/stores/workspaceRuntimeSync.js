@@ -18,4 +18,5 @@ export function applyOpenResponseMetadata({
 
   sessionRegistry?.setConnectionCapabilities(sessionId, response?.capabilities || null);
   sessionRegistry?.setSessionVncBridge(sessionId, response?.vncBridge || null);
+  sessionRegistry?.setSessionRdpBridge(sessionId, response?.rdpBridge || null);
 }

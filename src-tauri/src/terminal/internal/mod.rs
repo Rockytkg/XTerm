@@ -2,7 +2,12 @@ mod codec;
 pub(crate) mod commands;
 pub(crate) mod core;
 mod delivery;
+#[path = "protocols/loopback_bridge.rs"]
+pub(crate) mod loopback_bridge;
 mod osc;
+#[cfg(feature = "rdp")]
+#[path = "protocols/rdp/mod.rs"]
+mod rdp;
 #[path = "protocols/serial/mod.rs"]
 mod serial;
 #[path = "protocols/serial/transport.rs"]
@@ -39,10 +44,12 @@ mod vnc;
 
 pub(crate) use core::{
     resolve_connection_request, ConnectionError, ConnectionOpenRequest, ConnectionOpenResult,
-    ConnectionResult, ResolvedConnection, SerialProbeResult, SerialRedetectResult,
+    ConnectionResult, RdpBridgeInfo, ResolvedConnection, SerialProbeResult, SerialRedetectResult,
     SessionCapabilityCommand, SessionCommand, SshRuntimeMetricsRequest, TerminalSession,
     VncBridgeInfo,
 };
+#[cfg(feature = "rdp")]
+pub(crate) use rdp::RdpConnectionFactory;
 pub(crate) use serial::SerialConnectionFactory;
 pub(crate) use sftp::cancel_sftp_transfers_for_session;
 pub(crate) use ssh::{discard_pending_ssh_connection, SshConnectionFactory};

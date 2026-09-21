@@ -23,6 +23,7 @@ function selectProtocol(protocol) {
       :model-value="modelValue"
       type="single"
       class="conn-protocol-grid"
+      :style="{ gridTemplateColumns: `repeat(${protocols.length}, minmax(0, 1fr))` }"
       @update:model-value="selectProtocol"
     >
       <ToggleGroupItem
