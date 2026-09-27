@@ -56,7 +56,7 @@ md5 = "0.8.0"
 base64 = "0.23"
 chardetng = "1"
 encoding_rs = "0.8"
-infer = "0.19"
+infer = "0.22"
 content_inspector = "0.2"
 font-kit = "0.14"
 sanitise-file-name = "1.0.0"
@@ -66,7 +66,6 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["h
 futures-util = "0.3"
 des = "0.9"
 tauri-plugin-dialog = "2"
-tauri-plugin-mcp-bridge = { version = "0.13.0", optional = true }
 tauri-plugin-window-state = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-notification = "2"
@@ -83,14 +82,13 @@ ironrdp-tls = { version = "0.2", features = ["rustls-ring"], optional = true }
 [features]
 default = ["rdp"]
 rdp = ["dep:ironrdp", "dep:ironrdp-tokio", "dep:ironrdp-tls"]
-mcp-bridge = ["dep:tauri-plugin-mcp-bridge"]
 
 [target.'cfg(windows)'.dependencies]
-# tauri 2.x（wry 0.55）的 with_webview 返回 webview2-com 0.38 / windows-core 0.61 的
+# tauri 2.12（wry 0.57）的 with_webview 返回 webview2-com 0.39 / windows-core 0.62 的
 # COM 类型，直接依赖必须与之一致才能转换接口；windows_firewall 0.8 内部用的
 # windows 0.62 与这些类型无交叉，可独立升级。
-webview2-com = "0.38.2"
-windows-core = "0.61.2"
+webview2-com = "0.39.1"
+windows-core = "0.62.2"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 windows_firewall = "0.8.3"

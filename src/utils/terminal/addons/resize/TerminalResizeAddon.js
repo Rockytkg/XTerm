@@ -19,9 +19,11 @@ function readMountContentSize(mount) {
 
 function proposeGeometry(terminal, mount) {
   if (!terminal?.element) return undefined;
-  const renderDimensions = terminal._core?._renderService?.dimensions;
-  const cellWidth = renderDimensions?.css?.cell?.width ?? 0;
-  const cellHeight = renderDimensions?.css?.cell?.height ?? 0;
+  // Xterm 6 exposes renderer dimensions as a supported public API. Reading
+  // `_core._renderService` bypassed the library contract and broke whenever
+  // the renderer implementation changed.
+  const cellWidth = terminal.dimensions?.css?.cell?.width ?? 0;
+  const cellHeight = terminal.dimensions?.css?.cell?.height ?? 0;
   if (cellWidth === 0 || cellHeight === 0) return undefined;
 
   const mountSize = readMountContentSize(mount);

@@ -132,12 +132,7 @@ const terminalMount = ref(null);
 let terminal;
 let searchAddon;
 let searchResultsDisposable;
-let progressAddon;
-let imageAddon;
 let clipboardAddon;
-let oscNotificationAddon;
-let webLinksAddon;
-let unicode11Addon;
 let trzszAddon;
 let highlightAddon;
 let disposed = false;
@@ -153,8 +148,9 @@ let unregisterScriptBridge = null;
 const frameIntervalSampler = createFrameIntervalSampler();
 const terminalOutputByteDecoder = createTerminalOutputByteDecoder();
 
-function refreshTerminalViewport() {
+function refreshTerminalViewport({ clearTextureAtlas = false } = {}) {
   if (!terminal) return;
+  if (clearTextureAtlas) terminal.clearTextureAtlas?.();
   terminal.refresh(0, Math.max(0, terminal.rows - 1));
 }
 
@@ -294,6 +290,7 @@ const terminalOptionalAddons = useTerminalOptionalAddons({
     generation: setupGeneration,
     isForegroundRuntime: isForegroundRuntime(),
     terminalWebgl: props.terminalWebgl,
+    terminalCustomGlyphs: props.terminalCustomGlyphs,
   }),
   loadAddon: (label, createAddon, assignAddon) =>
     loadTerminalAddon(label, createAddon, assignAddon),
@@ -509,24 +506,13 @@ const handleTerminalWheel = createTerminalWheelZoomHandler({
 function disposeTerminalAddons() {
   searchResultsDisposable?.dispose();
   searchResultsDisposable = null;
-  searchAddon?.dispose?.();
   searchAddon = null;
-  progressAddon?.dispose?.();
-  progressAddon = null;
-  imageAddon?.dispose?.();
-  imageAddon = null;
-  clipboardAddon?.dispose?.();
   clipboardAddon = null;
-  oscNotificationAddon?.dispose?.();
-  oscNotificationAddon = null;
-  webLinksAddon?.dispose?.();
-  webLinksAddon = null;
-  unicode11Addon?.dispose?.();
-  unicode11Addon = null;
-  trzszAddon?.dispose?.();
   trzszAddon = null;
-  highlightAddon?.dispose?.();
   highlightAddon = null;
+  // Terminal.dispose() owns disposal of every loaded addon. This function is
+  // only responsible for external subscriptions, async addon jobs, and local
+  // references that must not survive the terminal instance.
   terminalOptionalAddons.disposeOptionalAddons();
 }
 
@@ -566,50 +552,40 @@ function installStableTerminalAddons() {
       setSearchResults(result);
     });
   }
-  progressAddon = loadTerminalAddon(
+  loadTerminalAddon(
     "progress",
     () => new ProgressAddon(),
-    (addon) => {
-      progressAddon = addon;
-    },
+    () => {},
   );
-  imageAddon = loadTerminalAddon(
+  loadTerminalAddon(
     "image",
     () =>
       new ImageAddon({
         enableSizeReports: true,
       }),
-    (addon) => {
-      imageAddon = addon;
-    },
+    () => {},
   );
-  oscNotificationAddon = loadTerminalAddon(
+  loadTerminalAddon(
     "osc-notifications",
     () => new OscNotificationAddon(),
-    (addon) => {
-      oscNotificationAddon = addon;
-    },
+    () => {},
   );
-  unicode11Addon = loadTerminalAddon(
+  loadTerminalAddon(
     "unicode11",
     () => new Unicode11Addon(),
-    (addon) => {
-      unicode11Addon = addon;
-    },
+    () => {},
   );
   if (terminal.unicode) {
     terminal.unicode.activeVersion = "11";
   }
-  webLinksAddon = loadTerminalAddon(
+  loadTerminalAddon(
     "web-links",
     () =>
       new WebLinksAddon(async (event, uri) => {
         if (!isPrimaryModifier(event)) return;
         await openExternalUrl(uri);
       }),
-    (addon) => {
-      webLinksAddon = addon;
-    },
+    () => {},
   );
   loadTerminalAddon(
     "output",
@@ -1021,14 +997,11 @@ onBeforeUnmount(() => {
   disposed = true;
   unregisterScriptBridge?.();
   unregisterScriptBridge = null;
-  scriptBridgeAddon.dispose();
   backgroundSuspender.dispose();
   frameIntervalSampler.stop();
   terminalDragDrop.disposeDragDropListener();
   void sessionRuntimeController.deactivate();
   terminalOutputAddon.flush();
-  terminalOutputAddon.dispose();
-  terminalResizeAddon.dispose();
   terminalSessionRuntime?.dispose();
   terminalMount.value?.removeEventListener("wheel", handleTerminalWheel, { capture: true });
   disposeTerminalAddons();

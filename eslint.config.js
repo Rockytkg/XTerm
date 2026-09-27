@@ -4,7 +4,13 @@ import globals from "globals";
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**", "src-tauri/target/**", "src-tauri/gen/**"],
+    ignores: [
+      "dist/**",
+      "node_modules/**",
+      "src-tauri/target/**",
+      "src-tauri/gen/**",
+      "src-tauri/vendor/**",
+    ],
   },
   js.configs.recommended,
   ...vue.configs["flat/recommended"],

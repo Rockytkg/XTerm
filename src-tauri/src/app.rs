@@ -573,13 +573,6 @@ fn show_desktop_error_dialog(text: &str) {
 fn show_desktop_error_dialog(_text: &str) {}
 
 fn configure_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    #[cfg(all(debug_assertions, feature = "mcp-bridge"))]
-    let builder = builder.plugin(
-        tauri_plugin_mcp_bridge::Builder::new()
-            .bind_address("127.0.0.1")
-            .build(),
-    );
-
     builder
         .on_window_event(|window, event| {
             if window.label() != MAIN_WINDOW_LABEL {

@@ -9,6 +9,11 @@ export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
   let ligaturesLoadHandle = null;
   let ligaturesLoadPromise = null;
 
+  function refreshTerminal(terminal) {
+    if (!terminal) return;
+    terminal.refresh(0, Math.max(0, terminal.rows - 1));
+  }
+
   function disposeOptionalAddons() {
     cancelLigaturesLoad();
     cancelWebglDispose();
@@ -64,6 +69,11 @@ export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
           ligaturesAddon = addon;
         },
       );
+      // Xterm 6 exposes the renderer-level invalidation API. Rebuilding the
+      // addon was required by older releases, but it races with addon loading
+      // and can leave a stale canvas frame visible during the hand-off.
+      current.terminal.clearTextureAtlas?.();
+      refreshTerminal(current.terminal);
     })();
 
     try {
@@ -122,13 +132,21 @@ export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
         loadSkipped = true;
         return;
       }
-      const addon = new WebglAddon();
+      const addon = new WebglAddon({
+        customGlyphs: current.terminalCustomGlyphs,
+      });
       addon.onContextLoss(() => {
         logger.warn("WebGL context lost, falling back to canvas renderer");
-        if (webglAddon === addon) disposeWebglAddon();
+        if (webglAddon === addon) {
+          disposeWebglAddon();
+          refreshTerminal(current.terminal);
+        }
       });
       current.terminal.loadAddon(addon);
       webglAddon = addon;
+      // WebGL is loaded after Terminal.open(). Rebuild the complete viewport so
+      // the new renderer does not inherit a stale canvas/atlas render state.
+      refreshTerminal(current.terminal);
     })();
 
     try {

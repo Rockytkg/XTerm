@@ -72,7 +72,7 @@ export function registerTerminalOptionWatchers({
       if (!terminal) return;
       terminal.options.theme = getTheme();
       if (props.visible) {
-        refreshTerminalViewport();
+        refreshTerminalViewport({ clearTextureAtlas: true });
       }
     },
   );
@@ -90,6 +90,7 @@ export function registerTerminalOptionWatchers({
       );
       terminal.options.fontFamily = terminalFontFamily(fontFamily);
       terminal.options.lineHeight = normalizeNumberOption(lineHeight, 1, 1, 2);
+      terminal.clearTextureAtlas?.();
       refitTerminalAfterFontMetricsChange();
     },
   );
@@ -124,7 +125,9 @@ export function registerTerminalOptionWatchers({
         },
       );
       terminal.options = options;
-      if (shouldRefresh && props.visible) refreshTerminalViewport();
+      if (shouldRefresh && props.visible) {
+        refreshTerminalViewport({ clearTextureAtlas: true });
+      }
     },
   );
 
