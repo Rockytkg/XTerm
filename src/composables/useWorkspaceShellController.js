@@ -20,6 +20,7 @@ import { createLogger } from "../utils/logger";
 import { runViewTransition } from "../utils/motion";
 import { connectionCan } from "../utils/connectionCapabilities";
 import { openScriptRunPicker } from "../services/scripting/scriptRunPicker";
+import { focusTerminal } from "../services/scripting/bridges";
 
 const RIGHT_SIDEBAR_MIN_WIDTH = 280;
 const RIGHT_SIDEBAR_MAX_WIDTH = 640;
@@ -274,9 +275,19 @@ export function useWorkspaceShellController({
     workspaceUi.requestTerminalSearch();
   }
 
+  function restoreTerminalFocus(sessionId) {
+    // 只有原来的会话仍是当前 shell 时才恢复焦点；异步动作期间用户可能已经
+    // 切换标签，此时不能把焦点从新会话抢回旧终端。
+    if (!sessionId || activeConnection.value !== sessionId || activeTab.value !== "shell") {
+      return false;
+    }
+    return focusTerminal(sessionId);
+  }
+
   function redetectActiveSerialBaud() {
     // 已有待确认的检测：再次触发会覆盖 pending 记录，使旧 loading toast 悬挂到兜底超时。
     if (pendingSerialRedetect.value) return;
+    const sessionId = activeConnectionInfo.value?.id || activeConnection.value;
     const connectionId = activeConnectionInfo.value?.connectionId || activeConnection.value;
     const started = reconnectSerialAutoBaud(connectionId);
     if (!started) {
@@ -290,11 +301,16 @@ export function useWorkspaceShellController({
       message: t("notifications.serialBaudDetectingDesc"),
     });
     pendingSerialRedetect.value = { connectionId, toastId };
+
+    // 状态栏按钮会抢走焦点；通知渲染和 pending 状态更新完成后，焦点最终交还
+    // 给点击时捕获的终端，避免异步检测期间切换会话后误聚焦另一个终端。
+    restoreTerminalFocus(sessionId);
   }
 
   async function toggleActiveSessionRecording() {
     if (!isShellTab.value) return;
-    const connectionId = activeConnection.value;
+    const sessionId = activeConnection.value;
+    const connectionId = sessionId;
     if (!connectionId) return;
 
     const wasRecording = !!sessionRecordings.value.get(connectionId)?.active;
@@ -317,6 +333,10 @@ export function useWorkspaceShellController({
         title: t("notifications.sessionRecordingFailed"),
         message: String(error),
       });
+    } finally {
+      // 启动录制可能打开原生保存对话框；必须等整个异步动作结束后再恢复，
+      // 否则焦点会在文件选择器关闭时重新落回工具栏按钮。
+      restoreTerminalFocus(sessionId);
     }
   }
 

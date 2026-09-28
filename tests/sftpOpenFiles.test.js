@@ -25,14 +25,23 @@ function fileEntry(name) {
   return { name, path: `/home/${name}`, size: 5, kind: "file" };
 }
 
-test("openPreview 完成加载并生成预览 Blob", async () => {
+test("openPreview 对已知文本直接打开编辑器", async () => {
   const api = createApi();
   await api.openPreview([fileEntry("a.txt")]);
   const file = api.openFile.value;
-  assert.equal(file.mode, "preview");
+  assert.equal(file.mode, "edit");
   assert.equal(file.loading, false);
   assert.equal(file.error, "");
-  assert.ok(file.blob instanceof Blob);
+  assert.equal(file.content, "hello text");
+});
+
+test("openPreview 通过内容嗅探识别无扩展名文本并直接打开编辑器", async () => {
+  const api = createApi();
+  await api.openPreview([fileEntry("README")]);
+  const file = api.openFile.value;
+  assert.equal(file.mode, "edit");
+  assert.equal(file.blob, null);
+  assert.equal(file.content, "hello text");
 });
 
 test("openEditor 完成加载并写入文本内容", async () => {
@@ -76,8 +85,9 @@ test("saveEditor 保存成功并更新已保存内容", async () => {
 
 test("convertToEdit 预览转编辑加载文本内容", async () => {
   const api = createApi();
-  await api.openPreview([fileEntry("b.txt")]);
+  await api.openPreview([fileEntry("b.png")]);
   assert.equal(api.openFile.value.mode, "preview");
+  api.openFile.value.editable = true;
   assert.equal(await api.convertToEdit(), true);
   const file = api.openFile.value;
   assert.equal(file.mode, "edit");

@@ -115,6 +115,11 @@ export function resolveSniffedPreview(name, size, sniffedMime) {
   const bytes = Number(size);
   const withinEditLimit = !(Number.isFinite(bytes) && bytes > PREVIEW_TEXT_MAX_BYTES);
   const mime = typeof sniffedMime === "string" && sniffedMime ? sniffedMime : null;
+  // 具体的 text/* 都是文本内容，应进入 CodeMirror，而不是交给文档预览器。
+  // text/plain 仍在下方作为弱信号处理，避免覆盖可靠的扩展名/魔数判断。
+  if (mime?.startsWith("text/") && mime !== "text/plain") {
+    return { mime, editable: withinEditLimit };
+  }
   if (mime && mime !== "text/plain") {
     return { mime, editable: false };
   }

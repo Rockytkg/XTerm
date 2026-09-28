@@ -9,7 +9,7 @@ import { useQuickButtons } from "../../composables/useQuickButtons";
 import { expandTerminalEscapes, splitTerminalSendContent } from "../../utils/terminalEscapes";
 import QuickButtonDialog from "../../components/QuickButtonDialog.vue";
 import ConfirmDialog from "../../components/ConfirmDialog.vue";
-import { getScriptBridge } from "../../services/scripting/bridges";
+import { focusTerminal, getScriptBridge } from "../../services/scripting/bridges";
 import { useScriptsStore } from "../../stores/scriptsStore";
 import { useScriptExecution } from "../../composables/useScriptExecution";
 import { openContextMenu } from "../../services/contextMenu";
@@ -146,7 +146,7 @@ function runButton(button) {
     if (script) void runScriptOnActiveSession(script);
   } else void sendButtonContent(sessionId, button.value);
   // 点击后焦点还在按钮上，交还给终端（脚本可能弹交互对话框，对话框会自行抢焦点）。
-  getScriptBridge(sessionId)?.focus?.();
+  focusTerminal(sessionId);
 }
 </script>
 

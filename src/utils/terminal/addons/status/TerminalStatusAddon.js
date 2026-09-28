@@ -61,6 +61,7 @@ export class TerminalStatusAddon {
     getFailureLabel,
     getFailureDetail,
     getStatusDetail,
+    getDetectedBaudRate,
     queueWrite,
     t,
   }) {
@@ -70,6 +71,7 @@ export class TerminalStatusAddon {
       _getFailureLabel: getFailureLabel,
       _getFailureDetail: getFailureDetail,
       _getStatusDetail: getStatusDetail,
+      _getDetectedBaudRate: getDetectedBaudRate,
       _queueWrite: queueWrite,
       _t: t,
       _terminal: null,
@@ -137,7 +139,16 @@ export class TerminalStatusAddon {
         title: isSerialProtocol(connection.protocol)
           ? this._t("terminal.serialConnectionOpened")
           : this._t("terminal.connectionConnected"),
-        lines: [],
+        lines:
+          isSerialProtocol(connection.protocol) &&
+          isAutoValue(connection.baudRate) &&
+          Number(this._getDetectedBaudRate()) > 0
+            ? [
+                this._t("terminal.serialAutoBaudDetected", {
+                  baudRate: this._getDetectedBaudRate() || "",
+                }),
+              ]
+            : [],
         titleColor: palette.success,
         lineColor: palette.hint,
         presentation: STATUS_PRESENTATION.LIFECYCLE,

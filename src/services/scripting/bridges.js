@@ -24,6 +24,24 @@ export function getScriptBridge(frontendSessionId) {
   return frontendSessionId ? scriptBridges.get(frontendSessionId) || null : null;
 }
 
+// 终端外部工具触发动作后统一通过桥恢复焦点，避免各个 UI 组件直接依赖
+// ScriptBridgeAddon 的具体实现。焦点恢复是 best-effort：会话可能刚好被关闭，
+// 此时不应让一个 UI 辅助动作抛出异常。
+export function focusTerminal(frontendSessionId) {
+  const bridge = getScriptBridge(frontendSessionId);
+  if (typeof bridge?.focus !== "function") return false;
+  try {
+    bridge.focus();
+    return true;
+  } catch (error) {
+    bridgeLogger.debug("terminal.focus.failed", {
+      frontendSessionId,
+      error,
+    });
+    return false;
+  }
+}
+
 export function publishTerminalOutput(frontendSessionId, data) {
   if (!frontendSessionId || !data) return;
   try {

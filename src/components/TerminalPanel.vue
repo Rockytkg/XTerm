@@ -144,6 +144,8 @@ let sessionRuntimeController;
 let terminalSessionRuntime;
 let preserveViewportForNextBackendSession = false;
 let terminalPayloadQueue = Promise.resolve();
+let terminalInputQueue = Promise.resolve();
+let serialBaudPresentation = { sessionId: "", promise: Promise.resolve(), resolve: null };
 let unregisterScriptBridge = null;
 const frameIntervalSampler = createFrameIntervalSampler();
 const terminalOutputByteDecoder = createTerminalOutputByteDecoder();
@@ -263,6 +265,7 @@ const {
   searchResultLabel,
   searchTerm,
   setSearchResults,
+  syncSearchOpenRequest,
 } = useTerminalSearchPanel({
   props,
   t,
@@ -346,11 +349,19 @@ function rememberTerminalOffset(endOffset) {
 }
 
 function queueBackendInput(data) {
-  sessionRuntimeController.queueText(data);
+  queueTerminalInput(() => sessionRuntimeController.queueText(data));
 }
 
 function queueBackendBytes(dataBase64) {
-  sessionRuntimeController.queueBytes(dataBase64);
+  queueTerminalInput(() => sessionRuntimeController.queueBytes(dataBase64));
+}
+
+function queueTerminalInput(send) {
+  terminalInputQueue = terminalInputQueue
+    .catch((error) => logger.error("terminal.input.queue.failed", error))
+    .then(() => waitForSerialBaudPresentation())
+    .then(send)
+    .catch((error) => logger.error("terminal.input.queue.failed", error));
 }
 
 function currentTerminalLineText() {
@@ -427,6 +438,7 @@ const terminalStatusAddon = new TerminalStatusAddon({
   getFailureLabel: () => connectionFailureLabel.value,
   getFailureDetail: () => connectionFailureDetail.value,
   getStatusDetail: () => connectionStatusDetail.value,
+  getDetectedBaudRate: () => props.connectionState?.detectedBaudRate,
   queueWrite: (...args) => terminalOutputAddon.queue(...args),
   t,
 });
@@ -667,6 +679,7 @@ function setupTerminal() {
 
   const generation = ++setupGeneration;
   morePromptCleanup.reset();
+  resetSearchState();
   void sessionRuntimeController.deactivate();
   terminalMount.value?.removeEventListener("wheel", handleTerminalWheel, { capture: true });
   terminal?.dispose();
@@ -686,6 +699,7 @@ function setupTerminal() {
   terminal = new Terminal(createXtermOptions(props, isForegroundRuntime()));
   installStableTerminalAddons();
   terminal.open(terminalMount.value);
+  syncSearchOpenRequest();
   terminalOptionalAddons.schedulePostOpenTerminalAddons(generation);
   terminalMount.value.addEventListener("wheel", handleTerminalWheel, {
     passive: false,
@@ -875,6 +889,7 @@ watch(
 watch(
   () => props.sessionId,
   (sessionId, previousSessionId) => {
+    if (sessionId !== previousSessionId) resetSearchState();
     void sessionRuntimeController.deactivate();
     resetTerminalOutputCursor();
     if (!sessionId) {
@@ -900,13 +915,23 @@ watch(
   () => [
     props.connectionState?.status,
     props.connectionState?.phase,
+    props.connectionState?.detectedBaudRate,
     props.connectionState?.statusDetail,
     props.connectionState?.error?.code,
     props.connectionState?.error?.message,
     props.connectionState?.error?.detail,
   ],
   () => {
+    if (props.connectionState?.status === "connecting") {
+      serialBaudPresentation = { sessionId: "", promise: Promise.resolve(), resolve: null };
+    }
     replayConnectionStatus();
+    if (["failed", "closed"].includes(props.connectionState?.status)) {
+      serialBaudPresentation.resolve?.();
+      serialBaudPresentation.resolve = null;
+    } else {
+      void waitForSerialBaudPresentation();
+    }
   },
   { immediate: true },
 );
@@ -919,6 +944,7 @@ function enqueueTerminalPayload(payload) {
 
 async function handleTerminalData(payload) {
   if (!payload?.kind || !terminal) return;
+  await waitForSerialBaudPresentation();
   const payloadState = terminalOutputPayloadState();
   const decision = classifyTerminalOutputPayload(payload, payloadState);
   if (decision.kind === "ignore") return;
@@ -951,6 +977,44 @@ async function handleTerminalData(payload) {
   }
   rememberTerminalOffset(normalized.endOffset);
   renderedOffsetReporter.noteConsumed(data.length, normalized.endOffset);
+}
+
+function waitForSerialBaudPresentation() {
+  const connection = props.activeConnection;
+  if (
+    !connectionCan(connection, "serialBaudDetection") ||
+    String(connection.baudRate).toLowerCase() !== "auto"
+  ) {
+    return Promise.resolve();
+  }
+
+  const sessionId = props.sessionId || connection.id || "";
+  if (serialBaudPresentation.sessionId !== sessionId) {
+    let resolve;
+    const promise = new Promise((done) => {
+      resolve = done;
+    });
+    serialBaudPresentation = { sessionId, promise, resolve };
+  }
+
+  const baudRate = Number(props.connectionState?.detectedBaudRate);
+  if (
+    baudRate > 0 &&
+    props.connectionState?.status === "connected" &&
+    serialBaudPresentation.resolve
+  ) {
+    terminalStatusAddon.write("connected");
+    const resolve = serialBaudPresentation.resolve;
+    serialBaudPresentation.resolve = null;
+    void terminalOutputAddon
+      .waitForFlush()
+      .then(resolve)
+      .catch((error) => {
+        logger.error("terminal.serial_baud_status.write_failed", error);
+        resolve();
+      });
+  }
+  return serialBaudPresentation.promise;
 }
 
 function syncTerminalRuntimeResources() {

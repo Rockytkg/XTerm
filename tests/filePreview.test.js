@@ -141,6 +141,17 @@ test("resolveSniffedPreview prefers magic-sniffed mime over extension mapping", 
   });
 });
 
+test("resolveSniffedPreview treats concrete text MIME types as editable", () => {
+  assert.deepEqual(resolveSniffedPreview("notes.txt", 100, "text/html"), {
+    mime: "text/html",
+    editable: true,
+  });
+  assert.deepEqual(resolveSniffedPreview("unknown", 100, "text/xml"), {
+    mime: "text/xml",
+    editable: true,
+  });
+});
+
 test("resolveSniffedPreview keeps text/plain from overriding the extension", () => {
   // text/plain 只是"是文本"的弱信号：.md 仍按扩展名匹配，保住 markdown 渲染与编辑判定
   assert.deepEqual(resolveSniffedPreview("notes.md", 100, "text/plain"), {

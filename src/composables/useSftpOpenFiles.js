@@ -103,6 +103,23 @@ export function useSftpOpenFiles({
       // 类型判定以内容为准：魔数嗅探命中具体类型时 mime/editable 均以嗅探结果为准
       // （覆盖扩展名映射与"转编辑"入口）；否则维持扩展名判定并吸收无扩展名的嗅探结果
       const sniffed = resolveSniffedPreview(tab.name, meta.size, stat?.mime);
+      if (sniffed.editable) {
+        const { content, stat: textStat } = await loadTextContent(tab.path, session);
+        if (!isCurrent(tab, session)) return;
+        patchTab(tab, {
+          ...statPatch(textStat, meta),
+          mode: "edit",
+          content,
+          savedContent: content,
+          blob: null,
+          mime: sniffed.mime,
+          editable: true,
+          tooLarge: false,
+          loading: false,
+          error: "",
+        });
+        return;
+      }
       const bytes = await readRemoteSftpFileBytes(
         session.connectionId,
         session.sessionId,
@@ -156,6 +173,11 @@ export function useSftpOpenFiles({
 
     // 多选传入时逐个替换，最后一个生效
     for (const entry of files) {
+      const classification = classifySftpPreview(entry);
+      if (classification.editable && !classification.tooLarge) {
+        await openEditor(entry);
+        continue;
+      }
       const tab = await replaceOpenFile(entry, "preview", session);
       if (!tab) return;
       await loadPreviewTab(tab, session);

@@ -36,7 +36,7 @@ function updateOpen(value) {
 function handleInput(event) {
   const value = event.target.value;
   emit("update:term", value);
-  if (value.trim()) {
+  if (value) {
     debouncedRunSearch();
   } else {
     runNow(false);
@@ -49,31 +49,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <PopoverRoot
-    :open="true"
-    @update:open="updateOpen"
-  >
+  <PopoverRoot :open="true" @update:open="updateOpen">
     <PopoverAnchor as-child>
       <span class="terminal-search-anchor" />
     </PopoverAnchor>
-    <PopoverContent
-      as-child
-      side="bottom"
-      align="end"
-      :side-offset="0"
-      :collision-padding="10"
-    >
-      <form
-        class="terminal-search-popover"
-        role="search"
-        @submit.prevent="run(false)"
-      >
+    <PopoverContent as-child side="bottom" align="end" :side-offset="0" :collision-padding="10">
+      <form class="terminal-search-popover" role="search" @submit.prevent="runNow(false)">
         <div class="terminal-search-input-wrap">
-          <Search
-            :size="14"
-            stroke-width="1.9"
-            class="terminal-search-icon"
-          />
+          <Search :size="14" stroke-width="1.9" class="terminal-search-icon" />
           <input
             :value="props.term"
             class="terminal-search-input"
@@ -81,18 +64,12 @@ onBeforeUnmount(() => {
             autofocus
             @input="handleInput"
             @keydown.enter.prevent.stop="runNow($event.shiftKey)"
-          >
+          />
         </div>
-        <span
-          class="terminal-search-count"
-          :class="{ 'terminal-search-count-empty': isEmpty }"
-        >
+        <span class="terminal-search-count" :class="{ 'terminal-search-count-empty': isEmpty }">
           {{ resultLabel }}
         </span>
-        <div
-          class="terminal-search-actions"
-          :aria-label="t('terminal.searchActions')"
-        >
+        <div class="terminal-search-actions" :aria-label="t('terminal.searchActions')">
           <button
             type="button"
             class="terminal-search-button"
@@ -100,10 +77,7 @@ onBeforeUnmount(() => {
             :disabled="!props.term"
             @click="runNow(true)"
           >
-            <ChevronUp
-              :size="14"
-              stroke-width="2"
-            />
+            <ChevronUp :size="14" stroke-width="2" />
           </button>
           <button
             type="button"
@@ -112,10 +86,7 @@ onBeforeUnmount(() => {
             :disabled="!props.term"
             @click="runNow(false)"
           >
-            <ChevronDown
-              :size="14"
-              stroke-width="2"
-            />
+            <ChevronDown :size="14" stroke-width="2" />
           </button>
           <button
             type="button"
@@ -123,10 +94,7 @@ onBeforeUnmount(() => {
             :aria-label="t('terminal.searchClose')"
             @click="closeSearch"
           >
-            <X
-              :size="14"
-              stroke-width="2"
-            />
+            <X :size="14" stroke-width="2" />
           </button>
         </div>
       </form>

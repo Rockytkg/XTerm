@@ -75,6 +75,26 @@ test("released connection progress can be shown by a later attempt", () => {
   assert.equal(writes[2].includes("terminal.connectionConnectingSsh"), true);
 });
 
+test("connected serial auto-baud status shows the detected baud rate", () => {
+  const writes = [];
+  const addon = new TerminalStatusAddon({
+    getConnection: () => ({ protocol: "serial", baudRate: "auto" }),
+    getDetectedBaudRate: () => 115200,
+    getFailureDetail: () => "",
+    getFailureLabel: () => "",
+    getPalette: () => ({ success: "#00ff00", hint: "#ffffff" }),
+    getStatusDetail: () => "",
+    queueWrite: (data) => writes.push(data),
+    t: (key, args = {}) =>
+      key === "terminal.serialAutoBaudDetected" ? `using ${args.baudRate}` : key,
+  });
+  addon.activate({});
+
+  addon.write("connected");
+
+  assert.match(writes[0], /using 115200/);
+});
+
 test("an early Telnet negotiation failure replaces the tracked connection progress", () => {
   const { addon, writes } = createStatusAddon(0, "telnet");
 
