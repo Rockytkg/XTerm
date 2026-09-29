@@ -424,7 +424,7 @@ pub fn run() {
                 .timezone_strategy(TimezoneStrategy::UseLocal)
                 .build(),
         )
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(crate::window_state::plugin())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -581,6 +581,7 @@ fn configure_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
 
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if APP_SHUTDOWN_STARTED.swap(true, Ordering::SeqCst) {
+                    api.prevent_close();
                     return;
                 }
                 api.prevent_close();

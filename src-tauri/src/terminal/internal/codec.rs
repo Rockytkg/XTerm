@@ -959,14 +959,18 @@ pub(super) fn analyze_serial_sample(sample: &[u8], encoding: Option<&str>) -> Se
 
     let prompt_evidence = looks_like_serial_prompt(text) || looks_like_login_prompt(&lower);
     let device_evidence = looks_like_network_device_console(&lower);
-    let ansi_evidence = decoded.data.contains("\x1b[");
+    let ansi_evidence = sample.len() >= SERIAL_MIN_DETECT_BYTES && decoded.data.contains("\x1b[");
     let newline_evidence = decoded.data.contains('\n') || decoded.data.contains('\r');
     let meaningful_chars = chars.saturating_sub(replacement + bad_control);
+    let printable_ratio = printable as f32 / chars as f32;
     let strong_evidence = prompt_evidence
         || device_evidence
         || ansi_evidence
-        || (newline_evidence && meaningful_chars >= SERIAL_MIN_DETECT_BYTES);
-    let has_text_structure = strong_evidence || (structural_chars > 0 && ascii_human >= 3);
+        || (newline_evidence
+            && meaningful_chars >= SERIAL_MIN_DETECT_BYTES * 2
+            && printable_ratio >= 0.72
+            && ascii_human >= 4);
+    let has_text_structure = strong_evidence || (structural_chars >= 2 && ascii_human >= 4);
     let prompt_bonus = if prompt_evidence { 0.20 } else { 0.0 };
     let device_hint_bonus = if device_evidence { 0.16 } else { 0.0 };
     let ansi_bonus = if ansi_evidence { 0.10 } else { 0.0 };
@@ -1028,14 +1032,21 @@ fn is_terminal_byte(byte: u8) -> bool {
 }
 
 fn looks_like_serial_prompt(text: &str) -> bool {
-    let trimmed = text.trim_end();
-    if trimmed.starts_with('<') && trimmed.ends_with('>') {
-        return true;
+    let line = text.lines().next_back().unwrap_or(text).trim_end();
+    if line.len() < 2 {
+        return false;
     }
-    matches!(
-        trimmed.chars().next_back(),
-        Some('>' | '#' | '$' | ':' | ']' | ')')
-    )
+    let body = line.trim_end_matches(['>', '#', '$', ':', ']', ')']);
+    let body_chars = body.chars().filter(|ch| ch.is_alphanumeric()).count();
+    if line.starts_with('<') && line.ends_with('>') {
+        return body_chars >= 2;
+    }
+    match line.chars().next_back() {
+        Some('>' | '#' | '$') => body_chars >= 2,
+        Some(']' | ')') => body_chars >= 2 && (line.contains('[') || line.contains('(')),
+        Some(':') => body_chars >= 3,
+        _ => false,
+    }
 }
 
 fn looks_like_login_prompt(lower: &str) -> bool {
@@ -1254,6 +1265,22 @@ mod tests {
         codec.set_realtime_detection(true);
         assert_eq!(codec.raw_buffer, sample);
         assert!(codec.pending_tail.is_empty());
+    }
+
+    #[test]
+    fn serial_sample_scoring_accepts_real_prompts() {
+        let quality = analyze_serial_sample(b"router#\r\n", None);
+
+        assert!(quality.strong_evidence);
+        assert!(quality.confidence >= 0.52);
+    }
+
+    #[test]
+    fn serial_sample_scoring_rejects_short_control_noise() {
+        let quality = analyze_serial_sample(&[0x01, 0x03, 0x05, b'\n'], None);
+
+        assert!(!quality.strong_evidence);
+        assert!(quality.confidence < 0.52);
     }
 
     #[test]

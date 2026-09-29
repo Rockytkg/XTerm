@@ -92,14 +92,6 @@ watch(
   { immediate: true },
 );
 
-watch(
-  () => props.rightSidebarWidth,
-  (width) => {
-    if (!sidebarExpanded.value) return;
-    rightSidebarPanel.value?.resize(width);
-  },
-);
-
 onBeforeUnmount(() => {
   clearSidebarCloseTimer();
 });

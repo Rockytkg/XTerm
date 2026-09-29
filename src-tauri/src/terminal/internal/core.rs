@@ -33,7 +33,14 @@ pub(super) const SERIAL_MIN_DETECT_BYTES: usize = 4;
 pub(super) const SERIAL_PROBE_SETTLE_MS: u64 = 15;
 pub(super) const SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS: u64 = 90;
 pub(super) const SERIAL_PROBE_MAX_SAMPLE_MS: u64 = 520;
+pub(super) const SERIAL_PROBE_POLL_INTERVAL_MS: u64 = 4;
+/// Response window for the explicit deep-sleep retry phase. It is applied only
+/// after the bounded fast phase has failed, so normal consoles never pay this
+/// cost while every candidate gets a fair chance when the device is sleeping.
+pub(super) const SERIAL_DEEP_SLEEP_SAMPLE_MS: u64 = 1_500;
+pub(super) const SERIAL_WAKE_INTER_BYTE_TIMEOUT_MS: u64 = 220;
 pub(super) const SERIAL_RELIABLE_BAUD_SCORE: f32 = 0.52;
+pub(super) const SERIAL_EARLY_ACCEPT_BAUD_SCORE: f32 = 0.86;
 pub(super) const SERIAL_WAKE_SEQUENCE: &[u8] = b"\r";
 pub(super) const SERIAL_FALLBACK_BAUD_RATE: u32 = 9_600;
 pub(super) const SERIAL_QUICK_AUTO_BAUD_CANDIDATES: &[u32] = &[9_600, 115_200];

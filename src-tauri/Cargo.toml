@@ -90,7 +90,7 @@ rdp = ["dep:ironrdp", "dep:ironrdp-tokio", "dep:ironrdp-tls"]
 webview2-com = "0.39.1"
 windows-core = "0.62.2"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 windows_firewall = "0.8.3"
 
 [target.'cfg(not(windows))'.dependencies]

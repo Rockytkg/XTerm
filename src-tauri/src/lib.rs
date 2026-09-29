@@ -17,6 +17,7 @@ mod session_recording;
 mod state;
 mod storage;
 mod terminal;
+mod window_state;
 mod workspace;
 
 pub(crate) fn unix_timestamp_millis() -> u128 {

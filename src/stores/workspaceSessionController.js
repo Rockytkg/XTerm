@@ -20,6 +20,10 @@ import { createSshConnectionFlow } from "./sshConnectionFlow";
 import { capabilitiesCan } from "../utils/connectionCapabilities";
 import { mergeConnectionProfileOptions } from "../utils/connectionProfileOptions";
 import { isSerialProtocol, requiresHostKeyVerification } from "../utils/connectionProtocols";
+import {
+  findReusableSerialSession,
+  serialConnectionProfileKey,
+} from "../utils/serialConnectionProfile";
 
 const logger = createLogger("frontend.workspace.session_controller");
 
@@ -56,6 +60,10 @@ export function createWorkspaceSessionController({
   cancelTerminalPresentationWait,
 }) {
   const closingSessions = new Map();
+  // Parameters actually used to open each live serial session. Profiles are
+  // mutable, so comparing only the connection id can otherwise reuse a stale
+  // device handle after the user edits the saved serial settings.
+  const serialSessionProfiles = new Map();
   const connectionUpdateQueues = new Map();
   const optimisticConnectionPatches = new Map();
   const sshFlow = createSshConnectionFlow({
@@ -343,6 +351,7 @@ export function createWorkspaceSessionController({
           logger.error("Failed to close backend connection", error);
         });
       } finally {
+        serialSessionProfiles.delete(id);
         sessionRegistry.clearConnectionRuntime(id);
         activeSessions.value = new Set([...activeSessions.value].filter((s) => s !== id));
         removeSessionInstance?.(id);
@@ -404,20 +413,52 @@ export function createWorkspaceSessionController({
       return false;
     }
     const isSerial = isSerialProtocol(connection?.protocol);
+    const serialSessions = isSerial ? findSessionInstancesByConnectionId?.(connectionId) || [] : [];
+    const currentSerialProfile = isSerial ? serialConnectionProfileKey(connection) : "";
     const reusableSerialSession =
       isSerial && !options.forceReconnect
-        ? findSessionInstancesByConnectionId?.(connectionId)?.find((session) => session.sessionId)
+        ? findReusableSerialSession(serialSessions, serialSessionProfiles, connection)
         : null;
-    if (reusableSerialSession) {
-      logger.info("connection.open.reused", {
-        connectionId,
-        sessionId: reusableSerialSession.id,
-      });
-      activeSessions.value = new Set([...activeSessions.value, reusableSerialSession.id]);
-      addSessionToTabOrder?.(reusableSerialSession.id);
-      activeConnection.value = reusableSerialSession.id;
-      activeTab.value = options.preserveActiveTab ? activeTab.value : "shell";
-      return true;
+    if (isSerial && !options.forceReconnect) {
+      if (reusableSerialSession) {
+        if (
+          reusableSerialSession.sessionId ||
+          connectionRuntime.isPending(reusableSerialSession.id)
+        ) {
+          logger.info("connection.open.reused", {
+            connectionId,
+            sessionId: reusableSerialSession.id,
+          });
+          activeSessions.value = new Set([...activeSessions.value, reusableSerialSession.id]);
+          addSessionToTabOrder?.(reusableSerialSession.id);
+          activeConnection.value = reusableSerialSession.id;
+          activeTab.value = options.preserveActiveTab ? activeTab.value : "shell";
+          return true;
+        }
+        logger.info("connection.open.retry_failed_serial", {
+          connectionId,
+          sessionId: reusableSerialSession.id,
+        });
+        return connectTo(connectionId, {
+          ...options,
+          forceReconnect: true,
+          sessionId: reusableSerialSession.id,
+        });
+      }
+      if (serialSessions.length > 0) {
+        const staleSession = serialSessions[0];
+        logger.info("connection.open.serial_profile_changed", {
+          connectionId,
+          sessionId: staleSession?.id || null,
+        });
+        if (staleSession) {
+          return connectTo(connectionId, {
+            ...options,
+            forceReconnect: true,
+            sessionId: staleSession.id,
+          });
+        }
+      }
     }
 
     const prepared = prepareFrontendSession(connectionId, options);
@@ -441,6 +482,7 @@ export function createWorkspaceSessionController({
       }
       return false;
     }
+    if (isSerial) serialSessionProfiles.set(frontendSessionId, currentSerialProfile);
     const backendOpenRequestId = `${frontendSessionId}:${attemptToken}`;
     clearSessionInstanceTerminalSession?.(frontendSessionId);
     sessionRegistry.beginSessionAttempt(

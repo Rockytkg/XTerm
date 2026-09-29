@@ -15,11 +15,12 @@ use crate::{
             ConnectionResult, ResolvedConnection, SerialLineSettings, SerialProbeResult,
             SerialRedetectResult, SessionCommand, SessionTransportRuntime, SessionWorkerEvent,
             TerminalSession, TerminalSessionResources, TerminalSize, TransportCommand,
-            BAUD_CANDIDATES, SERIAL_FALLBACK_BAUD_RATE, SERIAL_FAST_BAUD_SAMPLE_MS,
-            SERIAL_MIN_DETECT_BYTES, SERIAL_PASSIVE_BAUD_SAMPLE_MS,
-            SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS, SERIAL_PROBE_MAX_SAMPLE_MS, SERIAL_PROBE_SETTLE_MS,
+            BAUD_CANDIDATES, SERIAL_DEEP_SLEEP_SAMPLE_MS, SERIAL_EARLY_ACCEPT_BAUD_SCORE,
+            SERIAL_FALLBACK_BAUD_RATE, SERIAL_FAST_BAUD_SAMPLE_MS, SERIAL_MIN_DETECT_BYTES,
+            SERIAL_PASSIVE_BAUD_SAMPLE_MS, SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS,
+            SERIAL_PROBE_MAX_SAMPLE_MS, SERIAL_PROBE_POLL_INTERVAL_MS, SERIAL_PROBE_SETTLE_MS,
             SERIAL_QUICK_AUTO_BAUD_CANDIDATES, SERIAL_RELIABLE_BAUD_SCORE, SERIAL_SAMPLE_MAX_BYTES,
-            SERIAL_WAKE_SEQUENCE, SESSION_BUFFER_SIZE,
+            SERIAL_WAKE_INTER_BYTE_TIMEOUT_MS, SERIAL_WAKE_SEQUENCE, SESSION_BUFFER_SIZE,
         },
         serial_transport::spawn_serial_transport_actor,
         startup_auth::resolve_startup_password_auth,
@@ -92,6 +93,21 @@ struct SerialProbeScore {
 struct SerialDetection {
     confirmed: Option<SerialProbeScore>,
     last_error: Option<ConnectionError>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SerialProbePhase {
+    Fast,
+    DeepSleep,
+}
+
+impl SerialProbePhase {
+    fn wake_sample_for(self) -> Duration {
+        match self {
+            Self::Fast => Duration::from_millis(SERIAL_FAST_BAUD_SAMPLE_MS),
+            Self::DeepSleep => Duration::from_millis(SERIAL_DEEP_SLEEP_SAMPLE_MS),
+        }
+    }
 }
 
 impl From<SerialProbeScore> for SerialProbeResult {
@@ -234,32 +250,50 @@ pub(crate) async fn redetect_serial_baud_on_open_port(
         )
     })?;
     let mut scores = Vec::new();
-    // 两阶段:先扫当前波特率和常用候选;只有快扫见到线路活动时才扩展到完整
-    // 列表。全量扫每档要数百毫秒,在静默线路上会拖慢重检测并长时间阻塞会话
-    // 关闭;而每档探测都会发 CR 唤醒,接着有设备的线路几乎总会留下字节。
+    // 先用短窗口扫当前/常用速率，再对同一候选集进行一次深睡眠窗口重试；
+    // 只有仍未确认时才扩展到完整列表。这样深睡眠设备不会因候选顺序漏检，
+    // 普通设备也不会为每个波特率付出长等待。
     let quick_candidates = redetect_quick_baud_candidates(original_baud_rate);
-    let mut selection =
-        match detect_serial_baud(port, port_name, &quick_candidates, encoding, &mut scores).await {
-            Ok(detection) => detection.confirmed,
-            Err(error) => {
-                let _ = set_serial_probe_baud(port, port_name, original_baud_rate);
-                prepare_serial_probe_port(port).await;
-                return Err(error);
-            }
-        };
-    if selection.is_none() {
+    let mut selection = match detect_serial_baud_with_escalation(
+        port,
+        port_name,
+        &quick_candidates,
+        encoding,
+        &mut scores,
+        true,
+    )
+    .await
+    {
+        Ok(detection) => detection.confirmed,
+        Err(error) => {
+            let _ = set_serial_probe_baud(port, port_name, original_baud_rate);
+            prepare_serial_probe_port(port).await;
+            return Err(error);
+        }
+    };
+    if selection
+        .as_ref()
+        .is_none_or(|candidate| !is_decisive_serial_probe(candidate))
+    {
         let additional = additional_serial_baud_candidates(&quick_candidates, BAUD_CANDIDATES);
-        if should_expand_serial_baud_search(&scores, false, !additional.is_empty()) {
-            selection =
-                match detect_serial_baud(port, port_name, &additional, encoding, &mut scores).await
-                {
-                    Ok(detection) => detection.confirmed,
-                    Err(error) => {
-                        let _ = set_serial_probe_baud(port, port_name, original_baud_rate);
-                        prepare_serial_probe_port(port).await;
-                        return Err(error);
-                    }
-                };
+        if should_expand_serial_baud_search(&scores, false, port_name, !additional.is_empty()) {
+            selection = match detect_serial_baud_at_phase(
+                port,
+                port_name,
+                &additional,
+                encoding,
+                &mut scores,
+                SerialProbePhase::DeepSleep,
+            )
+            .await
+            {
+                Ok(detection) => choose_better_serial_probe(selection.take(), detection.confirmed),
+                Err(error) => {
+                    let _ = set_serial_probe_baud(port, port_name, original_baud_rate);
+                    prepare_serial_probe_port(port).await;
+                    return Err(error);
+                }
+            };
         }
     }
 
@@ -589,12 +623,14 @@ async fn resolve_auto_baud(
             }
         };
 
-        let mut detection = detect_serial_baud(
+        let allow_deep_sleep = !requested_port.eq_ignore_ascii_case("auto") || candidate.usb;
+        let mut detection = detect_serial_baud_with_escalation(
             &mut port,
             &port_name,
             baud_candidates,
             encoding,
             &mut scores,
+            allow_deep_sleep,
         )
         .await
         .unwrap_or_else(|error| SerialDetection {
@@ -605,25 +641,36 @@ async fn resolve_auto_baud(
             last_error = detection.last_error.take();
         }
 
-        if detection.confirmed.is_none() {
+        if detection
+            .confirmed
+            .as_ref()
+            .is_none_or(|candidate| !is_decisive_serial_probe(candidate))
+        {
             if let Some(full_candidates) = full_baud_candidates {
                 let additional =
                     additional_serial_baud_candidates(baud_candidates, full_candidates);
                 if should_expand_serial_baud_search(
                     &scores[port_score_start..],
                     candidate.usb,
+                    requested_port,
                     !additional.is_empty(),
                 ) {
                     log::info!(
                         target: "terminal.serial",
                         "serial quick auto baud was not confirmed requested='{requested_port}' port='{port_name}'; expanding candidate search"
                     );
-                    let mut expanded = detect_serial_baud(
+                    let expanded_phase = if allow_deep_sleep {
+                        SerialProbePhase::DeepSleep
+                    } else {
+                        SerialProbePhase::Fast
+                    };
+                    let mut expanded = detect_serial_baud_at_phase(
                         &mut port,
                         &port_name,
                         &additional,
                         encoding,
                         &mut scores,
+                        expanded_phase,
                     )
                     .await
                     .unwrap_or_else(|error| SerialDetection {
@@ -633,19 +680,16 @@ async fn resolve_auto_baud(
                     if expanded.last_error.is_some() {
                         last_error = expanded.last_error.take();
                     }
-                    detection.confirmed = expanded.confirmed;
+                    detection.confirmed =
+                        choose_better_serial_probe(detection.confirmed.take(), expanded.confirmed);
                 }
             }
         }
 
         if let Some(best) = detection.confirmed {
-            // Candidates are probed in priority order (USB converters first,
-            // then port number), so the first reliably confirmed device is the
-            // best answer; scanning the remaining lower-priority ports would
-            // only add seconds per dead port.
             log::info!(
                 target: "terminal.serial",
-                "serial auto baud selected first reliable confirmation requested='{requested_port}' selected='{}@{}' usb={} confidence={:.3} scores=[{}]",
+                "serial auto baud selected best confirmation requested='{requested_port}' selected='{}@{}' usb={} confidence={:.3} scores=[{}]",
                 best.port_name,
                 best.baud_rate,
                 candidate.usb,
@@ -704,24 +748,21 @@ async fn resolve_auto_baud(
     }))
 }
 
-/// Probe `baud_candidates` in order on an already open port.
-///
-/// The first candidate with reliable evidence wins. When the device produced
-/// the evidence on its own (passive sample) the baud is clearly right and the
-/// sample is real console output, so it is accepted immediately; when the
-/// console had to be woken with CR, one confirmation round at the same baud
-/// filters out line noise that accidentally decoded as text before the baud
-/// is trusted.
+/// Probe `baud_candidates` on an already open port and retain the strongest
+/// independent evidence instead of accepting the first printable sample.
 async fn detect_serial_baud(
     port: &mut tokio_serial::SerialStream,
     port_name: &str,
     baud_candidates: &[u32],
     encoding: Option<&str>,
     scores: &mut Vec<SerialProbeScore>,
+    phase: SerialProbePhase,
 ) -> ConnectionResult<SerialDetection> {
     let mut last_error = None;
+    let mut best = None;
     for baud_rate in baud_candidates {
-        let probe = match probe_open_serial_port(port, port_name, *baud_rate, encoding).await {
+        let probe = match probe_open_serial_port(port, port_name, *baud_rate, encoding, phase).await
+        {
             Ok(probe) => probe,
             Err(error) => {
                 last_error = Some(error);
@@ -729,44 +770,137 @@ async fn detect_serial_baud(
                 continue;
             }
         };
-        if probe.passive {
-            scores.push(probe.clone());
-            return Ok(SerialDetection {
-                confirmed: Some(probe),
-                last_error,
-            });
-        }
-        let reliable = is_reliable_serial_probe(&probe);
-        scores.push(probe);
-        if !reliable {
-            continue;
-        }
-        let confirmation = confirm_serial_baud(port, port_name, *baud_rate, encoding).await;
-        let confirmed = is_reliable_serial_probe(&confirmation);
-        scores.push(confirmation.clone());
-        if confirmed {
-            return Ok(SerialDetection {
-                confirmed: Some(confirmation),
-                last_error,
-            });
+        scores.push(probe.clone());
+        let candidate = if probe.passive {
+            Some(probe)
+        } else if is_reliable_serial_probe(&probe) {
+            let confirmation =
+                confirm_serial_baud(port, port_name, *baud_rate, encoding, phase).await;
+            scores.push(confirmation.clone());
+            merge_serial_probe_confirmation(&probe, &confirmation)
+        } else {
+            None
+        };
+        if let Some(candidate) = candidate {
+            let decisive = is_decisive_serial_probe(&candidate);
+            if best
+                .as_ref()
+                .is_none_or(|current| is_better_serial_probe(&candidate, current))
+            {
+                best = Some(candidate);
+            }
+            if decisive {
+                break;
+            }
         }
     }
     Ok(SerialDetection {
-        confirmed: None,
+        confirmed: best.filter(|candidate| {
+            matches!(phase, SerialProbePhase::DeepSleep) || is_decisive_serial_probe(candidate)
+        }),
         last_error,
     })
 }
 
-/// The full baud sweep costs hundreds of milliseconds per candidate, so it
-/// only runs where a live device is plausible: the quick pass saw traffic at
-/// a wrong baud, or the port is a USB serial converter — a cable someone
-/// plugged in on purpose, unlike an openable but empty onboard port.
+async fn detect_serial_baud_with_escalation(
+    port: &mut tokio_serial::SerialStream,
+    port_name: &str,
+    baud_candidates: &[u32],
+    encoding: Option<&str>,
+    scores: &mut Vec<SerialProbeScore>,
+    allow_deep_sleep: bool,
+) -> ConnectionResult<SerialDetection> {
+    let mut detection = detect_serial_baud(
+        port,
+        port_name,
+        baud_candidates,
+        encoding,
+        scores,
+        SerialProbePhase::Fast,
+    )
+    .await?;
+    if detection.confirmed.is_none() && allow_deep_sleep {
+        let deep = detect_serial_baud(
+            port,
+            port_name,
+            baud_candidates,
+            encoding,
+            scores,
+            SerialProbePhase::DeepSleep,
+        )
+        .await?;
+        detection.confirmed = deep.confirmed;
+        detection.last_error = deep.last_error.or(detection.last_error);
+    }
+    Ok(detection)
+}
+
+async fn detect_serial_baud_at_phase(
+    port: &mut tokio_serial::SerialStream,
+    port_name: &str,
+    baud_candidates: &[u32],
+    encoding: Option<&str>,
+    scores: &mut Vec<SerialProbeScore>,
+    phase: SerialProbePhase,
+) -> ConnectionResult<SerialDetection> {
+    detect_serial_baud(port, port_name, baud_candidates, encoding, scores, phase).await
+}
+
+fn merge_serial_probe_confirmation(
+    probe: &SerialProbeScore,
+    confirmation: &SerialProbeScore,
+) -> Option<SerialProbeScore> {
+    if !is_reliable_serial_probe(confirmation) {
+        return None;
+    }
+    let mut merged = confirmation.clone();
+    merged.score = (probe.score * 0.35 + confirmation.score * 0.65).clamp(0.0, 1.0);
+    merged.strong_evidence = probe.strong_evidence && confirmation.strong_evidence;
+    is_reliable_serial_probe(&merged).then_some(merged)
+}
+
+fn is_decisive_serial_probe(score: &SerialProbeScore) -> bool {
+    score.passive || score.score >= SERIAL_EARLY_ACCEPT_BAUD_SCORE
+}
+
+fn is_better_serial_probe(candidate: &SerialProbeScore, current: &SerialProbeScore) -> bool {
+    candidate
+        .score
+        .total_cmp(&current.score)
+        .then_with(|| candidate.bytes_read.cmp(&current.bytes_read))
+        .is_gt()
+}
+
+fn choose_better_serial_probe(
+    current: Option<SerialProbeScore>,
+    candidate: Option<SerialProbeScore>,
+) -> Option<SerialProbeScore> {
+    match (current, candidate) {
+        (Some(current), Some(candidate)) => {
+            if is_better_serial_probe(&candidate, &current) {
+                Some(candidate)
+            } else {
+                Some(current)
+            }
+        }
+        (current, candidate) => current.or(candidate),
+    }
+}
+
+/// Auto-port discovery keeps the exhaustive sweep out of unrelated native
+/// ports that opened successfully but have no activity. A user-selected port
+/// is always eligible for the full sweep: silence there can simply mean a
+/// sleeping device, not an empty port.
 fn should_expand_serial_baud_search(
     port_scores: &[SerialProbeScore],
     usb: bool,
+    requested_port: &str,
     has_additional_candidates: bool,
 ) -> bool {
-    has_additional_candidates && (usb || port_scores.iter().any(|score| score.bytes_read > 0))
+    has_additional_candidates
+        && (!requested_port.eq_ignore_ascii_case("auto")
+            || usb
+            || port_scores.iter().any(|score| score.bytes_read > 0))
 }
 
 fn additional_serial_baud_candidates(
@@ -809,7 +943,9 @@ async fn probe_open_serial_port(
     port_name: &str,
     baud_rate: u32,
     encoding: Option<&str>,
+    phase: SerialProbePhase,
 ) -> ConnectionResult<SerialProbeScore> {
+    let started_at = Instant::now();
     set_serial_probe_baud(port, port_name, baud_rate)?;
     prepare_serial_probe_port(port).await;
     // Prefer natural console output. Silent devices (common for network equipment)
@@ -823,10 +959,12 @@ async fn probe_open_serial_port(
     let (sample, quality) = if passive {
         (passive_sample, passive_quality)
     } else {
-        prepare_serial_probe_port(port).await;
+        // The settle step above already established a quiet baseline. Drain
+        // only bytes produced during passive sampling; sleeping again here
+        // adds latency and can discard the beginning of a prompt.
+        drain_serial_probe_input(port);
         wake_serial_console(port).await;
-        let sample =
-            read_serial_sample_async(port, Duration::from_millis(SERIAL_FAST_BAUD_SAMPLE_MS)).await;
+        let sample = read_serial_sample_async(port, phase.wake_sample_for()).await;
         let quality = analyze_serial_sample(&sample, encoding);
         (sample, quality)
     };
@@ -834,7 +972,8 @@ async fn probe_open_serial_port(
     let bytes_read = sample.len();
     log::debug!(
         target: "terminal.serial",
-        "serial probe port='{port_name}' baud={baud_rate} score={score:.3} bytes={bytes_read}"
+        "serial probe port='{port_name}' baud={baud_rate} phase={phase:?} score={score:.3} bytes={bytes_read} elapsed_ms={}",
+        started_at.elapsed().as_millis()
     );
     Ok(SerialProbeScore {
         port_name: port_name.to_string(),
@@ -977,17 +1116,17 @@ async fn wake_serial_console(port: &mut tokio_serial::SerialStream) {
     let _ = tokio::io::AsyncWriteExt::flush(&mut *port).await;
 }
 
-async fn stabilize_serial_console(port: &mut tokio_serial::SerialStream) -> Vec<u8> {
-    // A wrong-baud probe can leave a byte in the device's own line editor; host
-    // buffer clearing cannot remove it. At the selected baud, terminate that
-    // possible residual line and discard its response, then request one clean
-    // prompt. Only the clean response is handed to the terminal.
+async fn stabilize_serial_console(
+    port: &mut tokio_serial::SerialStream,
+    sample_for: Duration,
+) -> Vec<u8> {
+    // A wrong-baud probe can leave bytes in the host buffer. Clear those bytes,
+    // settle once, then issue one clean wake-up. A second throw-away round was
+    // previously used here, but it doubled confirmation latency and could
+    // generate two commands on devices with a line-oriented console.
     prepare_serial_probe_port(port).await;
     wake_serial_console(port).await;
-    let _ = read_serial_sample_async(port, Duration::from_millis(SERIAL_PROBE_MAX_SAMPLE_MS)).await;
-    prepare_serial_probe_port(port).await;
-    wake_serial_console(port).await;
-    read_serial_sample_async(port, Duration::from_millis(SERIAL_PROBE_MAX_SAMPLE_MS)).await
+    read_serial_sample_async(port, sample_for).await
 }
 
 /// Confirmation runs at the same baud as the probe round that just succeeded,
@@ -997,8 +1136,13 @@ async fn confirm_serial_baud(
     port_name: &str,
     baud_rate: u32,
     encoding: Option<&str>,
+    phase: SerialProbePhase,
 ) -> SerialProbeScore {
-    let sample = stabilize_serial_console(port).await;
+    let sample_for = match phase {
+        SerialProbePhase::Fast => Duration::from_millis(SERIAL_PROBE_MAX_SAMPLE_MS),
+        SerialProbePhase::DeepSleep => phase.wake_sample_for(),
+    };
+    let sample = stabilize_serial_console(port, sample_for).await;
     let quality = analyze_serial_sample(&sample, encoding);
     SerialProbeScore {
         port_name: port_name.to_string(),
@@ -1046,9 +1190,14 @@ async fn read_serial_sample_into(
         match port.try_read(&mut buffer[..read_limit]) {
             Ok(size) if size > 0 => {
                 output.extend_from_slice(&buffer[..size]);
+                let inter_byte_timeout =
+                    if sample_for > Duration::from_millis(SERIAL_FAST_BAUD_SAMPLE_MS) {
+                        SERIAL_WAKE_INTER_BYTE_TIMEOUT_MS
+                    } else {
+                        SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS
+                    };
                 quiet_deadline = Some(
-                    (Instant::now() + Duration::from_millis(SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS))
-                        .min(hard_deadline),
+                    (Instant::now() + Duration::from_millis(inter_byte_timeout)).min(hard_deadline),
                 );
                 continue;
             }
@@ -1064,7 +1213,8 @@ async fn read_serial_sample_into(
             // takes ownership of this same handle after auto detection.
             _ => {}
         }
-        tokio::time::sleep(remaining.min(Duration::from_millis(10))).await;
+        tokio::time::sleep(remaining.min(Duration::from_millis(SERIAL_PROBE_POLL_INTERVAL_MS)))
+            .await;
     }
 }
 
@@ -1280,14 +1430,25 @@ mod tests {
     }
 
     #[test]
-    fn full_baud_sweep_requires_traffic_or_a_usb_port() {
+    fn full_baud_sweep_keeps_auto_port_fast_but_never_skips_fixed_port() {
         let silent = [score(9_600, 0.0, 0), score(115_200, 0.0, 0)];
         let noisy = [score(9_600, 0.10, 6), score(115_200, 0.0, 0)];
 
-        assert!(!should_expand_serial_baud_search(&silent, false, true));
-        assert!(should_expand_serial_baud_search(&noisy, false, true));
-        assert!(should_expand_serial_baud_search(&silent, true, true));
-        assert!(!should_expand_serial_baud_search(&noisy, true, false));
+        assert!(!should_expand_serial_baud_search(
+            &silent, false, "auto", true
+        ));
+        assert!(should_expand_serial_baud_search(
+            &noisy, false, "auto", true
+        ));
+        assert!(should_expand_serial_baud_search(
+            &silent, false, "COM4", true
+        ));
+        assert!(should_expand_serial_baud_search(
+            &silent, true, "auto", true
+        ));
+        assert!(!should_expand_serial_baud_search(
+            &noisy, true, "auto", false
+        ));
     }
 
     #[test]
