@@ -45,7 +45,7 @@ mod windows_impl {
         },
         Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH},
         UI::WindowsAndMessaging::{
-            GetWindowPlacement, SetWindowPlacement, ShowWindow, SW_HIDE, SW_SHOW, SW_SHOWMAXIMIZED,
+            GetWindowPlacement, SetWindowPlacement, SW_HIDE, SW_SHOWMAXIMIZED,
             WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
         },
     };
@@ -277,7 +277,14 @@ mod windows_impl {
         state.normal_rect = keep_rect_visible(state.normal_rect);
         let placement = WINDOWPLACEMENT {
             length: size_of::<WINDOWPLACEMENT>() as u32,
-            flags: 0,
+            // Preserve the maximized state while remaining hidden. When the
+            // Tauri window is shown after the frontend gate, Windows restores
+            // the placement without exposing an intermediate normal frame.
+            flags: if state.maximized {
+                WPF_RESTORETOMAXIMIZED
+            } else {
+                0
+            },
             // SetWindowPlacement also applies showCmd. Keep the native window
             // hidden here; reveal_main_window applies the saved show state only
             // after the frontend startup gate has completed.
@@ -348,8 +355,6 @@ mod windows_impl {
         let webview = app
             .get_webview_window(MAIN_WINDOW_LABEL)
             .ok_or_else(|| "main window not found".to_string())?;
-        let hwnd = native_hwnd(&webview.as_ref().window())
-            .ok_or_else(|| "main window handle not found".to_string())?;
         let maximized = app
             .state::<Arc<Mutex<Cache>>>()
             .lock()
@@ -358,26 +363,13 @@ mod windows_impl {
             .get(MAIN_WINDOW_LABEL)
             .is_some_and(|state| state.maximized);
 
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let hwnd_value = hwnd as isize;
-        app.run_on_main_thread(move || {
-            let hwnd = hwnd_value as HWND;
-            // Do not call Tauri/Tao show/maximize here. On Windows those APIs
-            // enqueue WindowMessages; Tao then reapplies styles and sends
-            // SWP_FRAMECHANGED for this undecorated shadow window. The native
-            // placement was already restored while hidden, so only one final
-            // ShowWindow transition is needed.
-            unsafe {
-                ShowWindow(hwnd, if maximized { SW_SHOWMAXIMIZED } else { SW_SHOW });
-            }
-            let result = Ok(());
-            let _ = sender.send(result);
-        })
-        .map_err(|error| error.to_string())?;
-
-        receiver
-            .await
-            .map_err(|_| "main window reveal task was cancelled".to_string())?
+        // Keep Tao's visibility and maximized state in sync. Applying the
+        // maximized state while still hidden prevents a visible normal frame;
+        // showing through Tauri keeps later titlebar actions reliable.
+        if maximized {
+            webview.maximize().map_err(|error| error.to_string())?;
+        }
+        webview.show().map_err(|error| error.to_string())
     }
 }
 
@@ -395,6 +387,8 @@ pub async fn reveal_main_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> 
 
     #[cfg(not(windows))]
     {
+        use tauri::Manager;
+
         let window = app
             .get_webview_window("main")
             .ok_or_else(|| "main window not found".to_string())?;

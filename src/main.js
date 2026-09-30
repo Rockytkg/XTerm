@@ -116,6 +116,9 @@ async function showMainWindow() {
       .catch((fallbackError) => {
         logger.error("window.show.fallback.failed", fallbackError);
       });
+    // The fallback uses the queued Tauri window API. Keep the opaque splash
+    // until that show request has had a chance to reach the compositor too.
+    await nextAnimationFrame();
   } finally {
     startupSplash?.remove();
   }

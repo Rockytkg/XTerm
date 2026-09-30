@@ -41,20 +41,28 @@ export function useTauriWindowController() {
     });
   }
 
-  function toggleWindowMaximize() {
+  async function toggleWindowMaximize() {
     const currentWindow = getShellWindow();
     if (!currentWindow) return;
-    currentWindow
-      .toggleMaximize()
-      .catch((error) => {
-        logger.error("window.maximize.toggle.failed", error);
-      })
-      .finally(() => {
-        clearTimeout(maximizeRefreshTimer);
-        maximizeRefreshTimer = setTimeout(() => {
-          refreshWindowMaximized();
-        }, 180);
-      });
+
+    try {
+      // Read the native state immediately before changing it. This keeps the
+      // titlebar action correct after Windows snap/restore gestures even when
+      // the reactive state has not observed the resize event yet.
+      const maximized = await currentWindow.isMaximized();
+      if (maximized) {
+        await currentWindow.unmaximize();
+      } else {
+        await currentWindow.maximize();
+      }
+    } catch (error) {
+      logger.error("window.maximize.toggle.failed", error);
+    } finally {
+      clearTimeout(maximizeRefreshTimer);
+      maximizeRefreshTimer = setTimeout(() => {
+        void refreshWindowMaximized();
+      }, 180);
+    }
   }
 
   function closeWindow() {

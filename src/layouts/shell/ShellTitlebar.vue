@@ -43,11 +43,11 @@ const closeTitlebarWindow = titlebarAction(closeWindow);
 <template>
   <header
     class="shell-titlebar"
-    data-tauri-drag-region="deep"
+    data-tauri-drag-region
   >
     <div
       class="titlebar-brand"
-      data-tauri-drag-region
+      data-tauri-drag-region="deep"
     >
       <svg
         class="titlebar-logo"
@@ -79,10 +79,7 @@ const closeTitlebarWindow = titlebarAction(closeWindow);
       <span class="titlebar-appname">XTerm</span>
     </div>
 
-    <div
-      class="titlebar-right"
-      data-tauri-drag-region="deep"
-    >
+    <div class="titlebar-right">
       <AppTooltip
         :content="
           preferences.theme === 'light'
