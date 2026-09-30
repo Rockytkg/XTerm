@@ -104,9 +104,9 @@
     cursor: pointer;
     text-align: left;
     transition:
-      background-color 0.12s var(--ease-default),
-      color 0.12s var(--ease-default),
-      border-color 0.12s var(--ease-default);
+      background-color var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default),
+      border-color var(--motion-duration-base) var(--ease-default);
     outline: none;
   }
 

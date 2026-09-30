@@ -134,7 +134,6 @@ export default defineConfig({
           if (nid.includes("/node_modules/reka-ui/")) return "ui";
           if (nid.includes("/node_modules/@vueuse/")) return "vueuse";
           if (nid.includes("/node_modules/cytoscape/")) return "cytoscape";
-          if (nid.includes("/node_modules/gsap/")) return "gsap";
           if (nid.includes("/node_modules/@tauri-apps/")) return "tauri-api";
           // Core framework + i18n — rarely changes
           if (nid.includes("/node_modules/vue/") || nid.includes("/node_modules/vue-router/"))

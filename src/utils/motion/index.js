@@ -1,71 +1,29 @@
-import { gsap } from "gsap";
+import { ref } from "vue";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
-const transitionTweens = new WeakMap();
 
 let motionPreferenceEnabled = true;
-let reducedMotionQuery = null;
 
-const EASE = {
-  standard: "power3.out",
-  exit: "power2.in",
-};
+// 模块加载即初始化 matchMedia：若惰性到首次读取才创建，下面的 change 监听器
+// 会在查询对象存在之前执行注册，系统级 reduced-motion 切换将永远收不到回调。
+// 非浏览器环境（node --test 单测）无 window/document，全部按 null 回退。
+const reducedMotionQuery =
+  typeof window === "undefined" ? null : (window.matchMedia?.(REDUCED_MOTION_QUERY) ?? null);
 
-const DURATION = {
-  quick: 0.07,
-  base: 0.11,
-  slow: 0.18,
-};
-
-export const sortableMotion = {
-  animation: 120,
-  easing: "cubic-bezier(0.25, 0.1, 0.25, 1)",
-};
-
-const PANEL_PRESENCE = presence({
-  y: 5,
-  closeY: -2,
-  scale: 1,
-  openDuration: DURATION.base,
-  closedDuration: DURATION.quick,
-});
-
-gsap.defaults({
-  ease: EASE.standard,
-  overwrite: "auto",
-});
+// 响应式镜像：偏好/系统设置变化时写入，computed/watch 读取 motionEnabled()
+// 才能获得重算依赖（直接读模块级布尔值不会被 Vue 追踪）。
+const motionActive = ref(true);
 
 function prefersReducedMotion() {
-  reducedMotionQuery ??= window.matchMedia?.(REDUCED_MOTION_QUERY) ?? null;
   return !!reducedMotionQuery?.matches;
 }
 
-function presence({ y, closeY = 3, scale, openDuration, closedDuration }) {
-  return {
-    from: vars({ alpha: 0, y, scale }),
-    open: vars({ alpha: 1, y: 0, scale: 1, duration: openDuration, ease: EASE.standard }),
-    closed: vars({
-      alpha: 0,
-      y: closeY,
-      scale,
-      duration: closedDuration,
-      ease: EASE.exit,
-    }),
-  };
-}
-
-function vars({ alpha, y, scale, duration, ease }) {
-  const result = {};
-  if (alpha !== undefined) result.autoAlpha = alpha;
-  if (y !== undefined) result["--motion-y"] = `${y}px`;
-  if (scale !== undefined) result["--motion-scale"] = scale;
-  if (duration !== undefined) result.duration = duration;
-  if (ease !== undefined) result.ease = ease;
-  return result;
-}
-
 function setRootMotionState() {
-  document.documentElement.dataset.motion = motionEnabled() ? "on" : "off";
+  const enabled = motionPreferenceEnabled && !prefersReducedMotion();
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.motion = enabled ? "on" : "off";
+  }
+  motionActive.value = enabled;
 }
 
 export function setMotionPreferenceEnabled(enabled) {
@@ -74,62 +32,29 @@ export function setMotionPreferenceEnabled(enabled) {
 }
 
 export function motionEnabled({ disabled = false } = {}) {
-  return !disabled && motionPreferenceEnabled && !prefersReducedMotion();
+  return !disabled && motionActive.value;
 }
 
-function stopTweens(el) {
-  transitionTweens.get(el)?.kill();
-  transitionTweens.delete(el);
-  gsap.killTweensOf(el);
+function readMotionToken(name, fallback) {
+  if (typeof getComputedStyle !== "function" || typeof document === "undefined") return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
 }
 
-function clearMotion(el) {
-  stopTweens(el);
-  gsap.set(el, { clearProps: "all" });
+export function readMotionDurationMs(name, fallbackMs) {
+  const value = readMotionToken(name, "");
+  const match = /^([\d.]+)(ms|s)$/.exec(value);
+  if (!match) return fallbackMs;
+  const amount = Number.parseFloat(match[1]);
+  return match[2] === "s" ? amount * 1000 : amount;
 }
 
-function finishNow(done) {
-  done();
-}
-
-function tweenTransition(el, state, done, { clearAfter = false } = {}) {
-  stopTweens(el);
-  const tween = gsap.to(el, {
-    ...PANEL_PRESENCE[state],
-    onComplete: () => {
-      transitionTweens.delete(el);
-      if (clearAfter) gsap.set(el, { clearProps: "all" });
-      done();
-    },
-  });
-  transitionTweens.set(el, tween);
-}
-
-export function createPanelTransitionHooks({ disabled = () => false } = {}) {
-  const canAnimate = () => motionEnabled({ disabled: disabled() });
-
+// sortablejs 的拖拽位移时长/缓动以 CSS motion token（styles/tokens.scss）为
+// 单一来源，运行时读取；token 调整后无需同步 JS 常量。
+export function getSortableMotion() {
   return {
-    css: false,
-    beforeEnter(el) {
-      stopTweens(el);
-      if (canAnimate()) gsap.set(el, PANEL_PRESENCE.from);
-    },
-    enter(el, done) {
-      if (!canAnimate()) {
-        clearMotion(el);
-        finishNow(done);
-        return;
-      }
-      tweenTransition(el, "open", done, { clearAfter: true });
-    },
-    leave(el, done) {
-      if (!canAnimate()) {
-        stopTweens(el);
-        finishNow(done);
-        return;
-      }
-      tweenTransition(el, "closed", done);
-    },
+    animation: readMotionDurationMs("--motion-duration-base", 110),
+    easing: readMotionToken("--motion-ease", "cubic-bezier(0.25, 0.1, 0.25, 1)"),
   };
 }
 
@@ -154,5 +79,4 @@ export async function runViewTransition(update, { className, disabled = false } 
 }
 
 setRootMotionState();
-
 reducedMotionQuery?.addEventListener?.("change", setRootMotionState);

@@ -10,10 +10,15 @@ function readMountContentSize(mount) {
   const style = window.getComputedStyle(mount);
   const paddingHorizontal = parseSize(style, "padding-left") + parseSize(style, "padding-right");
   const paddingVertical = parseSize(style, "padding-top") + parseSize(style, "padding-bottom");
+  // 内容内缩（terminal.scss 的 .terminal-mount）：mount 不设 padding 以保持
+  // 滚动条贴边，文字经偏移 .xterm-screen 内缩，几何计算须同步扣除该 inset，
+  // 否则偏移后末行/末列会溢出可视区。
+  const insetHorizontal = 2 * parseSize(style, "--terminal-mount-inset-inline");
+  const insetVertical = 2 * parseSize(style, "--terminal-mount-inset-block");
 
   return {
-    width: Math.max(0, mount.clientWidth - paddingHorizontal),
-    height: Math.max(0, mount.clientHeight - paddingVertical),
+    width: Math.max(0, mount.clientWidth - paddingHorizontal - insetHorizontal),
+    height: Math.max(0, mount.clientHeight - paddingVertical - insetVertical),
   };
 }
 

@@ -91,9 +91,9 @@
     text-align: left;
     user-select: none;
     transition:
-      background-color 0.12s var(--ease-default),
-      border-color 0.12s var(--ease-default),
-      color 0.12s var(--ease-default);
+      background-color var(--motion-duration-base) var(--ease-default),
+      border-color var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default);
   }
 
   .ui-select-option:hover,

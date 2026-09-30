@@ -45,14 +45,13 @@ mod windows_impl {
         },
         Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH},
         UI::WindowsAndMessaging::{
-            GetClientRect, GetWindowPlacement, GetWindowRect, SetWindowPlacement, ShowWindow,
-            SW_HIDE, SW_SHOWMAXIMIZED, SW_SHOWNORMAL, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
+            GetWindowPlacement, SetWindowPlacement, ShowWindow, SW_HIDE, SW_SHOW, SW_SHOWMAXIMIZED,
+            WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
         },
     };
 
     const MAIN_WINDOW_LABEL: &str = "main";
     const STATE_FILENAME: &str = ".xterm-window-placement.json";
-    const LEGACY_STATE_FILENAME: &str = ".window-state.json";
     const STATE_VERSION: u32 = 1;
 
     #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
@@ -114,27 +113,6 @@ mod windows_impl {
     #[derive(Default)]
     struct Cache {
         windows: HashMap<String, WindowPlacementState>,
-    }
-
-    #[derive(Default, Deserialize)]
-    struct LegacyRoot {
-        main: Option<LegacyMainWindow>,
-    }
-
-    #[derive(Default, Deserialize)]
-    struct LegacyMainWindow {
-        width: Option<f64>,
-        height: Option<f64>,
-        x: Option<f64>,
-        y: Option<f64>,
-        position: Option<LegacyPosition>,
-        maximized: Option<bool>,
-    }
-
-    #[derive(Default, Deserialize)]
-    struct LegacyPosition {
-        x: Option<f64>,
-        y: Option<f64>,
     }
 
     pub(super) fn plugin<R: Runtime>() -> TauriPlugin<R> {
@@ -287,26 +265,12 @@ mod windows_impl {
 
         let app = window.app_handle();
         let cache = app.state::<Arc<Mutex<Cache>>>();
-        let mut state = {
+        let Some(mut state) = ({
             let cache = cache
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             cache.windows.get(MAIN_WINDOW_LABEL).copied()
-        };
-
-        if state.is_none() {
-            if let Some(legacy_state) = load_legacy_state(window) {
-                let mut cache = cache
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                cache
-                    .windows
-                    .insert(MAIN_WINDOW_LABEL.to_string(), legacy_state);
-                state = Some(legacy_state);
-            }
-        }
-
-        let Some(mut state) = state else {
+        }) else {
             return;
         };
 
@@ -314,85 +278,16 @@ mod windows_impl {
         let placement = WINDOWPLACEMENT {
             length: size_of::<WINDOWPLACEMENT>() as u32,
             flags: 0,
-            showCmd: if state.maximized {
-                SW_SHOWMAXIMIZED as u32
-            } else {
-                SW_SHOWNORMAL as u32
-            },
+            // SetWindowPlacement also applies showCmd. Keep the native window
+            // hidden here; reveal_main_window applies the saved show state only
+            // after the frontend startup gate has completed.
+            showCmd: SW_HIDE as u32,
             rcNormalPosition: state.normal_rect.into(),
             ..Default::default()
         };
 
         if unsafe { SetWindowPlacement(hwnd, &placement) } == 0 {
             log::warn!(target: "app.window_state", "failed to restore native window placement");
-        } else {
-            // SetWindowPlacement applies showCmd as well as the normal rect; a
-            // SW_SHOWNORMAL / SW_SHOWMAXIMIZED command can reveal the window
-            // before the frontend has finished its first-frame startup gate.
-            // Keep the restored placement (including maximized state), but
-            // leave the actual reveal to src/main.js after UI initialization.
-            unsafe { ShowWindow(hwnd, SW_HIDE) };
-        }
-    }
-
-    fn load_legacy_state<R: Runtime>(window: &Window<R>) -> Option<WindowPlacementState> {
-        let path = window
-            .app_handle()
-            .path()
-            .app_config_dir()
-            .ok()?
-            .join(LEGACY_STATE_FILENAME);
-        let bytes = fs::read(path).ok()?;
-        let root = serde_json::from_slice::<LegacyRoot>(&bytes).ok()?;
-        let main = root.main?;
-        let width = round_dimension(main.width?)?;
-        let height = round_dimension(main.height?)?;
-        let position = main.position;
-        let x = round_coordinate(position.as_ref().and_then(|p| p.x).or(main.x)?)?;
-        let y = round_coordinate(position.as_ref().and_then(|p| p.y).or(main.y)?)?;
-
-        let (width_offset, height_offset) = native_frame_offsets(window)?;
-        let normal_rect = WindowRect {
-            left: x,
-            top: y,
-            right: x.saturating_add(width).saturating_add(width_offset),
-            bottom: y.saturating_add(height).saturating_add(height_offset),
-        };
-
-        normal_rect.is_valid().then_some(WindowPlacementState {
-            normal_rect,
-            maximized: main.maximized.unwrap_or(false),
-        })
-    }
-
-    fn native_frame_offsets<R: Runtime>(window: &Window<R>) -> Option<(i32, i32)> {
-        let hwnd = native_hwnd(window)?;
-        let mut outer = RECT::default();
-        let mut client = RECT::default();
-        if unsafe { GetWindowRect(hwnd, &mut outer) } == 0
-            || unsafe { GetClientRect(hwnd, &mut client) } == 0
-        {
-            return None;
-        }
-        Some((
-            (outer.right - outer.left) - (client.right - client.left),
-            (outer.bottom - outer.top) - (client.bottom - client.top),
-        ))
-    }
-
-    fn round_dimension(value: f64) -> Option<i32> {
-        if value.is_finite() && value > 0.0 && value <= i32::MAX as f64 {
-            Some(value.round() as i32)
-        } else {
-            None
-        }
-    }
-
-    fn round_coordinate(value: f64) -> Option<i32> {
-        if value.is_finite() && value >= i32::MIN as f64 && value <= i32::MAX as f64 {
-            Some(value.round() as i32)
-        } else {
-            None
         }
     }
 
@@ -448,9 +343,61 @@ mod windows_impl {
     fn native_hwnd<R: Runtime>(window: &Window<R>) -> Option<HWND> {
         window.hwnd().ok().map(|hwnd| hwnd.0 as HWND)
     }
+
+    pub(super) async fn reveal_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+        let webview = app
+            .get_webview_window(MAIN_WINDOW_LABEL)
+            .ok_or_else(|| "main window not found".to_string())?;
+        let hwnd = native_hwnd(&webview.as_ref().window())
+            .ok_or_else(|| "main window handle not found".to_string())?;
+        let maximized = app
+            .state::<Arc<Mutex<Cache>>>()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .windows
+            .get(MAIN_WINDOW_LABEL)
+            .is_some_and(|state| state.maximized);
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let hwnd_value = hwnd as isize;
+        app.run_on_main_thread(move || {
+            let hwnd = hwnd_value as HWND;
+            // Do not call Tauri/Tao show/maximize here. On Windows those APIs
+            // enqueue WindowMessages; Tao then reapplies styles and sends
+            // SWP_FRAMECHANGED for this undecorated shadow window. The native
+            // placement was already restored while hidden, so only one final
+            // ShowWindow transition is needed.
+            unsafe {
+                ShowWindow(hwnd, if maximized { SW_SHOWMAXIMIZED } else { SW_SHOW });
+            }
+            let result = Ok(());
+            let _ = sender.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+
+        receiver
+            .await
+            .map_err(|_| "main window reveal task was cancelled".to_string())?
+    }
 }
 
 #[cfg(windows)]
 pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     windows_impl::plugin()
+}
+
+#[tauri::command]
+pub async fn reveal_main_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        return windows_impl::reveal_main_window(&app).await;
+    }
+
+    #[cfg(not(windows))]
+    {
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "main window not found".to_string())?;
+        window.show().map_err(|error| error.to_string())
+    }
 }

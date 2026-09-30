@@ -57,4 +57,16 @@
     animation-duration: 0ms !important;
     animation-iteration-count: 1 !important;
   }
+
+  /* 纯 CSS 兜底：data-motion 由 JS 写入，脚本尚未执行时系统级减动效也要生效 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      scroll-behavior: auto !important;
+      transition-duration: 0ms !important;
+      animation-duration: 0ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
 }

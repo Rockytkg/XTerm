@@ -88,10 +88,10 @@
     color: var(--text-primary);
     font-size: var(--font-size-base);
     transition:
-      background-color var(--motion-duration-base),
-      border-color var(--motion-duration-base),
-      box-shadow var(--motion-duration-base),
-      color var(--motion-duration-base);
+      background-color var(--motion-duration-base) var(--ease-default),
+      border-color var(--motion-duration-base) var(--ease-default),
+      box-shadow var(--motion-duration-base) var(--ease-default),
+      color var(--motion-duration-base) var(--ease-default);
   }
 
   .shortcut-capture:hover,

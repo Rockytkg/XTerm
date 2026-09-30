@@ -64,6 +64,9 @@ export function createXtermOptions(props, isForegroundRuntime) {
     scrollOnEraseInDisplay: props.terminalScrollOnEraseInDisplay,
     scrollOnUserInput: props.terminalScrollOnUserInput,
     scrollSensitivity: normalizeNumberOption(props.terminalScrollSensitivity, 1, 0.1, 10),
+    scrollbar: {
+      width: 8,
+    },
     smoothScrollDuration: normalizeIntegerOption(props.terminalSmoothScrollDuration, 0, 0, 1000),
     theme: getTerminalTheme(props.terminalTheme),
     windowOptions: {

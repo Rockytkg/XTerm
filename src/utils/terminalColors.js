@@ -56,6 +56,9 @@ function terminalTheme({
     cursorAccent,
     selectionBackground,
     selectionInactiveBackground: selectionInactiveBackground ?? selectionBackground,
+    // xterm 6 设置 scrollbar.width 会启用 overview ruler，其左侧 1px 描边默认用
+    // 前景色（近白）常显；置透明以隐藏描边，仅保留装饰标记能力。
+    overviewRulerBorder: "transparent",
     extendedAnsi: XTERM_256,
     ...Object.fromEntries(ANSI_NAMES.map((name, index) => [name, ansi[index]])),
   };

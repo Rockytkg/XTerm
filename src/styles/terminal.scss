@@ -13,8 +13,21 @@
   }
 
   .terminal-mount {
+    // 内容内缩量的唯一数据源，TerminalResizeAddon 计算行列几何时按此扣除。
+    --terminal-mount-inset-inline: 4px;
+    --terminal-mount-inset-block: 4px;
+
     overflow: hidden;
-    padding: 4px;
+
+    // xterm 6 的滚动条渲染在 .xterm-scrollable-element 内部并随其高度走，
+    // 若沿用旧版 xterm 的做法给 mount 设 padding，滚动条会随内容一起内缩
+    // （上下留白）。mount 保持撑满让滚动条贴边，文字内缩改为偏移
+    // .xterm-screen：它是 position: relative，且 xterm 的鼠标命中基于该元素
+    // 的 getBoundingClientRect，偏移后命中仍然精确。
+    .xterm-screen {
+      left: var(--terminal-mount-inset-inline);
+      top: var(--terminal-mount-inset-block);
+    }
   }
 
   .terminal-search-anchor {
@@ -128,15 +141,6 @@
 
   .terminal-search-button:disabled {
     opacity: 0.38;
-  }
-
-  .terminal-surface .xterm-viewport {
-    overflow-y: auto !important;
-  }
-
-  .terminal-surface .xterm .xterm-scrollable-element > .scrollbar.vertical {
-    width: 4px !important;
-    right: 0 !important;
   }
 
   @container terminal-surface (max-width: 640px) {

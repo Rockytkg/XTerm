@@ -1,7 +1,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Sortable from "sortablejs";
 import { createSortableCleanup } from "../utils/sortableCleanup";
-import { sortableMotion } from "../utils/motion";
+import { getSortableMotion } from "../utils/motion";
 import { sameOrder } from "../utils/listOrder";
 
 const SELECTION_SUPPRESS_MS = 180;
@@ -66,7 +66,7 @@ export function useWorkspaceTabDragSort({ getTabIds, onReorder }) {
     if (!list || sortable) return;
 
     sortable = Sortable.create(list, {
-      ...sortableMotion,
+      ...getSortableMotion(),
       draggable: ".workspace-session-tab-item",
       dataIdAttr: "data-id",
       direction: "horizontal",

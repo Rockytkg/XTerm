@@ -10,7 +10,6 @@
     width: 4px;
     height: 4px;
     background: transparent;
-    appearance: none;
   }
 
   *::-webkit-scrollbar-track,
@@ -18,25 +17,11 @@
     background: transparent;
   }
 
+  // 自定义样式下经典滚动条的箭头按钮与交汇角块没有意义，统一隐藏；
+  // 基伪类的 display: none 已覆盖所有方向/状态变体，无需逐一列举。
   *::-webkit-scrollbar-button,
-  *::-webkit-scrollbar-button:single-button,
-  *::-webkit-scrollbar-button:double-button,
-  *::-webkit-scrollbar-button:vertical,
-  *::-webkit-scrollbar-button:vertical:start:decrement,
-  *::-webkit-scrollbar-button:vertical:start:increment,
-  *::-webkit-scrollbar-button:vertical:end:increment,
-  *::-webkit-scrollbar-button:vertical:end:decrement,
-  *::-webkit-scrollbar-button:horizontal,
-  *::-webkit-scrollbar-button:horizontal:start:decrement,
-  *::-webkit-scrollbar-button:horizontal:start:increment,
-  *::-webkit-scrollbar-button:horizontal:end:increment,
-  *::-webkit-scrollbar-button:horizontal:end:decrement,
   *::-webkit-scrollbar-corner {
     display: none;
-    width: 0;
-    height: 0;
-    background: transparent;
-    appearance: none;
   }
 
   *::-webkit-scrollbar-thumb {
@@ -472,10 +457,21 @@
     }
   }
 
-  .dialog-content {
-    --motion-y: 0px;
-    --motion-scale: 1;
+  /* 共享加载旋转：各处的 spinner 只定义外观（尺寸/边框/颜色），动画统一引用此处 */
+  @keyframes motion-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 
+  /* 共享无缝滚动：双副本结构（MarqueeText 与工作区标签页）统一引用 */
+  @keyframes marquee-scroll {
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  .dialog-content {
     position: fixed;
     top: 50%;
     left: 50%;
@@ -485,7 +481,7 @@
     max-block-size: calc(100vb - 40px);
     max-block-size: calc(100dvb - 40px);
     pointer-events: auto;
-    transform: translate(-50%, -50%) translateY(var(--motion-y)) scale(var(--motion-scale));
+    transform: translate(-50%, -50%);
   }
 
   .dialog-overlay[data-state="open"],

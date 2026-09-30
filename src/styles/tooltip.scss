@@ -1,7 +1,7 @@
 @layer components {
   .tooltip-content {
     --tooltip-motion-x: 0px;
-    --tooltip-motion-y: 2px;
+    --tooltip-motion-y: var(--motion-distance-sm);
 
     transform-origin: center;
     will-change: transform, opacity;
@@ -12,20 +12,20 @@
   }
 
   .tooltip-content[data-side="right"] {
-    --tooltip-motion-x: -2px;
+    --tooltip-motion-x: calc(-1 * var(--motion-distance-sm));
     --tooltip-motion-y: 0px;
 
     transform-origin: left center;
   }
 
   .tooltip-content[data-side="bottom"] {
-    --tooltip-motion-y: -2px;
+    --tooltip-motion-y: calc(-1 * var(--motion-distance-sm));
 
     transform-origin: center top;
   }
 
   .tooltip-content[data-side="left"] {
-    --tooltip-motion-x: 2px;
+    --tooltip-motion-x: var(--motion-distance-sm);
     --tooltip-motion-y: 0px;
 
     transform-origin: right center;

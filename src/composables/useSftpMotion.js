@@ -1,11 +1,37 @@
 import { nextTick, onBeforeUnmount, watch } from "vue";
-import { gsap } from "gsap";
 import { motionEnabled } from "../utils/motion";
 
+// WAAPI 原生补间，替代原 gsap 驱动。ENTER_EASING 为 gsap power3.out 的等价
+// 贝塞尔；入场/抖动时长是 SFTP 列表编排特有的功能时长，不属于交互反馈 token 档位。
+const ENTER_EASING = "cubic-bezier(0.215, 0.61, 0.355, 1)";
+
 const ROW_ENTER = {
-  autoAlpha: 0,
-  y: 4,
-  scale: 0.998,
+  keyframes: [
+    { opacity: 0, transform: "translateY(4px) scale(0.998)" },
+    { opacity: 1, transform: "translateY(0) scale(1)" },
+  ],
+  duration: 240,
+  stagger: 12,
+};
+
+const TRANSFER_ENTER = {
+  keyframes: [
+    { opacity: 0, transform: "translateY(6px) scale(0.995)" },
+    { opacity: 1, transform: "translateY(0) scale(1)" },
+  ],
+  duration: 220,
+  stagger: 18,
+};
+
+const ROW_PULSE = {
+  keyframes: [
+    { transform: "translateX(0)" },
+    { transform: "translateX(-1px)" },
+    { transform: "translateX(1px)" },
+    { transform: "translateX(0)" },
+  ],
+  duration: 280,
+  easing: "cubic-bezier(0.25, 0.46, 0.45, 0.94)",
 };
 
 function canAnimate() {
@@ -16,22 +42,12 @@ function visibleRows(tableBody) {
   return Array.from(tableBody?.querySelectorAll?.(".sftp-row:not(.sftp-skeleton-row)") ?? []);
 }
 
-function skeletonParts(tableBody) {
-  return Array.from(tableBody?.querySelectorAll?.(".sftp-skeleton-icon, .sftp-skeleton-bar") ?? []);
-}
-
 function queueItems(queueList) {
   return Array.from(queueList?.querySelectorAll?.(".sftp-queue-item") ?? []);
 }
 
 function rowKey(row) {
   return row?.dataset?.path || row?.dataset?.rowKey || "";
-}
-
-function clearRows(rows) {
-  if (!rows.length) return;
-  gsap.killTweensOf(rows);
-  gsap.set(rows, { clearProps: "all" });
 }
 
 export function useSftpMotion({
@@ -45,8 +61,27 @@ export function useSftpMotion({
 }) {
   let previousRowKeys = new Set();
   let previousTransferIds = new Set();
-  let skeletonTween = null;
-  let dropTween = null;
+  // 在途动画集合：元素重渲染/组件卸载时统一取消；不设 fill，结束自动还原。
+  const activeAnimations = new Set();
+
+  function play(el, keyframes, options) {
+    const animation = el.animate(keyframes, options);
+    activeAnimations.add(animation);
+    const release = () => activeAnimations.delete(animation);
+    animation.addEventListener("finish", release);
+    animation.addEventListener("cancel", release);
+    return animation;
+  }
+
+  function animateEntering(elements, { keyframes, duration, stagger }) {
+    elements.forEach((el, index) => {
+      play(el, keyframes, {
+        duration,
+        delay: index * stagger,
+        easing: ENTER_EASING,
+      });
+    });
+  }
 
   function animateRows() {
     const rows = visibleRows(tableBodyRef.value);
@@ -62,37 +97,17 @@ export function useSftpMotion({
     });
     previousRowKeys = nextKeys;
 
-    if (!canAnimate() || !enteringRows.length) {
-      clearRows(enteringRows);
-      return;
-    }
-
-    gsap.fromTo(enteringRows, ROW_ENTER, {
-      autoAlpha: 1,
-      y: 0,
-      scale: 1,
-      duration: 0.24,
-      ease: "power3.out",
-      stagger: { each: 0.012, from: "start" },
-      clearProps: "opacity,visibility,transform",
-    });
+    if (!canAnimate() || !enteringRows.length) return;
+    animateEntering(enteringRows, ROW_ENTER);
   }
 
   function pulseChangedRows() {
     const rows = visibleRows(tableBodyRef.value).filter((row) => row.dataset.change);
     if (!rows.length || !canAnimate()) return;
 
-    gsap.fromTo(
-      rows,
-      { x: 0 },
-      {
-        x: 0,
-        duration: 0.28,
-        ease: "power2.out",
-        keyframes: [{ x: -1 }, { x: 1 }, { x: 0 }],
-        clearProps: "transform",
-      },
-    );
+    for (const row of rows) {
+      play(row, ROW_PULSE.keyframes, { duration: ROW_PULSE.duration, easing: ROW_PULSE.easing });
+    }
   }
 
   function animateTransferItems() {
@@ -111,100 +126,21 @@ export function useSftpMotion({
     });
     previousTransferIds = nextIds;
 
-    if (!canAnimate() || !entering.length) {
-      clearRows(entering);
-      return;
-    }
-
-    gsap.fromTo(
-      entering,
-      { autoAlpha: 0, y: 6, scale: 0.995 },
-      {
-        autoAlpha: 1,
-        y: 0,
-        scale: 1,
-        duration: 0.22,
-        ease: "power3.out",
-        stagger: 0.018,
-        clearProps: "opacity,visibility,transform",
-      },
-    );
+    if (!canAnimate() || !entering.length) return;
+    animateEntering(entering, TRANSFER_ENTER);
   }
 
+  // 拖放高亮改由 class + CSS transition 驱动（见 styles/sftp.scss 的
+  // .sftp-browser-shell::after）；data-motion="off" 时全局规则把过渡归零。
   function animateDragState(active) {
-    const table = tableBodyRef.value;
-    const shell = table?.closest?.(".sftp-browser-shell");
-    if (!table) return;
-    dropTween?.kill();
-    if (!canAnimate()) {
-      if (shell) {
-        gsap.set(
-          shell,
-          active
-            ? { "--sftp-drop-opacity": 1 }
-            : { clearProps: "--sftp-drop-opacity,--sftp-drop-ring" },
-        );
-      }
-      return;
-    }
-    if (!shell) return;
-    dropTween = gsap.to(shell, {
-      "--sftp-drop-opacity": active ? 1 : 0,
-      "--sftp-drop-ring": active ? "4px" : "0px",
-      duration: active ? 0.18 : 0.16,
-      ease: active ? "power3.out" : "power2.inOut",
-      onComplete: () => {
-        if (!active) {
-          gsap.set(shell, {
-            clearProps: "--sftp-drop-opacity,--sftp-drop-ring",
-          });
-        }
-      },
-    });
-  }
-
-  function stopSkeletonAnimation({ clear = true } = {}) {
-    if (Array.isArray(skeletonTween)) {
-      for (const tween of skeletonTween) tween.kill();
-    } else {
-      skeletonTween?.kill();
-    }
-    skeletonTween = null;
-    const parts = skeletonParts(tableBodyRef.value);
-    if (clear && parts.length) {
-      gsap.set(parts, { clearProps: "--sftp-skeleton-shimmer" });
-    }
-  }
-
-  function animateSkeleton() {
-    const parts = skeletonParts(tableBodyRef.value);
-    if (!loading.value || !parts.length) {
-      stopSkeletonAnimation();
-      return;
-    }
-    if (!canAnimate()) {
-      stopSkeletonAnimation({ clear: false });
-      return;
-    }
-    stopSkeletonAnimation({ clear: false });
-    skeletonTween = parts.map((part, index) => {
-      gsap.set(part, { "--sftp-skeleton-shimmer": "-160px" });
-      return gsap.to(part, {
-        "--sftp-skeleton-shimmer": "360px",
-        duration: 2.15,
-        delay: (index % 4) * 0.11,
-        ease: "none",
-        repeat: -1,
-        repeatDelay: 0.28,
-      });
-    });
+    const shell = tableBodyRef.value?.closest?.(".sftp-browser-shell");
+    shell?.classList.toggle("sftp-drop-active", active);
   }
 
   watch(
     [filteredRemoteFiles, loading],
     () => {
       nextTick(() => {
-        animateSkeleton();
         animateRows();
         pulseChangedRows();
       });
@@ -227,9 +163,7 @@ export function useSftpMotion({
   });
 
   onBeforeUnmount(() => {
-    dropTween?.kill();
-    clearRows(visibleRows(tableBodyRef.value));
-    stopSkeletonAnimation();
-    clearRows(queueItems(queueListRef.value));
+    for (const animation of activeAnimations) animation.cancel();
+    activeAnimations.clear();
   });
 }

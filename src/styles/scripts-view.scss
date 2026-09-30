@@ -15,13 +15,7 @@
   }
 
   .scripts-spin {
-    animation: scripts-spin 1s linear infinite;
-  }
-
-  @keyframes scripts-spin {
-    to {
-      transform: rotate(360deg);
-    }
+    animation: motion-spin var(--motion-duration-spin) linear infinite;
   }
 
   .scripts-directory {

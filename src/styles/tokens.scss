@@ -108,6 +108,12 @@
     --motion-duration-quick: 70ms;
     --motion-duration-base: 110ms;
     --motion-duration-slow: 180ms;
+
+    /* 布局级位移（如侧栏宽度开合）比表面反馈更慢一档 */
+    --motion-duration-slower: 240ms;
+
+    /* 加载指示循环周期，统一各处 spinner */
+    --motion-duration-spin: 800ms;
     --motion-distance-sm: 2px;
     --motion-distance-md: 5px;
 

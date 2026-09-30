@@ -1,6 +1,6 @@
 import { nextTick, ref, watch } from "vue";
 import Sortable from "sortablejs";
-import { sortableMotion } from "../utils/motion";
+import { getSortableMotion } from "../utils/motion";
 import { createSortableCleanup } from "../utils/sortableCleanup";
 import { sameOrder } from "../utils/listOrder";
 
@@ -51,7 +51,7 @@ export function useSortableList({
     if (!list || sortable || !enabled()) return;
 
     sortable = Sortable.create(list, {
-      ...sortableMotion,
+      ...getSortableMotion(),
       draggable,
       dataIdAttr: "data-id",
       delay,

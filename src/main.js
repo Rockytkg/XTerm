@@ -4,6 +4,7 @@ import App from "./App.vue";
 import { i18n } from "./i18n";
 import { router } from "./router";
 import { initializePreferences } from "./composables/useAppPreferences";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createLogger } from "./utils/logger";
 import { noop } from "./utils/noop";
@@ -30,7 +31,6 @@ if (isWebKitGtkUserAgent(navigator.userAgent)) {
 }
 
 const FONT_LOAD_TIMEOUT_MS = 3000;
-const STARTUP_SPLASH_FADE_MS = 320;
 const STYLE_READY_TIMEOUT_MS = 2500;
 const STYLE_PROBE_INTERVAL_MS = 32;
 
@@ -103,12 +103,21 @@ async function waitForDocumentFonts() {
 
 async function showMainWindow() {
   try {
-    await getCurrentWindow().show();
+    await invoke("reveal_main_window");
+    // The native reveal is queued on Tao's event loop. Keep the opaque splash
+    // for one compositor frame so the first visible frame is already settled.
+    await nextAnimationFrame();
   } catch (error) {
     logger.error("window.show.failed", error);
+    // A command failure should not leave the app permanently hidden. This is
+    // only a failure fallback; the normal path has exactly one reveal owner.
+    await getCurrentWindow()
+      .show()
+      .catch((fallbackError) => {
+        logger.error("window.show.fallback.failed", fallbackError);
+      });
   } finally {
-    startupSplash?.classList.add("is-fading");
-    setTimeout(() => startupSplash?.remove(), STARTUP_SPLASH_FADE_MS);
+    startupSplash?.remove();
   }
 }
 

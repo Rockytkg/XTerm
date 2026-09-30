@@ -19,7 +19,7 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useToasts } from "../composables/useToasts";
 import { restartApp } from "../services/appInfo";
 import { createLogger } from "../utils/logger";
-import { createPanelTransitionHooks, motionEnabled } from "../utils/motion";
+import { motionEnabled } from "../utils/motion";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 import GeneralSettingsView from "../views/settings/GeneralSettingsView.vue";
 import PathsSettingsView from "../views/settings/PathsSettingsView.vue";
@@ -35,7 +35,7 @@ import "../styles/settings-fields.scss";
 
 const { t } = useI18n();
 const workspace = useWorkspaceStore();
-const { preferences, resetPreferences } = workspace;
+const { resetPreferences } = workspace;
 const { showToast } = useToasts();
 const logger = createLogger("frontend.settings.layout");
 
@@ -70,10 +70,7 @@ const sectionComponents = {
 const activeSectionComponent = computed(
   () => sectionComponents[activeSection.value] || GeneralSettingsView,
 );
-const settingsPanelMotionEnabled = computed(
-  () => preferences.enableAnimations !== false && motionEnabled(),
-);
-const settingsPanelTransition = createPanelTransitionHooks();
+const settingsPanelMotionEnabled = computed(() => motionEnabled());
 
 function setActiveSection(section) {
   if (!sectionComponents[section] || section === activeSection.value) return;
@@ -159,11 +156,8 @@ async function confirmRestartApp() {
     <div class="settings-detail">
       <Transition
         v-if="settingsPanelMotionEnabled"
-        :css="settingsPanelTransition.css"
+        name="settings-panel"
         mode="out-in"
-        @before-enter="settingsPanelTransition.beforeEnter"
-        @enter="settingsPanelTransition.enter"
-        @leave="settingsPanelTransition.leave"
       >
         <KeepAlive>
           <component

@@ -26,7 +26,7 @@
 
   .marquee-text-track.is-overflow {
     max-width: none;
-    animation: marquee-text-scroll var(--marquee-duration, 4s) linear infinite;
+    animation: marquee-scroll var(--marquee-duration, 4s) linear infinite;
   }
 
   .marquee-text-track.is-overflow .marquee-text-copy {
@@ -37,11 +37,5 @@
 
   .marquee-text-track.is-overflow .marquee-text-copy + .marquee-text-copy {
     display: inline-block;
-  }
-
-  @keyframes marquee-text-scroll {
-    to {
-      transform: translateX(-50%);
-    }
   }
 }

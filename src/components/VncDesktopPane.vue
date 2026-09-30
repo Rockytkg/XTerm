@@ -600,12 +600,6 @@ onBeforeUnmount(() => {
   border: 2px solid var(--border-light);
   border-top-color: var(--accent);
   border-radius: 50%;
-  animation: vnc-spin 0.8s linear infinite;
-}
-
-@keyframes vnc-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: motion-spin var(--motion-duration-spin) linear infinite;
 }
 </style>

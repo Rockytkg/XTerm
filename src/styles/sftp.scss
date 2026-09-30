@@ -49,7 +49,9 @@
   }
 
   /* 遮罩锚定在不滚动的壳层上：若放在滚动容器 .sftp-browser 上，::after 会随内容
-     一起滚走，向下滚动后拖放高亮仍停在第一屏内容位置。 */
+     一起滚走，向下滚动后拖放高亮仍停在第一屏内容位置。拖放态由 useSftpMotion
+     切换 .sftp-drop-active，过渡走 CSS transition（transition 会对 var 驱动的
+     computed value 变化插值，无需注册自定义属性）。 */
   .sftp-browser-shell::after {
     position: absolute;
     inset: 0;
@@ -65,11 +67,21 @@
       color-mix(in oklch, var(--accent-light) 18%, transparent);
     box-shadow:
       inset 0 0 0 1px color-mix(in oklch, white 18%, transparent),
-      inset 0 0 0 var(--sftp-drop-ring, 0) color-mix(in oklch, var(--accent-glow) 76%, transparent);
+      inset 0 0 0 0 color-mix(in oklch, var(--accent-glow) 76%, transparent);
     content: "";
-    opacity: var(--sftp-drop-opacity, 0);
+    opacity: 0;
     pointer-events: none;
-    will-change: opacity, transform, box-shadow;
+    transition:
+      opacity var(--motion-duration-slow) var(--ease-default),
+      box-shadow var(--motion-duration-slow) var(--ease-default);
+    will-change: opacity, box-shadow;
+  }
+
+  .sftp-browser-shell.sftp-drop-active::after {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in oklch, white 18%, transparent),
+      inset 0 0 0 4px color-mix(in oklch, var(--accent-glow) 76%, transparent);
+    opacity: 1;
   }
 
   .sftp-table-head {
@@ -210,11 +222,40 @@
       ),
       color-mix(in oklch, var(--bg-tertiary) 86%, var(--text-tertiary));
     background-position:
-      var(--sftp-skeleton-shimmer, -160px) 0,
+      -160px 0,
       0 0;
     background-size:
       96px 100%,
       100% 100%;
+
+    /* 扫光循环：background-position 原生可插值，纯 CSS 即可；总周期 2.43s =
+       2.15s 扫动 + 0.28s 停顿（88.5% 后保持终帧）。data-motion="off" 由全局规则停止。 */
+    animation: sftp-skeleton-shimmer 2.43s linear infinite;
+  }
+
+  /* 行间错峰扫光，避免整屏同步闪烁 */
+  .sftp-skeleton-row:nth-child(4n + 2) .sftp-skeleton-icon,
+  .sftp-skeleton-row:nth-child(4n + 2) .sftp-skeleton-bar {
+    animation-delay: 110ms;
+  }
+
+  .sftp-skeleton-row:nth-child(4n + 3) .sftp-skeleton-icon,
+  .sftp-skeleton-row:nth-child(4n + 3) .sftp-skeleton-bar {
+    animation-delay: 220ms;
+  }
+
+  .sftp-skeleton-row:nth-child(4n + 4) .sftp-skeleton-icon,
+  .sftp-skeleton-row:nth-child(4n + 4) .sftp-skeleton-bar {
+    animation-delay: 330ms;
+  }
+
+  @keyframes sftp-skeleton-shimmer {
+    88.5%,
+    100% {
+      background-position:
+        360px 0,
+        0 0;
+    }
   }
 
   .sftp-skeleton-icon {

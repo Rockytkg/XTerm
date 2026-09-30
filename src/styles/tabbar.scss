@@ -64,7 +64,7 @@
   }
 
   .session-tab-label-track.is-overflow {
-    animation: tab-label-marquee var(--marquee-duration, 3s) linear infinite;
+    animation: marquee-scroll var(--marquee-duration, 4s) linear infinite;
   }
 
   /* Suppress marquee during drag (avoids compositor conflict with SortableJS) */
@@ -88,16 +88,6 @@
 
   .session-tab-label-track.is-overflow .session-tab-label-text + .session-tab-label-text {
     display: inline-block;
-  }
-
-  @keyframes tab-label-marquee {
-    from {
-      transform: translateX(0);
-    }
-
-    to {
-      transform: translateX(-50%);
-    }
   }
 
   .workspace-tabbar-tools {

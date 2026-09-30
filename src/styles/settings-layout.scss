@@ -77,4 +77,27 @@
     overflow-y: auto;
     background: var(--bg-primary);
   }
+
+  /* 设置面板切换：CSS Transition 驱动，data-motion="off" 由全局规则归零 */
+  .settings-panel-enter-active {
+    transition:
+      opacity var(--panel-transition-duration) var(--ease-default),
+      transform var(--panel-transition-duration) var(--ease-default);
+  }
+
+  .settings-panel-enter-from {
+    opacity: 0;
+    transform: translate3d(0, var(--motion-distance-md), 0);
+  }
+
+  .settings-panel-leave-active {
+    transition:
+      opacity var(--motion-duration-quick) var(--motion-ease-exit),
+      transform var(--motion-duration-quick) var(--motion-ease-exit);
+  }
+
+  .settings-panel-leave-to {
+    opacity: 0;
+    transform: translate3d(0, calc(var(--motion-distance-sm) * -1), 0);
+  }
 }

@@ -97,14 +97,14 @@ XTerm 是桌面终端工作区，不是营销页或展示型网站。界面应�
 
 ## 动效规范
 
-动效服务于状态确认、空间连续性和错误预防，不承担装饰目的。应用级动效统一从 `src/utils/motion/index.js` 进入。
+动效服务于状态确认、空间连续性和错误预防，不承担装饰目的。应用级动效统一从 `src/utils/motion/index.js` 进入；项目不引入 GSAP 等动画库——DOM 补间用 WAAPI（`element.animate()`），循环与状态切换动画用 CSS keyframes/transition，面板/路由/主题/侧栏切换用 View Transition API。
 
-- 动效必须快速、轻量、可中断；默认 70/110/180ms 三档，位移控制在 2-5px。
-- 弹窗、Toast、设置面板、路由、主题和侧栏切换必须使用统一 motion 模块。
+- 动效必须快速、轻量、可中断；默认 70/110/180/240ms 档位（`--motion-duration-quick/base/slow/slower`），位移控制在 2-5px（`--motion-distance-sm/md`）。
+- 弹窗、Toast、设置面板、路由、主题和侧栏切换必须使用统一 motion 模块与 token，不写组件内散落时长。
 - 终端输入、输出、滚动、尺寸同步和 xterm 渲染链路禁止接入应用级动效。
-- SFTP 传输进度、加载旋转、按钮 hover/focus 等局部状态使用 CSS token，不写组件内散落时长。
-- 图谱布局、拖拽排序等领域库自带运动只保留必要参数，不接入 GSAP。
-- 所有应用级动效必须同时尊重系统 `prefers-reduced-motion` 和应用内 `enableAnimations` 偏好。
+- SFTP 传输进度、加载旋转（共享 `motion-spin` keyframes + `--motion-duration-spin`）、按钮 hover/focus 等局部状态使用 CSS token。
+- 图谱布局、拖拽排序等领域库自带运动只保留必要参数；sortablejs 的拖拽时长/缓动经 `getSortableMotion()` 运行时读取 CSS token，保持单一来源。
+- 所有应用级动效必须同时尊重系统 `prefers-reduced-motion`（JS 写入 `data-motion="off"`，CSS 另有纯媒体查询兜底）和应用内 `enableAnimations` 偏好。
 
 ## 组件规范
 

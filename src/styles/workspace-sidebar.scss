@@ -27,6 +27,7 @@
     flex: 1;
     min-width: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     background: transparent;
   }
 
@@ -216,7 +217,7 @@
     height: 100%;
     border-radius: inherit;
     background: var(--perf-tone);
-    transition: inline-size 240ms ease;
+    transition: inline-size var(--motion-duration-slower) var(--ease-default);
   }
 
   .perf-detail-card {
@@ -583,9 +584,9 @@
   font-weight: 700;
   cursor: pointer;
   transition:
-    background-color 150ms ease,
-    box-shadow 150ms ease,
-    color 150ms ease;
+    background-color var(--motion-duration-base) var(--ease-default),
+    box-shadow var(--motion-duration-base) var(--ease-default),
+    color var(--motion-duration-base) var(--ease-default);
 }
 
 .file-service-protocol:hover:not(:disabled) {
@@ -723,7 +724,7 @@
   height: 100%;
   border-radius: inherit;
   background: var(--file-transfer-tone, var(--accent));
-  transition: width 180ms ease;
+  transition: width var(--motion-duration-slow) var(--ease-default);
 }
 
 .file-service-transfer-meta {

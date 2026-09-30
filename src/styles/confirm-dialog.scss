@@ -166,7 +166,7 @@
   }
 
   .confirm-dialog-spinner {
-    animation: confirm-dialog-spin 0.7s linear infinite;
+    animation: motion-spin var(--motion-duration-spin) linear infinite;
   }
 
   .sftp-delete-summary,
@@ -268,12 +268,6 @@
     padding: 4px 8px;
     color: var(--text-tertiary);
     font-size: var(--font-size-md);
-  }
-
-  @keyframes confirm-dialog-spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   @container confirm-dialog (max-width: 360px) {

@@ -78,9 +78,9 @@
     flex-shrink: 0;
     opacity: 0;
     transition:
-      opacity var(--motion-duration-quick),
-      background-color var(--motion-duration-quick),
-      color var(--motion-duration-quick);
+      opacity var(--motion-duration-quick) var(--ease-default),
+      background-color var(--motion-duration-quick) var(--ease-default),
+      color var(--motion-duration-quick) var(--ease-default);
   }
 
   .tab-close-btn:hover {
