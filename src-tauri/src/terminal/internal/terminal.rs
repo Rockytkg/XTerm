@@ -11,8 +11,8 @@ use super::{
     codec::{decode_backend_bytes_with_raw, encode_for_backend},
     core::{
         CodecState, SessionCapabilityCommand, SessionCommand, SessionTransport, SessionWorkerEvent,
-        TerminalResize, TerminalSession, TerminalSessionResources, TerminalSize,
-        TransportCapabilityCommand, TransportCommand,
+        TerminalResize, TerminalSession, TerminalSessionResources, TransportCapabilityCommand,
+        TransportCommand,
     },
     delivery::{
         drain_live_output, drain_terminal_replay, emit_terminal_data, flush_terminal_output,
@@ -132,7 +132,8 @@ struct SessionWorkerLoop<'a> {
     codec: &'a mut CodecState,
     delivery: SessionDeliveryState,
     startup_auth: Option<StartupAuthState>,
-    last_transport_size: Option<TerminalSize>,
+    last_transport_resize: Option<TerminalResize>,
+    supports_pixel_resize: bool,
 }
 
 async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
@@ -146,8 +147,14 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
         startup_auth,
         replay_line_limit,
     } = runtime;
+    let supports_pixel_resize = transport.supports_pixel_resize();
     let raw_bytes_supported = transport.supports_raw_bytes();
-    let last_transport_size = transport.initial_size();
+    let last_transport_resize = transport.initial_size().map(|size| TerminalResize {
+        cols: size.cols,
+        rows: size.rows,
+        width_px: None,
+        height_px: None,
+    });
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
     let (transport_tx, transport_rx) = tokio::sync::mpsc::unbounded_channel();
     transport.spawn(session_id.clone(), transport_rx, event_tx.clone());
@@ -165,7 +172,8 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
         codec,
         delivery,
         startup_auth,
-        last_transport_size,
+        last_transport_resize,
+        supports_pixel_resize,
     };
     log::debug!(
         target: "terminal.runtime",
@@ -381,7 +389,11 @@ async fn handle_session_command(
                 width_px,
                 height_px,
             };
-            if !should_forward_resize(session_loop.last_transport_size.as_mut(), resize) {
+            if !should_forward_resize(
+                session_loop.last_transport_resize.as_mut(),
+                resize,
+                session_loop.supports_pixel_resize,
+            ) {
                 return true;
             }
             forward_transport_command(
@@ -634,17 +646,20 @@ fn close_transport_silently(transport_tx: &tokio::sync::mpsc::UnboundedSender<Tr
 }
 
 fn should_forward_resize(
-    last_size: Option<&mut super::core::TerminalSize>,
+    last_resize: Option<&mut TerminalResize>,
     resize: TerminalResize,
+    compare_pixels: bool,
 ) -> bool {
-    let Some(last_size) = last_size else {
+    let Some(last_resize) = last_resize else {
         return false;
     };
-    let next_size = resize.size();
-    if *last_size == next_size {
+    let same_size = last_resize.cols == resize.cols && last_resize.rows == resize.rows;
+    let same_pixels = !compare_pixels
+        || (last_resize.width_px == resize.width_px && last_resize.height_px == resize.height_px);
+    if same_size && same_pixels {
         return false;
     }
-    *last_size = next_size;
+    *last_resize = resize;
     true
 }
 
@@ -845,7 +860,8 @@ pub(crate) fn shutdown_all_sessions<R: tauri::Runtime>(app: &tauri::AppHandle<R>
 
 #[cfg(test)]
 mod tests {
-    use super::{accept_input_sequence, SessionDeliveryState};
+    use super::{accept_input_sequence, should_forward_resize, SessionDeliveryState};
+    use crate::terminal::internal::core::TerminalResize;
 
     #[test]
     fn input_sequence_is_monotonic_within_a_channel() {
@@ -865,5 +881,47 @@ mod tests {
 
         assert!(accept_input_sequence(&mut delivery, Some(7), None));
         assert!(accept_input_sequence(&mut delivery, Some(7), None));
+    }
+
+    #[test]
+    fn resize_forwarding_includes_pixel_dimensions() {
+        let mut last = Some(TerminalResize {
+            cols: 120,
+            rows: 40,
+            width_px: Some(1200),
+            height_px: Some(800),
+        });
+
+        assert!(should_forward_resize(
+            last.as_mut(),
+            TerminalResize {
+                cols: 120,
+                rows: 40,
+                width_px: Some(1280),
+                height_px: Some(800),
+            },
+            true,
+        ));
+        assert!(!should_forward_resize(
+            last.as_mut(),
+            TerminalResize {
+                cols: 120,
+                rows: 40,
+                width_px: Some(1280),
+                height_px: Some(800),
+            },
+            true,
+        ));
+
+        assert!(!should_forward_resize(
+            last.as_mut(),
+            TerminalResize {
+                cols: 120,
+                rows: 40,
+                width_px: Some(1440),
+                height_px: Some(900),
+            },
+            false,
+        ));
     }
 }

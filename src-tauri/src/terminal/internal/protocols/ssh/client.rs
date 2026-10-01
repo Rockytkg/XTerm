@@ -26,6 +26,10 @@ impl SessionTransportRuntime for SshSessionTransport {
         Some(self.initial_size)
     }
 
+    fn supports_pixel_resize(&self) -> bool {
+        true
+    }
+
     fn supports_raw_bytes(&self) -> bool {
         true
     }

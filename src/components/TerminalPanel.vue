@@ -38,6 +38,7 @@ import {
   TauriClipboardAddon,
   TerminalOutputAddon,
   TerminalResizeAddon,
+  TerminalScrollbarAutoHideAddon,
   TerminalStatusAddon,
   TrzszAddon,
 } from "../utils/terminal/addons";
@@ -699,6 +700,11 @@ function setupTerminal() {
   terminal = new Terminal(createXtermOptions(props, isForegroundRuntime()));
   installStableTerminalAddons();
   terminal.open(terminalMount.value);
+  loadTerminalAddon(
+    "scrollbar-auto-hide",
+    () => new TerminalScrollbarAutoHideAddon(),
+    () => {},
+  );
   syncSearchOpenRequest();
   terminalOptionalAddons.schedulePostOpenTerminalAddons(generation);
   terminalMount.value.addEventListener("wheel", handleTerminalWheel, {

@@ -41,6 +41,8 @@ function proposeGeometry(terminal, mount) {
 }
 
 function readResizeObserverEntrySize(entry) {
+  if (!entry) return { width: 0, height: 0 };
+
   const box = Array.isArray(entry.borderBoxSize) ? entry.borderBoxSize[0] : entry.borderBoxSize;
   if (box) {
     return {
@@ -70,8 +72,8 @@ export class TerminalResizeAddon {
     this._onFrontendResize = onFrontendResize;
     this._onBackendResize = onBackendResize;
     this._canSyncBackend = canSyncBackend || (() => true);
-    this._isEnabled = isEnabled;
-    this._isDisposed = isDisposed;
+    this._isEnabled = isEnabled || (() => true);
+    this._isDisposed = isDisposed || (() => false);
 
     this._terminal = null;
     this._resizeDisposable = null;
@@ -114,6 +116,7 @@ export class TerminalResizeAddon {
     const mount = this._getMount();
     if (!this._resizeObserver) return;
     if (!mount || !this._isEnabled()) {
+      this._cancelFitScheduling();
       if (this._observedMount) this._resizeObserver.disconnect();
       this._observedMount = null;
       return;
@@ -127,7 +130,7 @@ export class TerminalResizeAddon {
   fitIfNeeded({ force = false } = {}) {
     const terminal = this._terminal;
     const mount = this._getMount();
-    if (!terminal || !mount) {
+    if (!terminal || !mount || !this._isEnabled()) {
       return false;
     }
 
@@ -159,7 +162,13 @@ export class TerminalResizeAddon {
   }
 
   scheduleFit({ immediate = false, force = false } = {}) {
+    if (this._isDisposed() || !this._isEnabled()) return;
+
     this._pendingFitForce = this._pendingFitForce || force;
+    // A fit can leave cols/rows unchanged while the native window's pixel
+    // dimensions changed. Keep backend synchronization tied to the same
+    // scheduled pass instead of relying on a second timer pass to notice it.
+    this._pendingPixelBackendSync = true;
 
     if (immediate) {
       clearTimeout(this._fitTimer);
@@ -174,14 +183,18 @@ export class TerminalResizeAddon {
 
     clearTimeout(this._fitTimer);
     this._fitTimer = setTimeout(() => {
-      if (this._isDisposed() || this._fitFrame) return;
+      this._fitTimer = undefined;
+      if (this._isDisposed() || !this._isEnabled()) return;
       this._pendingPixelBackendSync = true;
-      this._fitFrame = requestAnimationFrame(() => this._flushFit());
+      if (!this._fitFrame) {
+        this._fitFrame = requestAnimationFrame(() => this._flushFit());
+      }
     }, FIT_SETTLE_MS);
   }
 
   scheduleFontMetricsRefit() {
     this._lastProposedGeometry = { cols: 0, rows: 0 };
+    if (this._isDisposed() || !this._isEnabled()) return;
     this.scheduleFit({ immediate: true, force: true });
 
     if (document.fonts?.ready) {
@@ -202,6 +215,7 @@ export class TerminalResizeAddon {
   }
 
   handleObservedResize(size) {
+    if (!this._isEnabled()) return;
     if (size.width <= 0 || size.height <= 0) {
       this._lastObservedSize = size;
       return;
@@ -251,14 +265,9 @@ export class TerminalResizeAddon {
   }
 
   reset() {
-    clearTimeout(this._fitTimer);
-    this._fitTimer = undefined;
-    cancelAnimationFrame(this._fitFrame);
-    this._fitFrame = undefined;
+    this._cancelFitScheduling();
     clearTimeout(this._pendingFontMetricsTimer);
     this._pendingFontMetricsTimer = undefined;
-    this._pendingFitForce = false;
-    this._pendingPixelBackendSync = false;
     this._lastObservedSize = { width: 0, height: 0 };
     this._lastProposedGeometry = { cols: 0, rows: 0 };
     this.resetBackendSyncState();
@@ -266,6 +275,15 @@ export class TerminalResizeAddon {
 
   _hasObservedSize() {
     return this._lastObservedSize.width > 0 && this._lastObservedSize.height > 0;
+  }
+
+  _cancelFitScheduling() {
+    clearTimeout(this._fitTimer);
+    this._fitTimer = undefined;
+    cancelAnimationFrame(this._fitFrame);
+    this._fitFrame = undefined;
+    this._pendingFitForce = false;
+    this._pendingPixelBackendSync = false;
   }
 
   _readPixelSize() {
@@ -294,8 +312,8 @@ export class TerminalResizeAddon {
     const syncPixels = this._pendingPixelBackendSync;
     this._pendingFitForce = false;
     this._pendingPixelBackendSync = false;
-    const didResize = this.fitIfNeeded({ force });
-    if (!didResize && syncPixels) {
+    this.fitIfNeeded({ force });
+    if (syncPixels) {
       this.queueBackendSync(null);
     }
   }

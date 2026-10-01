@@ -817,6 +817,12 @@ pub(super) enum TransportCapabilityCommand {
 pub(super) trait SessionTransportRuntime: Send {
     fn initial_size(&self) -> Option<TerminalSize>;
 
+    /// Whether pixel-only changes have transport meaning. Telnet/serial use
+    /// character geometry only; SSH forwards both dimensions to the PTY.
+    fn supports_pixel_resize(&self) -> bool {
+        false
+    }
+
     fn supports_raw_bytes(&self) -> bool {
         false
     }
@@ -841,15 +847,6 @@ pub(super) struct TerminalResize {
     pub(super) rows: u32,
     pub(super) width_px: Option<u32>,
     pub(super) height_px: Option<u32>,
-}
-
-impl TerminalResize {
-    pub(super) fn size(self) -> TerminalSize {
-        TerminalSize {
-            cols: self.cols,
-            rows: self.rows,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

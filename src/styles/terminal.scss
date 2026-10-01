@@ -28,6 +28,20 @@
       left: var(--terminal-mount-inset-inline);
       top: var(--terminal-mount-inset-block);
     }
+
+    // xterm 6 renders its interactive scrollbar separately. Hide the native
+    // viewport scrollbar so the global WebKit scrollbar theme cannot leave a
+    // second, permanently visible scrollbar behind the addon-controlled one.
+    .xterm .xterm-viewport {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+
+    .xterm .xterm-viewport::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
   }
 
   .terminal-search-anchor {
@@ -162,4 +176,17 @@
       justify-content: flex-end;
     }
   }
+}
+
+// xterm.css is intentionally imported as an unlayered stylesheet. Keep this
+// behavioral override unlayered as well; otherwise its opacity: 0 can lose to
+// xterm's unlayered .xterm-visible { opacity: 1 } despite a more specific
+// selector. The root class is stable while xterm rewrites scrollbar classes.
+.terminal-mount .xterm.xterm-addon-scrollbar-idle-hidden
+  .xterm-scrollable-element
+  > .xterm-scrollbar {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+  visibility: hidden;
 }
