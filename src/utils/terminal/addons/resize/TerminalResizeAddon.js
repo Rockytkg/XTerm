@@ -165,10 +165,6 @@ export class TerminalResizeAddon {
     if (this._isDisposed() || !this._isEnabled()) return;
 
     this._pendingFitForce = this._pendingFitForce || force;
-    // A fit can leave cols/rows unchanged while the native window's pixel
-    // dimensions changed. Keep backend synchronization tied to the same
-    // scheduled pass instead of relying on a second timer pass to notice it.
-    this._pendingPixelBackendSync = true;
 
     if (immediate) {
       clearTimeout(this._fitTimer);
@@ -185,7 +181,6 @@ export class TerminalResizeAddon {
     this._fitTimer = setTimeout(() => {
       this._fitTimer = undefined;
       if (this._isDisposed() || !this._isEnabled()) return;
-      this._pendingPixelBackendSync = true;
       if (!this._fitFrame) {
         this._fitFrame = requestAnimationFrame(() => this._flushFit());
       }
@@ -229,6 +224,11 @@ export class TerminalResizeAddon {
     }
 
     this._lastObservedSize = size;
+    // Pixel-only backend synchronization is valid only when the mount itself
+    // changed size. Scheduled refits can also come from renderer/DOM state
+    // changes (for example scrollbar idle styling) and must not resize the
+    // remote PTY when cols/rows remain unchanged.
+    this._pendingPixelBackendSync = true;
     this.scheduleFit();
   }
 

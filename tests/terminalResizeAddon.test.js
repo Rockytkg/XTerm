@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
 
 import { TerminalResizeAddon } from "../src/utils/terminal/addons/resize/TerminalResizeAddon.js";
 
@@ -96,4 +96,109 @@ test("backend synchronization includes pixel-only changes", () => {
       { cols: 80, rows: 24, widthPx: 120, heightPx: 50 },
     ],
   );
+});
+
+test("scheduled refits do not sync pixels without an observed mount resize", () => {
+  withWindow(() => {
+    const snapshots = [];
+    const { addon } = createAddon({
+      onBackendResize: (snapshot) => {
+        snapshots.push(snapshot);
+        return true;
+      },
+    });
+
+    addon._lastObservedSize = { width: 100, height: 50 };
+    addon._pendingPixelBackendSync = false;
+    addon._flushFit();
+
+    assert.deepEqual(snapshots, []);
+  });
+});
+
+test("delayed refit settling does not enable pixel synchronization", () => {
+  withWindow(() => {
+    const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = () => 1;
+    globalThis.cancelAnimationFrame = () => {};
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const { addon } = createAddon();
+      addon.scheduleFit();
+      mock.timers.tick(48);
+
+      assert.equal(addon._pendingPixelBackendSync, false);
+      addon.reset();
+    } finally {
+      mock.timers.reset();
+      if (previousRequestAnimationFrame === undefined) delete globalThis.requestAnimationFrame;
+      else globalThis.requestAnimationFrame = previousRequestAnimationFrame;
+      if (previousCancelAnimationFrame === undefined) delete globalThis.cancelAnimationFrame;
+      else globalThis.cancelAnimationFrame = previousCancelAnimationFrame;
+    }
+  });
+});
+
+test("observed mount resize still synchronizes pixel-only changes", () => {
+  withWindow(() => {
+    const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = () => 1;
+    globalThis.cancelAnimationFrame = () => {};
+    try {
+      const snapshots = [];
+      const { addon, mount, terminal } = createAddon({
+        onBackendResize: (snapshot) => {
+          snapshots.push(snapshot);
+          return true;
+        },
+      });
+
+      mount.clientWidth = 809;
+      mount.clientHeight = 128;
+      addon._lastObservedSize = { width: 808, height: 128 };
+      addon._lastProposedGeometry = { cols: 80, rows: 24 };
+      terminal.cols = 80;
+      terminal.rows = 24;
+      addon.handleObservedResize({ width: 809, height: 128 });
+      addon._flushFit();
+      addon._flushBackendSync();
+
+      assert.deepEqual(
+        snapshots.map(({ cols, rows, widthPx, heightPx }) => ({ cols, rows, widthPx, heightPx })),
+        [{ cols: 80, rows: 24, widthPx: 809, heightPx: 128 }],
+      );
+      addon.reset();
+    } finally {
+      if (previousRequestAnimationFrame === undefined) delete globalThis.requestAnimationFrame;
+      else globalThis.requestAnimationFrame = previousRequestAnimationFrame;
+      if (previousCancelAnimationFrame === undefined) delete globalThis.cancelAnimationFrame;
+      else globalThis.cancelAnimationFrame = previousCancelAnimationFrame;
+    }
+  });
+});
+
+test("fit before activation sync uses the visible mount geometry", () => {
+  withWindow(() => {
+    const snapshots = [];
+    const { addon, terminal } = createAddon({
+      onBackendResize: (snapshot) => {
+        snapshots.push(snapshot);
+        return true;
+      },
+    });
+
+    addon._lastProposedGeometry = { cols: 0, rows: 0 };
+    terminal.cols = 1;
+    terminal.rows = 1;
+    addon.fitIfNeeded();
+    addon.queueBackendSync(null, { immediate: true });
+
+    assert.deepEqual(terminal.resizeCalls, [{ cols: 9, rows: 8 }]);
+    assert.deepEqual(
+      snapshots.map(({ cols, rows }) => ({ cols, rows })),
+      [{ cols: 9, rows: 8 }],
+    );
+  });
 });

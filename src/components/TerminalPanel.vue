@@ -473,7 +473,13 @@ terminalSessionRuntime = useTerminalSessionRuntime({
   onSessionData: (payload) => {
     enqueueTerminalPayload(payload);
   },
-  queueResizeSync: () => terminalResizeAddon.queueBackendSync(null, { immediate: true }),
+  queueResizeSync: () => {
+    // A tab can be reattached before the next-frame presentation fit runs.
+    // Recompute from the currently visible mount first so activation never
+    // sends the hidden tab's stale xterm geometry to the remote PTY.
+    terminalResizeAddon.fitIfNeeded();
+    terminalResizeAddon.queueBackendSync(null, { immediate: true });
+  },
   releaseStatus: () => terminalStatusAddon.release(),
   setActiveSessionChannel: (connectionId, channelId) => {
     const frontendSessionId = props.activeConnection?.id || "";
