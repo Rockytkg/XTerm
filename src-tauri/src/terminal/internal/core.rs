@@ -28,6 +28,8 @@ pub(super) const DETECTION_LOCK_CONFIDENCE: f32 = 0.95;
 pub(super) const DETECTION_ERROR_UNLOCK_THRESHOLD: u8 = 3;
 pub(super) const SERIAL_FAST_BAUD_SAMPLE_MS: u64 = 220;
 pub(super) const SERIAL_PASSIVE_BAUD_SAMPLE_MS: u64 = 80;
+/// 深度探测先被动等待设备启动输出，再决定是否发送唤醒回车。
+pub(super) const SERIAL_DEEP_PASSIVE_BAUD_SAMPLE_MS: u64 = 420;
 pub(super) const SERIAL_SAMPLE_MAX_BYTES: usize = 8192;
 pub(super) const SERIAL_MIN_DETECT_BYTES: usize = 4;
 pub(super) const SERIAL_PROBE_SETTLE_MS: u64 = 15;

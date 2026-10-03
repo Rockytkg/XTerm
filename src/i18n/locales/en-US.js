@@ -1128,13 +1128,7 @@ export default {
     ssh_user_required: "Enter an SSH username.",
     telnet_connect_failed: "Could not connect to the Telnet server {host}:{port}.",
     telnet_connect_timeout: "Timed out connecting to the Telnet server {host}:{port}.",
-    telnet_engine_initialization_failed: "Failed to initialize the Telnet engine.",
     telnet_host_required: "Enter a Telnet host address.",
-    telnet_invalid_startup_data:
-      "The Telnet startup data is invalid. The target may not be Telnet.",
-    telnet_negotiation_failed: "Telnet option negotiation failed.",
-    telnet_negotiation_timeout: "Telnet option negotiation timed out.",
-    telnet_remote_closed: "The Telnet server closed the connection during startup.",
     telnet_startup_auth_failed: "Telnet startup authentication failed.",
     telnet_startup_write_failed: "Failed to send Telnet startup negotiation to {host}:{port}.",
     telnet_stream_setup_failed: "Failed to configure the Telnet TCP stream.",

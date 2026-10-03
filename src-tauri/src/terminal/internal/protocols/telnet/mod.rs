@@ -27,7 +27,10 @@ use crate::{
 
 mod engine;
 
-use engine::{EngineEvent, TelnetEngine, BINARY, DO, ECHO, NAWS, NEW_ENVIRON, SGA, TTYPE, WILL};
+use engine::{
+    EngineEvent, TelnetEngine, BINARY, COMPRESS2, DO, ECHO, ENVIRON, NAWS, NEW_ENVIRON, SGA,
+    STATUS, TTYPE, WILL,
+};
 
 const ENV_IS: u8 = 0;
 const ENV_SEND: u8 = 1;
@@ -37,14 +40,14 @@ const ENV_ESC: u8 = 2;
 const ENV_USERVAR: u8 = 3;
 const TTYPE_IS: u8 = 0;
 const TTYPE_SEND: u8 = 1;
+const STATUS_SEND: u8 = 1;
 const LOCAL_STARTUP_OPTIONS: [u8; 5] = [BINARY, SGA, TTYPE, NAWS, NEW_ENVIRON];
-const REMOTE_STARTUP_OPTIONS: [u8; 3] = [BINARY, ECHO, SGA];
+const REMOTE_STARTUP_OPTIONS: [u8; 4] = [BINARY, ECHO, SGA, COMPRESS2];
 
 pub(super) struct TelnetRuntime {
     reader: ReadHalf<tokio::net::TcpStream>,
     writer: WriteHalf<tokio::net::TcpStream>,
     state: TelnetState,
-    read_buffer: Vec<u8>,
 }
 
 pub(super) struct TelnetSessionTransport {
@@ -71,6 +74,15 @@ struct TelnetReceiveOutcome {
     writes: BytesMut,
     error: Option<String>,
     transport_ready: bool,
+}
+
+/// EOF is a lifecycle signal, not a protocol failure: before the transport is
+/// ready it means negotiation never completed, afterwards it is a normal
+/// close. Keeping it typed avoids matching on error message text at the
+/// transport layer.
+pub(super) enum TelnetReadError {
+    RemoteClosed,
+    Failed(String),
 }
 
 struct TelnetState {
@@ -152,14 +164,7 @@ impl TelnetConnectionFactory {
             cols: config.cols as u32,
             rows: config.rows as u32,
         };
-        let mut runtime = TelnetRuntime::new(stream, config).map_err(|error| {
-            ConnectionError::with_args(
-                "telnet_engine_initialization_failed",
-                error.clone(),
-                serde_json::json!({ "detail": error }),
-                false,
-            )
-        })?;
+        let mut runtime = TelnetRuntime::new(stream, config);
         cancelable_open(&request, async {
             runtime.flush_startup().await.map_err(|error| {
                 ConnectionError::with_args(
@@ -203,14 +208,13 @@ impl TelnetConnectionFactory {
 }
 
 impl TelnetRuntime {
-    pub(super) fn new(stream: tokio::net::TcpStream, config: TelnetConfig) -> Result<Self, String> {
+    pub(super) fn new(stream: tokio::net::TcpStream, config: TelnetConfig) -> Self {
         let (reader, writer) = tokio::io::split(stream);
-        Ok(Self {
+        Self {
             reader,
             writer,
-            state: TelnetState::new(config)?,
-            read_buffer: vec![0_u8; SESSION_BUFFER_SIZE],
-        })
+            state: TelnetState::new(config),
+        }
     }
 
     async fn flush_startup(&mut self) -> Result<(), String> {
@@ -221,31 +225,41 @@ impl TelnetRuntime {
         write_telnet_socket(&mut self.writer, &bytes).await
     }
 
+    /// Reads from the socket, feeds the bytes through the protocol engine and
+    /// drains whatever application data decoded into `buffer`. The socket read
+    /// targets `buffer` directly; decoded surplus (e.g. MCCP2 output larger
+    /// than one read) stays in `pending_data` for the next call.
     pub(super) async fn read_into_with_negotiation(
         &mut self,
         buffer: &mut [u8],
-    ) -> Result<(usize, bool), String> {
+    ) -> Result<(usize, bool), TelnetReadError> {
         if self.state.pending_data.has_remaining() {
             return Ok((drain_pending_data(&mut self.state, buffer), false));
         }
-        let mut raw = std::mem::take(&mut self.read_buffer);
-        raw.resize(SESSION_BUFFER_SIZE.min(buffer.len().max(1)), 0);
-        let read_result = self.reader.read(&mut raw).await;
-        let result = match read_result {
-            Ok(0) => Err("Telnet connection closed by remote host".to_string()),
-            Ok(size) => {
-                let transport_ready = self.process_socket_bytes(&raw[..size]).await?;
-                Ok((drain_pending_data(&mut self.state, buffer), transport_ready))
+        if buffer.is_empty() {
+            return Err(TelnetReadError::Failed(
+                "telnet read buffer must not be empty".to_string(),
+            ));
+        }
+        let size = match self.reader.read(buffer).await {
+            Ok(0) => return Err(TelnetReadError::RemoteClosed),
+            Ok(size) => size,
+            Err(error) => {
+                return Err(TelnetReadError::Failed(format!(
+                    "failed to read telnet data: {error}"
+                )));
             }
-            Err(error) => Err(format!("failed to read telnet data: {error}")),
         };
-        self.read_buffer = raw;
-        result
+        let transport_ready = self
+            .process_socket_bytes(&buffer[..size])
+            .await
+            .map_err(TelnetReadError::Failed)?;
+        Ok((drain_pending_data(&mut self.state, buffer), transport_ready))
     }
 
     pub(super) async fn write(&mut self, bytes: &[u8]) -> Result<(), String> {
         let events = self.state.engine.send_terminal_input(bytes);
-        let writes = collect_protocol_writes(events)?;
+        let writes = collect_protocol_writes(events);
         write_telnet_socket(&mut self.writer, &writes).await
     }
 
@@ -253,7 +267,7 @@ impl TelnetRuntime {
         self.state.cols = cols.clamp(1, u16::MAX as u32) as u16;
         self.state.rows = rows.clamp(1, u16::MAX as u32) as u16;
         if self.state.engine.local_enabled(NAWS) {
-            let frame = self.state.naws_events()?;
+            let frame = self.state.naws_events();
             write_telnet_socket(&mut self.writer, &frame).await?;
         }
         Ok(())
@@ -269,14 +283,17 @@ impl TelnetRuntime {
         if !outcome.writes.is_empty() {
             write_telnet_socket(&mut self.writer, &outcome.writes).await?;
         }
-        outcome.error.map_or(Ok(outcome.transport_ready), Err)
+        if let Some(error) = outcome.error {
+            return Err(error);
+        }
+        Ok(outcome.transport_ready)
     }
 }
 
 impl TelnetState {
-    fn new(config: TelnetConfig) -> Result<Self, String> {
+    fn new(config: TelnetConfig) -> Self {
         let mut state = Self {
-            engine: TelnetEngine::new()?,
+            engine: TelnetEngine::new(),
             terminal_types: terminal_type_cycle(&config.terminal_type),
             terminal_type_index: 0,
             terminal_type_exhausted: false,
@@ -290,15 +307,15 @@ impl TelnetState {
             let events = state.engine.negotiate(WILL, option);
             state
                 .pending_writes
-                .extend_from_slice(&collect_protocol_writes(events)?);
+                .extend_from_slice(&collect_protocol_writes(events));
         }
         for option in REMOTE_STARTUP_OPTIONS {
             let events = state.engine.negotiate(DO, option);
             state
                 .pending_writes
-                .extend_from_slice(&collect_protocol_writes(events)?);
+                .extend_from_slice(&collect_protocol_writes(events));
         }
-        Ok(state)
+        state
     }
 
     fn receive(&mut self, raw: &[u8]) -> TelnetReceiveOutcome {
@@ -306,15 +323,7 @@ impl TelnetState {
         let mut error = None;
         let mut transport_ready = false;
         for event in self.engine.receive(raw) {
-            if matches!(
-                event,
-                EngineEvent::Negotiation { command: DO, option }
-                    if LOCAL_STARTUP_OPTIONS.contains(&option)
-            ) || matches!(
-                event,
-                EngineEvent::Negotiation { command: WILL, option }
-                    if REMOTE_STARTUP_OPTIONS.contains(&option)
-            ) {
+            if matches!(event, EngineEvent::Negotiation { .. }) {
                 transport_ready = true;
             }
             match event {
@@ -331,36 +340,47 @@ impl TelnetState {
                 EngineEvent::Negotiation {
                     command: DO,
                     option: NAWS,
-                } => match self.naws_events() {
-                    Ok(data) => writes.extend_from_slice(&data),
-                    Err(detail) => error = Some(detail),
-                },
+                } => writes.extend_from_slice(&self.naws_events()),
+                EngineEvent::Negotiation {
+                    command: DO,
+                    option: STATUS,
+                } => writes.extend_from_slice(&self.status_events()),
                 EngineEvent::Subnegotiation {
                     option: TTYPE,
                     data,
                 } => {
                     if data.first() == Some(&TTYPE_SEND) {
-                        match self.ttype_events() {
-                            Ok(data) => writes.extend_from_slice(&data),
-                            Err(detail) => error = Some(detail),
-                        }
+                        writes.extend_from_slice(&self.ttype_events());
                     }
                 }
                 EngineEvent::Subnegotiation {
-                    option: NEW_ENVIRON,
+                    option: option @ (ENVIRON | NEW_ENVIRON),
                     data,
                 } => {
                     if data.first() == Some(&ENV_SEND) {
-                        match self.new_environ_events(&data) {
-                            Ok(data) => writes.extend_from_slice(&data),
-                            Err(detail) => error = Some(detail),
-                        }
+                        writes.extend_from_slice(&self.new_environ_events(option, &data));
+                    }
+                }
+                EngineEvent::Subnegotiation {
+                    option: STATUS,
+                    data,
+                } => {
+                    if data.first() == Some(&STATUS_SEND) {
+                        writes.extend_from_slice(&self.status_events());
                     }
                 }
                 EngineEvent::Warning(detail) => {
-                    log::warn!(target: "telnet.runtime", "libtelnet: {detail}")
+                    log::warn!(target: "telnet.runtime", "protocol warning: {detail}")
                 }
-                EngineEvent::Error(detail) => error = Some(detail),
+                EngineEvent::Error(detail) => {
+                    // The first error is the root cause; later ones from the
+                    // same read are cascade noise and only worth a log line.
+                    if error.is_none() {
+                        error = Some(detail);
+                    } else {
+                        log::warn!(target: "telnet.runtime", "superseded protocol error: {detail}");
+                    }
+                }
                 EngineEvent::Iac(command) => {
                     log::trace!(target: "telnet.runtime", "telnet command ignored: {command}");
                 }
@@ -374,19 +394,17 @@ impl TelnetState {
         }
     }
 
-    fn naws_events(&mut self) -> Result<Vec<u8>, String> {
+    fn naws_events(&mut self) -> Vec<u8> {
         let mut payload = [0_u8; 4];
         payload[..2].copy_from_slice(&self.cols.to_be_bytes());
         payload[2..].copy_from_slice(&self.rows.to_be_bytes());
         collect_protocol_writes(self.engine.subnegotiation(NAWS, &payload))
     }
 
-    fn ttype_events(&mut self) -> Result<Vec<u8>, String> {
-        let terminal_type = self
-            .terminal_types
-            .get(self.terminal_type_index)
-            .cloned()
-            .unwrap_or_else(|| "xterm-256color".to_string());
+    fn ttype_events(&mut self) -> Vec<u8> {
+        // `terminal_types` always holds at least the primary type and the
+        // index advance below keeps it in range, so indexing cannot fail.
+        let terminal_type = self.terminal_types[self.terminal_type_index].clone();
         if self.terminal_type_index + 1 < self.terminal_types.len() {
             self.terminal_type_index += 1;
         } else if self.terminal_type_exhausted {
@@ -401,7 +419,7 @@ impl TelnetState {
         collect_protocol_writes(self.engine.subnegotiation(TTYPE, &payload))
     }
 
-    fn new_environ_events(&mut self, request: &[u8]) -> Result<Vec<u8>, String> {
+    fn new_environ_events(&mut self, option: u8, request: &[u8]) -> Vec<u8> {
         let requested = parse_new_environ_send(request);
         let mut payload = Vec::with_capacity(64);
         payload.push(ENV_IS);
@@ -420,23 +438,27 @@ impl TelnetState {
                 }
             }
         }
-        collect_protocol_writes(self.engine.subnegotiation(NEW_ENVIRON, &payload))
+        collect_protocol_writes(self.engine.subnegotiation(option, &payload))
+    }
+
+    fn status_events(&mut self) -> Vec<u8> {
+        let payload = self.engine.status_payload();
+        collect_protocol_writes(self.engine.subnegotiation(STATUS, &payload))
     }
 }
 
-fn collect_protocol_writes(events: Vec<EngineEvent>) -> Result<Vec<u8>, String> {
+fn collect_protocol_writes(events: Vec<EngineEvent>) -> Vec<u8> {
     let mut writes = Vec::new();
     for event in events {
         match event {
             EngineEvent::Send(data) => writes.extend_from_slice(&data),
             EngineEvent::Warning(detail) => {
-                log::warn!(target: "telnet.runtime", "libtelnet: {detail}")
+                log::warn!(target: "telnet.runtime", "protocol warning: {detail}")
             }
-            EngineEvent::Error(detail) => return Err(detail),
             _ => {}
         }
     }
-    Ok(writes)
+    writes
 }
 
 fn drain_pending_data(state: &mut TelnetState, output: &mut [u8]) -> usize {
@@ -606,7 +628,7 @@ pub(super) fn normalize_terminal_type(value: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::engine::DONT;
+    use super::engine::{DONT, STATUS_IS};
     use super::*;
 
     fn test_config() -> TelnetConfig {
@@ -620,7 +642,7 @@ mod tests {
 
     #[test]
     fn startup_negotiation_matches_switch_client_policy() {
-        let state = TelnetState::new(test_config()).unwrap();
+        let state = TelnetState::new(test_config());
         let writes = state.pending_writes.as_ref();
         for frame in [
             [255, WILL, SGA],
@@ -638,11 +660,14 @@ mod tests {
         assert!(writes
             .windows(3)
             .any(|candidate| candidate == [255, DO, BINARY]));
+        assert!(writes
+            .windows(3)
+            .any(|candidate| candidate == [255, DO, COMPRESS2]));
     }
 
     #[test]
     fn naws_is_sent_only_after_server_accepts_it() {
-        let mut state = TelnetState::new(test_config()).unwrap();
+        let mut state = TelnetState::new(test_config());
         let outcome = state.receive(&[255, DO, NAWS]);
         assert!(outcome.transport_ready);
         assert!(outcome
@@ -656,7 +681,7 @@ mod tests {
 
     #[test]
     fn ttype_cycle_repeats_last_then_restarts() {
-        let mut state = TelnetState::new(test_config()).unwrap();
+        let mut state = TelnetState::new(test_config());
         let _ = state.receive(&[255, DO, TTYPE]);
         let request = [255, 250, TTYPE, TTYPE_SEND, 255, 240];
         let mut names = Vec::new();
@@ -679,7 +704,7 @@ mod tests {
 
     #[test]
     fn new_environ_preserves_request_order_and_empty_type_means_all() {
-        let mut state = TelnetState::new(test_config()).unwrap();
+        let mut state = TelnetState::new(test_config());
         let _ = state.receive(&[255, DO, NEW_ENVIRON]);
         let outcome = state.receive(&[
             255,
@@ -703,9 +728,47 @@ mod tests {
     }
 
     #[test]
+    fn legacy_environ_is_supported_when_requested_by_the_server() {
+        let mut state = TelnetState::new(test_config());
+        let outcome = state.receive(&[255, DO, ENVIRON]);
+        assert!(outcome.transport_ready);
+        assert!(outcome
+            .writes
+            .windows(3)
+            .any(|frame| frame == [255, WILL, ENVIRON]));
+
+        let outcome = state.receive(&[255, 250, ENVIRON, ENV_SEND, 255, 240]);
+        assert!(outcome
+            .writes
+            .windows(4)
+            .any(|frame| frame == [255, 250, ENVIRON, ENV_IS]));
+    }
+
+    #[test]
+    fn status_option_reports_current_negotiation_state() {
+        let mut state = TelnetState::new(test_config());
+        let outcome = state.receive(&[255, DO, STATUS]);
+        assert!(outcome.transport_ready);
+        assert!(outcome
+            .writes
+            .windows(3)
+            .any(|frame| frame == [255, WILL, STATUS]));
+        assert!(outcome
+            .writes
+            .windows(4)
+            .any(|frame| frame == [255, 250, STATUS, STATUS_IS]));
+
+        let outcome = state.receive(&[255, 250, STATUS, STATUS_SEND, 255, 240]);
+        assert!(outcome
+            .writes
+            .windows(4)
+            .any(|frame| frame == [255, 250, STATUS, STATUS_IS]));
+    }
+
+    #[test]
     fn unsupported_eor_charset_and_mccp_are_rejected() {
-        let mut state = TelnetState::new(test_config()).unwrap();
-        for option in [25, 42, 86, 87] {
+        let mut state = TelnetState::new(test_config());
+        for option in [25, 42, 85, 87] {
             let outcome = state.receive(&[255, WILL, option]);
             assert!(!outcome.transport_ready);
             assert_eq!(outcome.writes.as_ref(), [255, DONT, option]);
@@ -714,7 +777,7 @@ mod tests {
 
     #[test]
     fn application_data_marks_plain_telnet_transport_ready() {
-        let mut state = TelnetState::new(test_config()).unwrap();
+        let mut state = TelnetState::new(test_config());
 
         let outcome = state.receive(b"login: ");
 
@@ -731,7 +794,7 @@ mod tests {
         let (client, accepted) =
             tokio::join!(tokio::net::TcpStream::connect(address), listener.accept());
         let mut server = accepted.unwrap().0;
-        let mut runtime = TelnetRuntime::new(client.unwrap(), test_config()).unwrap();
+        let mut runtime = TelnetRuntime::new(client.unwrap(), test_config());
 
         tokio::time::timeout(Duration::from_millis(100), runtime.flush_startup())
             .await

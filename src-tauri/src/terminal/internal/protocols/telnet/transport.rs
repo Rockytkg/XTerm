@@ -5,7 +5,7 @@ use super::{
         SessionWorkerEvent, TransportCommand, TransportCommandOutcome, SESSION_BUFFER_SIZE,
         WRITE_STALL_TIMEOUT,
     },
-    telnet::TelnetRuntime,
+    telnet::{TelnetReadError, TelnetRuntime},
     transport_events::{
         resolve_unsupported_transport_capability, send_transport_closed, send_transport_data,
         send_transport_failed, send_transport_ready,
@@ -46,12 +46,16 @@ pub(super) fn spawn_telnet_transport_actor(
                 result = runtime.read_into_with_negotiation(&mut buffer) => {
                     match result {
                         Ok((size, became_ready)) => {
-                            if became_ready && !transport_ready && !send_transport_ready(&event_tx) {
-                                let _ = runtime.close().await;
-                                return;
+                            if became_ready && !transport_ready {
+                                transport_ready = true;
+                                if !send_transport_ready(&event_tx) {
+                                    let _ = runtime.close().await;
+                                    return;
+                                }
                             }
-                            transport_ready |= became_ready;
-                            if size == 0 && !became_ready {
+                            // A pure negotiation read yields no payload; skip
+                            // the empty Data event.
+                            if size == 0 {
                                 continue;
                             }
                             if send_transport_data(
@@ -65,7 +69,7 @@ pub(super) fn spawn_telnet_transport_actor(
                             return;
                         }
                         Err(error) => {
-                            send_telnet_transport_failure(&event_tx, &error, transport_ready);
+                            send_telnet_transport_failure(&event_tx, error, transport_ready);
                             return;
                         }
                     }
@@ -75,20 +79,23 @@ pub(super) fn spawn_telnet_transport_actor(
     });
 }
 
+const REMOTE_CLOSED_DETAIL: &str = "Telnet connection closed by remote host";
+const NEGOTIATION_FAILED_DETAIL: &str =
+    "Telnet negotiation failed: remote host closed the connection before the session became ready";
+
 fn send_telnet_transport_failure(
     event_tx: &tokio::sync::mpsc::UnboundedSender<SessionWorkerEvent>,
-    error: &str,
+    error: TelnetReadError,
     transport_ready: bool,
 ) {
-    if error == "Telnet connection closed by remote host" && transport_ready {
-        send_transport_closed(event_tx, Some(error.to_string()));
-    } else if error == "Telnet connection closed by remote host" {
-        send_transport_failed(
-            event_tx,
-            "Telnet negotiation failed: remote host closed the connection before the session became ready",
-        );
-    } else {
-        send_transport_failed(event_tx, error);
+    match error {
+        TelnetReadError::RemoteClosed if transport_ready => {
+            send_transport_closed(event_tx, Some(REMOTE_CLOSED_DETAIL.to_string()));
+        }
+        TelnetReadError::RemoteClosed => {
+            send_transport_failed(event_tx, NEGOTIATION_FAILED_DETAIL);
+        }
+        TelnetReadError::Failed(detail) => send_transport_failed(event_tx, detail),
     }
 }
 
@@ -127,7 +134,7 @@ mod tests {
     fn remote_eof_before_negotiation_is_failed() {
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        send_telnet_transport_failure(&event_tx, "Telnet connection closed by remote host", false);
+        send_telnet_transport_failure(&event_tx, TelnetReadError::RemoteClosed, false);
 
         match event_rx.try_recv().unwrap() {
             SessionWorkerEvent::Failed(detail) => {
@@ -141,13 +148,29 @@ mod tests {
     fn remote_eof_after_negotiation_is_closed() {
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        send_telnet_transport_failure(&event_tx, "Telnet connection closed by remote host", true);
+        send_telnet_transport_failure(&event_tx, TelnetReadError::RemoteClosed, true);
 
         match event_rx.try_recv().unwrap() {
             SessionWorkerEvent::Closed(Some(detail)) => {
-                assert_eq!(detail, "Telnet connection closed by remote host");
+                assert_eq!(detail, REMOTE_CLOSED_DETAIL);
             }
             _ => panic!("expected closed event"),
+        }
+    }
+
+    #[test]
+    fn io_errors_are_always_failed() {
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        send_telnet_transport_failure(
+            &event_tx,
+            TelnetReadError::Failed("boom".to_string()),
+            true,
+        );
+
+        match event_rx.try_recv().unwrap() {
+            SessionWorkerEvent::Failed(detail) => assert_eq!(detail, "boom"),
+            _ => panic!("expected failed event"),
         }
     }
 

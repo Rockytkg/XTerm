@@ -8,14 +8,5 @@ fn main() {
         println!("cargo:rustc-link-arg=/DEBUG:NONE");
     }
 
-    println!("cargo:rerun-if-changed=vendor/libtelnet/libtelnet.c");
-    println!("cargo:rerun-if-changed=vendor/libtelnet/libtelnet.h");
-    println!("cargo:rerun-if-changed=vendor/libtelnet/xterm_telnet_shim.c");
-    cc::Build::new()
-        .file("vendor/libtelnet/libtelnet.c")
-        .file("vendor/libtelnet/xterm_telnet_shim.c")
-        .include("vendor/libtelnet")
-        .warnings(false)
-        .compile("xterm_libtelnet");
     tauri_build::build()
 }

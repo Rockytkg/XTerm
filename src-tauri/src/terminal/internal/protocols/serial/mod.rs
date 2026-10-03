@@ -15,10 +15,11 @@ use crate::{
             ConnectionResult, ResolvedConnection, SerialLineSettings, SerialProbeResult,
             SerialRedetectResult, SessionCommand, SessionTransportRuntime, SessionWorkerEvent,
             TerminalSession, TerminalSessionResources, TerminalSize, TransportCommand,
-            BAUD_CANDIDATES, SERIAL_DEEP_SLEEP_SAMPLE_MS, SERIAL_EARLY_ACCEPT_BAUD_SCORE,
-            SERIAL_FALLBACK_BAUD_RATE, SERIAL_FAST_BAUD_SAMPLE_MS, SERIAL_MIN_DETECT_BYTES,
-            SERIAL_PASSIVE_BAUD_SAMPLE_MS, SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS,
-            SERIAL_PROBE_MAX_SAMPLE_MS, SERIAL_PROBE_POLL_INTERVAL_MS, SERIAL_PROBE_SETTLE_MS,
+            BAUD_CANDIDATES, SERIAL_DEEP_PASSIVE_BAUD_SAMPLE_MS, SERIAL_DEEP_SLEEP_SAMPLE_MS,
+            SERIAL_EARLY_ACCEPT_BAUD_SCORE, SERIAL_FALLBACK_BAUD_RATE, SERIAL_FAST_BAUD_SAMPLE_MS,
+            SERIAL_MIN_DETECT_BYTES, SERIAL_PASSIVE_BAUD_SAMPLE_MS,
+            SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS, SERIAL_PROBE_MAX_SAMPLE_MS,
+            SERIAL_PROBE_POLL_INTERVAL_MS, SERIAL_PROBE_SETTLE_MS,
             SERIAL_QUICK_AUTO_BAUD_CANDIDATES, SERIAL_RELIABLE_BAUD_SCORE, SERIAL_SAMPLE_MAX_BYTES,
             SERIAL_WAKE_INTER_BYTE_TIMEOUT_MS, SERIAL_WAKE_SEQUENCE, SESSION_BUFFER_SIZE,
         },
@@ -102,6 +103,13 @@ enum SerialProbePhase {
 }
 
 impl SerialProbePhase {
+    fn passive_sample_for(self) -> Duration {
+        match self {
+            Self::Fast => Duration::from_millis(SERIAL_PASSIVE_BAUD_SAMPLE_MS),
+            Self::DeepSleep => Duration::from_millis(SERIAL_DEEP_PASSIVE_BAUD_SAMPLE_MS),
+        }
+    }
+
     fn wake_sample_for(self) -> Duration {
         match self {
             Self::Fast => Duration::from_millis(SERIAL_FAST_BAUD_SAMPLE_MS),
@@ -266,8 +274,7 @@ pub(crate) async fn redetect_serial_baud_on_open_port(
     {
         Ok(detection) => detection.confirmed,
         Err(error) => {
-            let _ = set_serial_probe_baud(port, port_name, original_baud_rate);
-            prepare_serial_probe_port(port).await;
+            restore_serial_probe_port(port, port_name, original_baud_rate).await;
             return Err(error);
         }
     };
@@ -277,7 +284,7 @@ pub(crate) async fn redetect_serial_baud_on_open_port(
     {
         let additional = additional_serial_baud_candidates(&quick_candidates, BAUD_CANDIDATES);
         if should_expand_serial_baud_search(&scores, false, port_name, !additional.is_empty()) {
-            selection = match detect_serial_baud_at_phase(
+            selection = match detect_serial_baud(
                 port,
                 port_name,
                 &additional,
@@ -289,8 +296,7 @@ pub(crate) async fn redetect_serial_baud_on_open_port(
             {
                 Ok(detection) => choose_better_serial_probe(selection.take(), detection.confirmed),
                 Err(error) => {
-                    let _ = set_serial_probe_baud(port, port_name, original_baud_rate);
-                    prepare_serial_probe_port(port).await;
+                    restore_serial_probe_port(port, port_name, original_baud_rate).await;
                     return Err(error);
                 }
             };
@@ -664,7 +670,7 @@ async fn resolve_auto_baud(
                     } else {
                         SerialProbePhase::Fast
                     };
-                    let mut expanded = detect_serial_baud_at_phase(
+                    let mut expanded = detect_serial_baud(
                         &mut port,
                         &port_name,
                         &additional,
@@ -835,15 +841,15 @@ async fn detect_serial_baud_with_escalation(
     Ok(detection)
 }
 
-async fn detect_serial_baud_at_phase(
+/// Restore the original baud and drain probe noise after a redetect round
+/// failed, so the port returns to the caller in its previous line state.
+async fn restore_serial_probe_port(
     port: &mut tokio_serial::SerialStream,
     port_name: &str,
-    baud_candidates: &[u32],
-    encoding: Option<&str>,
-    scores: &mut Vec<SerialProbeScore>,
-    phase: SerialProbePhase,
-) -> ConnectionResult<SerialDetection> {
-    detect_serial_baud(port, port_name, baud_candidates, encoding, scores, phase).await
+    baud_rate: u32,
+) {
+    let _ = set_serial_probe_baud(port, port_name, baud_rate);
+    prepare_serial_probe_port(port).await;
 }
 
 fn merge_serial_probe_confirmation(
@@ -950,8 +956,7 @@ async fn probe_open_serial_port(
     prepare_serial_probe_port(port).await;
     // Prefer natural console output. Silent devices (common for network equipment)
     // receive one controlled CR for this candidate instead of repeated wakeups.
-    let passive_sample =
-        read_serial_sample_async(port, Duration::from_millis(SERIAL_PASSIVE_BAUD_SAMPLE_MS)).await;
+    let passive_sample = read_serial_sample_async(port, phase.passive_sample_for()).await;
     let passive_quality = analyze_serial_sample(&passive_sample, encoding);
     let passive = passive_sample.len() >= SERIAL_MIN_DETECT_BYTES
         && passive_quality.confidence >= SERIAL_RELIABLE_BAUD_SCORE
@@ -1357,7 +1362,7 @@ mod tests {
         redetect_quick_baud_candidates, serial_error_is_unavailable,
         serial_error_looks_unavailable, serial_port_error_is_busy,
         should_expand_serial_baud_search, sorted_serial_port_candidates, SerialPortCandidate,
-        SerialProbeScore,
+        SerialProbePhase, SerialProbeScore,
     };
     use crate::terminal::internal::core::BAUD_CANDIDATES;
     use std::collections::HashSet;
@@ -1407,6 +1412,18 @@ mod tests {
         assert_eq!(
             redetect_quick_baud_candidates(115_200),
             vec![115_200, 9_600]
+        );
+    }
+
+    #[test]
+    fn deep_probe_waits_for_startup_output_before_waking_the_console() {
+        assert!(
+            SerialProbePhase::DeepSleep.passive_sample_for()
+                > SerialProbePhase::Fast.passive_sample_for()
+        );
+        assert_eq!(
+            SerialProbePhase::DeepSleep.passive_sample_for(),
+            std::time::Duration::from_millis(420)
         );
     }
 

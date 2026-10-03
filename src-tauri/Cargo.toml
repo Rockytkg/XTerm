@@ -19,7 +19,6 @@ crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-cc = "1"
 
 [dependencies]
 tauri = { version = "2", features = ["devtools"] }
@@ -56,6 +55,7 @@ md5 = "0.8.0"
 base64 = "0.23"
 chardetng = "1"
 encoding_rs = "0.8"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 infer = "0.22"
 content_inspector = "0.2"
 font-kit = "0.14"

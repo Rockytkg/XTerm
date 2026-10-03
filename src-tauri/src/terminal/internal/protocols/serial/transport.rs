@@ -1,12 +1,12 @@
-use std::{fmt::Write as _, time::Duration};
+use std::{collections::VecDeque, fmt::Write as _, time::Duration};
 
 use bytes::{Bytes, BytesMut};
 use tokio::io::AsyncWriteExt;
 
 use super::{
     core::{
-        SessionWorkerEvent, TransportCapabilityCommand, TransportCommand, TransportCommandOutcome,
-        SERIAL_READ_BATCH_MAX_BYTES, SERIAL_WRITE_STALL_TIMEOUT_MS,
+        ConnectionError, SessionWorkerEvent, TransportCapabilityCommand, TransportCommand,
+        TransportCommandOutcome, SERIAL_READ_BATCH_MAX_BYTES, SERIAL_WRITE_STALL_TIMEOUT_MS,
     },
     serial::redetect_serial_baud_on_open_port,
     transport_events::{
@@ -46,15 +46,33 @@ async fn run_serial_transport_actor(
     }
     let mut buffer = BytesMut::zeroed(SERIAL_READ_BATCH_MAX_BYTES);
     let mut aborted_read_recovery_available = true;
+    // A baud probe is serialized with transport commands, but Close must be
+    // able to cancel its waits. Commands received while probing are replayed
+    // after the probe completes.
+    let mut pending_commands = VecDeque::new();
     log::debug!(target: "serial.transport", "backend serial actor for '{session_id}' started on {port_name}");
     loop {
         tokio::select! {
             biased;
-            command = rx.recv() => {
+            command = async {
+                match pending_commands.pop_front() {
+                    Some(command) => Some(command),
+                    None => rx.recv().await,
+                }
+            } => {
                 let Some(command) = command else {
                     return;
                 };
-                match handle_serial_transport_command(port_name, port, command, event_tx).await {
+                match handle_serial_transport_command(
+                    port_name,
+                    port,
+                    command,
+                    rx,
+                    &mut pending_commands,
+                    event_tx,
+                )
+                .await
+                {
                     Ok(TransportCommandOutcome::Continue) => {}
                     Ok(TransportCommandOutcome::Close) => {
                         send_transport_closed(event_tx, None);
@@ -179,6 +197,8 @@ async fn handle_serial_transport_command(
     port_name: &str,
     port: &mut tokio_serial::SerialStream,
     command: TransportCommand,
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<TransportCommand>,
+    pending_commands: &mut VecDeque<TransportCommand>,
     event_tx: &tokio::sync::mpsc::UnboundedSender<SessionWorkerEvent>,
 ) -> Result<TransportCommandOutcome, String> {
     match command {
@@ -187,7 +207,15 @@ async fn handle_serial_transport_command(
             Ok(TransportCommandOutcome::Continue)
         }
         TransportCommand::InvokeCapability(command) => {
-            handle_serial_transport_capability(port_name, port, command, event_tx).await
+            handle_serial_transport_capability(
+                port_name,
+                port,
+                command,
+                rx,
+                pending_commands,
+                event_tx,
+            )
+            .await
         }
         TransportCommand::Resize(_) => Ok(TransportCommandOutcome::Continue),
         TransportCommand::Close => Ok(TransportCommandOutcome::Close),
@@ -198,12 +226,42 @@ async fn handle_serial_transport_capability(
     port_name: &str,
     port: &mut tokio_serial::SerialStream,
     command: TransportCapabilityCommand,
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<TransportCommand>,
+    pending_commands: &mut VecDeque<TransportCommand>,
     event_tx: &tokio::sync::mpsc::UnboundedSender<SessionWorkerEvent>,
 ) -> Result<TransportCommandOutcome, String> {
     match command {
         TransportCapabilityCommand::RedetectSerialBaud { encoding, reply } => {
-            let mut result =
-                redetect_serial_baud_on_open_port(port_name, port, encoding.as_deref()).await;
+            // Keep the probe future cancellable. The old inline await blocked
+            // this actor from receiving Close, so the fd stayed exclusively
+            // open until every baud and sleep window had elapsed.
+            let mut probe = Box::pin(redetect_serial_baud_on_open_port(
+                port_name,
+                port,
+                encoding.as_deref(),
+            ));
+            let mut result = loop {
+                tokio::select! {
+                    biased;
+                    command = rx.recv() => {
+                        let reason = match command {
+                            Some(TransportCommand::Close) => {
+                                "serial baud detection was cancelled because the session closed"
+                            }
+                            Some(command) => {
+                                pending_commands.push_back(command);
+                                continue;
+                            }
+                            None => {
+                                "serial baud detection was cancelled because the transport closed"
+                            }
+                        };
+                        let _ = reply.send(Err(serial_baud_detection_cancelled(reason)));
+                        return Ok(TransportCommandOutcome::Close);
+                    }
+                    result = &mut probe => break result,
+                }
+            };
             if let Ok(result) = result.as_mut() {
                 let sample = std::mem::take(&mut result.initial_sample);
                 if !sample.is_empty() && !send_transport_data(event_tx, Bytes::from(sample), None) {
@@ -214,6 +272,10 @@ async fn handle_serial_transport_capability(
             Ok(TransportCommandOutcome::Continue)
         }
     }
+}
+
+fn serial_baud_detection_cancelled(reason: &'static str) -> ConnectionError {
+    ConnectionError::new("serial_baud_detection_cancelled", reason, false)
 }
 
 async fn write_serial_transport(

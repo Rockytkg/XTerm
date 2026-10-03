@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use std::time::Duration;
 use tauri::{ipc::Channel, AppHandle};
 
 use crate::{
@@ -73,14 +74,33 @@ pub(crate) fn terminal_connection_open_cancel(
 }
 
 #[tauri::command]
-pub(crate) fn terminal_session_close(
+pub(crate) async fn terminal_session_close(
     _app: AppHandle,
     state: tauri::State<'_, AppState>,
     request: SessionCloseCommand,
 ) -> Result<(), String> {
+    // A worker can finish its lifecycle before the serial transport actor has
+    // dropped the fd. Take the one-shot before sending Close and wait for the
+    // actor's release acknowledgement so callers can safely reopen the port.
+    let close_ack = state
+        .sessions()
+        .get(&request.session_id)
+        .and_then(|session| session.resources.take_serial_close_ack());
     session_service()
         .close(state.inner(), &request.session_id)
         .map_err(api_error)?;
+    if let Some(close_ack) = close_ack {
+        if tokio::time::timeout(Duration::from_secs(3), close_ack)
+            .await
+            .is_err()
+        {
+            log::warn!(
+                target: "terminal.serial",
+                "timed out waiting for serial session '{}' to release its port",
+                request.session_id
+            );
+        }
+    }
     state.remove_terminal_output_channels(&request.session_id);
     Ok(())
 }

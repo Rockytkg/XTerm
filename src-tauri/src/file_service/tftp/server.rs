@@ -61,7 +61,7 @@ pub(crate) async fn start_runtime(
     };
     let listeners = elevated::bind_service_sockets(
         ServiceRule {
-            prefix: "XTerm TFTP",
+            prefix: firewall::TFTP_RULE_PREFIX,
             action: "tftp.firewall.allow",
             protocol: crate::firewall::FirewallProtocol::Udp,
             ports: vec![config.port],

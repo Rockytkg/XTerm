@@ -1,7 +1,7 @@
 use crate::firewall::{remove_service_ports_rule, FirewallCommandError, FirewallProtocol};
 
-const TFTP_RULE_PREFIX: &str = "XTerm TFTP";
-const FTP_RULE_PREFIX: &str = "XTerm FTP";
+pub(crate) const TFTP_RULE_PREFIX: &str = "XTerm TFTP";
+pub(crate) const FTP_RULE_PREFIX: &str = "XTerm FTP";
 
 pub(crate) async fn remove_tftp_port_rule(port: u16) -> Result<(), FirewallCommandError> {
     crate::firewall::remove_service_port_and_all_udp_ports_for_current_app_rule(
