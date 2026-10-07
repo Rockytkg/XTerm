@@ -40,7 +40,6 @@ use std::convert::TryInto;
 use std::num::Wrapping;
 use std::pin::Pin;
 use std::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use futures::Future;
@@ -70,8 +69,8 @@ use crate::session::{CommonSession, EncryptedState, GlobalRequestResponse, NewKe
 use crate::ssh_read::SshRead;
 use crate::sshbuffer::{IncomingSshPacket, PacketWriter, SSHBuffer, SshId};
 use crate::{
-    ChannelId, ChannelOpenFailure, Disconnect, Error, Limits, MethodSet, Sig, auth, map_err, msg,
-    negotiation,
+    ChannelId, ChannelOpenFailure, CryptoVec, Disconnect, Error, Limits, MethodSet, Sig, auth,
+    map_err, msg, negotiation,
 };
 
 mod encrypted;
@@ -240,6 +239,17 @@ pub enum Msg {
     },
     NoMoreSessions {
         want_reply: bool,
+    },
+    HostKeysProve {
+        reply_channel: oneshot::Sender<Result<(), crate::Error>>,
+        keys: Vec<PublicKey>,
+    },
+    /// Send a global request with a custom name to the remote
+    SendGlobalRequest {
+        name: String,
+        data: CryptoVec,
+        /// Provide a channel for the reply result to request a reply from the server
+        reply_channel: Option<oneshot::Sender<Option<CryptoVec>>>,
     },
 }
 
@@ -620,10 +630,7 @@ impl<H: Handler> Handle<H> {
                 Msg::AuthGssapiExchangeComplete { token }
             }
         };
-        self.sender
-            .send(msg)
-            .await
-            .map_err(|_| crate::SendError {})
+        self.sender.send(msg).await.map_err(|_| crate::SendError {})
     }
 
     /// Authenticate using a certificate with a custom signer that implements the
@@ -1056,6 +1063,62 @@ impl<H: Handler> Handle<H> {
             .await
             .map_err(|_| Error::SendError)
     }
+
+    /// Asks the server to prove it holds each host key it announced through `hostkeys-00@openssh.com` (see [`Handler::openssh_ext_host_keys_announced`]).
+    ///
+    /// Succeeds only if the server successfully proves ownereship of all keys announced. [`Error::RequestDenied`] means the server refused and [`Error::WrongServerSig`] means at least one signature did not verify.
+    pub async fn hostkeys_prove(&self, keys: Vec<PublicKey>) -> Result<(), Error> {
+        let (reply_channel, reply_recv) = oneshot::channel();
+        self.sender
+            .send(Msg::HostKeysProve {
+                reply_channel,
+                keys,
+            })
+            .await
+            .map_err(|_| Error::SendError)?;
+        reply_recv.await.unwrap_or(Err(Error::Disconnect))
+    }
+
+    /// Send a global request with a custom, non-standard name to the remote peer.
+    ///
+    /// `data` is the request-specific payload and is appended verbatim after the
+    /// request name and the want-reply flag (see RFC 4254 section 4). When
+    /// `want_reply` is true this waits for the peer's reply and returns its
+    /// response-specific data, which may be empty. When it is false it returns
+    /// `Ok(None)` without waiting for a reply.
+    pub async fn send_global_request<A: Into<String>>(
+        &self,
+        name: A,
+        data: &[u8],
+        want_reply: bool,
+    ) -> Result<Option<CryptoVec>, Error> {
+        let (reply_channel, reply_recv) = if want_reply {
+            let (send, recv) = oneshot::channel();
+            (Some(send), Some(recv))
+        } else {
+            (None, None)
+        };
+        self.sender
+            .send(Msg::SendGlobalRequest {
+                name: name.into(),
+                data: CryptoVec::from_slice(data),
+                reply_channel,
+            })
+            .await
+            .map_err(|_| Error::SendError)?;
+
+        match reply_recv {
+            Some(reply_recv) => match reply_recv.await {
+                Ok(Some(data)) => Ok(Some(data)),
+                Ok(None) => Err(Error::RequestDenied),
+                Err(e) => {
+                    error!("Unable to receive send_global_request result: {e:?}");
+                    Err(Error::Disconnect)
+                }
+            },
+            None => Ok(None),
+        }
+    }
 }
 
 impl<H: Handler> Future for Handle<H> {
@@ -1086,6 +1149,7 @@ pub async fn connect<H: Handler + Send + 'static, A: tokio::net::ToSocketAddrs>(
     handler: H,
 ) -> Result<Handle<H>, H::Error> {
     let socket = map_err!(tokio::net::TcpStream::connect(addrs).await)?;
+    #[allow(clippy::collapsible_if)]
     if config.as_ref().nodelay {
         if let Err(e) = socket.set_nodelay(true) {
             warn!("set_nodelay() failed: {e:?}");
@@ -1310,6 +1374,9 @@ impl Session {
             // application output in its bounded receivers while a channel is
             // window-blocked.
             let can_receive_outbound = !self.kex.active() && !self.common.has_any_pending_data();
+            let rekey_timer =
+                crate::future_or_pending(self.rekey_time_remaining(), tokio::time::sleep);
+            pin!(rekey_timer);
             tokio::select! {
                 r = &mut reading => {
                     let (stream_read, mut buffer, mut opening_cipher) = match r {
@@ -1331,25 +1398,42 @@ impl Session {
                             result = self.process_disconnect(&pkt).map_err(H::Error::from);
                         } else {
                             self.common.received_data = true;
+                            let kex_was_active = self.kex.active();
                             reply(self, handler, kex_done_signal, &mut pkt).await?;
                             buffer.seqn = pkt.seqn; // TODO reply changes seqn internall, find cleaner way
+
+                            if kex_was_active && !self.kex.active() {
+                                buffer.bytes = 0;
+                            } else if self.automatic_rekey_allowed()
+                                && buffer.bytes >= self.common.config.limits.rekey_read_limit
+                            {
+                                debug!("rekey read limit reached after {} inbound bytes", buffer.bytes);
+                                if let Some(enc) = self.common.encrypted.as_mut() {
+                                    // flush checks this
+                                    enc.rekey_wanted = true;
+                                }
+                            }
                         }
                     }
 
                     std::mem::swap(&mut opening_cipher, &mut self.common.remote_to_local);
                     reading.set(start_reading(stream_read, buffer, opening_cipher));
                 }
+                () = &mut rekey_timer => {
+                    // The flush after the select sees the elapsed limit.
+                    debug!("rekey time limit reached");
+                }
                 () = &mut keepalive_timer => {
-                    if let Some(ref mut enc) = self.common.encrypted {
-                        if matches!(enc.state, EncryptedState::Authenticated) {
-                            self.common.alive_timeouts = self.common.alive_timeouts.saturating_add(1);
-                            if self.common.config.keepalive_max != 0 && self.common.alive_timeouts > self.common.config.keepalive_max {
-                                debug!("Timeout, server not responding to keepalives");
-                                return Err(crate::Error::KeepaliveTimeout.into());
-                            }
-                            sent_keepalive = true;
-                            self.send_keepalive(true)?;
+                    if let Some(ref mut enc) = self.common.encrypted
+                        && matches!(enc.state, EncryptedState::Authenticated)
+                    {
+                        self.common.alive_timeouts = self.common.alive_timeouts.saturating_add(1);
+                        if self.common.config.keepalive_max != 0 && self.common.alive_timeouts > self.common.config.keepalive_max {
+                            debug!("Timeout, server not responding to keepalives");
+                            return Err(crate::Error::KeepaliveTimeout.into());
                         }
+                        sent_keepalive = true;
+                        self.send_keepalive(true)?;
                     }
                 }
                 () = &mut inactivity_timer => {
@@ -1410,14 +1494,14 @@ impl Session {
             )
             .await?;
 
-            if let Some(ref mut enc) = self.common.encrypted {
-                if let EncryptedState::InitCompression = enc.state {
-                    if enc.client_compression.is_deferred() {
-                        enc.client_compression
-                            .init_compress(self.common.packet_writer.compress());
-                    }
-                    enc.state = EncryptedState::Authenticated;
+            if let Some(ref mut enc) = self.common.encrypted
+                && let EncryptedState::InitCompression = enc.state
+            {
+                if enc.client_compression.is_deferred() {
+                    enc.client_compression
+                        .init_compress(self.common.packet_writer.compress());
                 }
+                enc.state = EncryptedState::Authenticated;
             }
 
             if self.common.received_data {
@@ -1428,21 +1512,21 @@ impl Session {
                 // data from it.
                 self.common.alive_timeouts = 0;
             }
-            if self.common.received_data || sent_keepalive {
-                if let (futures::future::Either::Right(ref mut sleep), Some(d)) = (
+            if (self.common.received_data || sent_keepalive)
+                && let (futures::future::Either::Right(ref mut sleep), Some(d)) = (
                     keepalive_timer.as_mut().as_pin_mut(),
                     self.common.config.keepalive_interval,
-                ) {
-                    sleep.as_mut().reset(tokio::time::Instant::now() + d);
-                }
+                )
+            {
+                sleep.as_mut().reset(tokio::time::Instant::now() + d);
             }
-            if !sent_keepalive {
-                if let (futures::future::Either::Right(ref mut sleep), Some(d)) = (
+            if !sent_keepalive
+                && let (futures::future::Either::Right(ref mut sleep), Some(d)) = (
                     inactivity_timer.as_mut().as_pin_mut(),
                     self.common.config.inactivity_timeout,
-                ) {
-                    sleep.as_mut().reset(tokio::time::Instant::now() + d);
-                }
+                )
+            {
+                sleep.as_mut().reset(tokio::time::Instant::now() + d);
             }
         }
 
@@ -1675,6 +1759,19 @@ impl Session {
             Msg::NoMoreSessions { want_reply } => {
                 let _ = self.no_more_sessions(want_reply);
             }
+            Msg::HostKeysProve {
+                reply_channel,
+                keys,
+            } => {
+                self.request_hostkeys_prove(reply_channel, keys)?;
+            }
+            Msg::SendGlobalRequest {
+                name,
+                data,
+                reply_channel,
+            } => {
+                let _ = self.send_global_request(reply_channel, &name, &data);
+            }
             Msg::ServerChannelOpenReply { pending, result } => {
                 self.finalize_server_channel_open_reply(pending, result)?;
             }
@@ -1742,6 +1839,25 @@ impl Session {
         Ok(())
     }
 
+    fn automatic_rekey_allowed(&self) -> bool {
+        !self.kex.active()
+            && self
+                .common
+                .encrypted
+                .as_ref()
+                .is_some_and(|enc| matches!(enc.state, EncryptedState::Authenticated))
+    }
+
+    fn rekey_time_remaining(&self) -> Option<Duration> {
+        if !self.automatic_rekey_allowed() {
+            return None;
+        }
+        self.common
+            .encrypted
+            .as_ref()?
+            .rekey_time_remaining(&self.common.config.limits, &self.common.packet_writer)
+    }
+
     /// Flush the temporary cleartext buffer into the encryption
     /// buffer. This does *not* flush to the socket.
     fn flush(&mut self) -> Result<(), crate::Error> {
@@ -1749,11 +1865,13 @@ impl Session {
             // Tearing down: get the queued packets (incl. DISCONNECT) out in
             // order, kex or not.
             let is_rekeying = self.kex.active() && !self.common.disconnected;
+            let rekey_requested = enc.rekey_wanted; // enc.flush resets rekey_wanted
             if enc.flush(
                 &self.common.config.as_ref().limits,
                 &mut self.common.packet_writer,
                 is_rekeying,
             )? && !self.kex.active()
+                && (rekey_requested || matches!(enc.state, EncryptedState::Authenticated))
             {
                 self.begin_rekey()?;
             }
@@ -1820,6 +1938,7 @@ async fn reply<H: Handler>(
     //     usual, but bound the total so a peer that stalls the rekey and floods
     //     cannot grow memory without limit. `pending_len` is reset when the
     //     rekey completes (see `begin_rekey` and the kex-done path).
+    #[allow(clippy::collapsible_if)]
     if !is_kex_msg && session.common.encrypted.is_some() {
         if let (Some(&msg_type), SessionKexState::InProgress(kex)) =
             (pkt.buffer.first(), &session.kex)
@@ -1828,10 +1947,8 @@ async fn reply<H: Handler>(
                 if kex.peer_kexinit_received() {
                     return Err(crate::Error::Inconsistent.into());
                 }
-                session.pending_len =
-                    session.pending_len.saturating_add(pkt.buffer.len() as u32);
-                if u64::from(session.pending_len)
-                    > 2 * u64::from(session.common.config.window_size)
+                session.pending_len = session.pending_len.saturating_add(pkt.buffer.len() as u32);
+                if u64::from(session.pending_len) > 2 * u64::from(session.common.config.window_size)
                 {
                     return Err(crate::Error::Pending.into());
                 }
@@ -1839,6 +1956,7 @@ async fn reply<H: Handler>(
         }
     }
 
+    #[allow(clippy::collapsible_if)]
     if is_kex_msg {
         if let SessionKexState::InProgress(kex) = session.kex.take() {
             let progress = kex.step(Some(pkt), &mut session.common.packet_writer)?;
@@ -1872,10 +1990,12 @@ async fn reply<H: Handler>(
                         {
                             let common = &mut session.common;
                             common.newkeys(newkeys);
-                            common.packet_writer.buffer().bytes = 0;
                             if let Some(enc) = common.encrypted.as_mut() {
                                 enc.last_rekey = Instant::now();
-                                enc.flush_all_pending_with_writer(&mut common.packet_writer, false)?;
+                                enc.flush_all_pending_with_writer(
+                                    &mut common.packet_writer,
+                                    false,
+                                )?;
                             }
                         }
 
@@ -1945,6 +2065,7 @@ mod tests {
     use super::*;
     use crate::auth::{AuthRequest, Method};
     use crate::compression::{Compression, Decompress};
+    use crate::helpers::EncodedExt;
     use crate::kex::{KEXES, NONE};
     use crate::session::{CommonSession, Encrypted, EncryptedState, Exchange};
     use crate::sshbuffer::{IncomingSshPacket, PacketWriter, SSHBuffer};
@@ -1955,7 +2076,10 @@ mod tests {
     impl Handler for TestHandler {
         type Error = crate::Error;
 
-        async fn check_server_key(&mut self, _: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+        async fn check_server_key(
+            &mut self,
+            _: &PublicKeyOrCertificate,
+        ) -> Result<bool, Self::Error> {
             Ok(true)
         }
     }
@@ -2014,6 +2138,241 @@ mod tests {
             reply_sender,
         );
         (session, sender, reply_receiver)
+    }
+
+    const HOSTKEYS_SESSION_ID: &[u8] = b"hostkeys-session-id";
+
+    /// An authenticated session with one outstanding `hostkeys-prove-00` request.
+    fn hostkeys_prove_session() -> (
+        Session,
+        tokio::sync::mpsc::Sender<Msg>,
+        oneshot::Receiver<Result<(), crate::Error>>,
+        PrivateKey,
+    ) {
+        let (mut session, sender, _replies) = keyboard_interactive_session();
+        let enc = session.common.encrypted.as_mut().unwrap();
+        enc.state = EncryptedState::Authenticated;
+        enc.session_id = CryptoVec::from(HOSTKEYS_SESSION_ID);
+        let host_key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let (reply_channel, reply) = oneshot::channel();
+        session
+            .request_hostkeys_prove(reply_channel, vec![host_key.public_key().clone()])
+            .unwrap();
+        (session, sender, reply, host_key)
+    }
+
+    /// `SSH_MSG_REQUEST_SUCCESS` carrying one signature over the given session id.
+    fn hostkeys_proof_packet(host_key: &PrivateKey, session_id: &[u8]) -> Vec<u8> {
+        let mut signed = Vec::new();
+        "hostkeys-prove-00@openssh.com".encode(&mut signed).unwrap();
+        session_id.encode(&mut signed).unwrap();
+        host_key
+            .public_key()
+            .to_bytes()
+            .unwrap()
+            .encode(&mut signed)
+            .unwrap();
+        let signature: ssh_key::Signature = signature::Signer::try_sign(host_key, &signed).unwrap();
+
+        let mut packet = vec![crate::msg::REQUEST_SUCCESS];
+        signature.encoded().unwrap().encode(&mut packet).unwrap();
+        packet
+    }
+
+    #[test]
+    fn hostkeys_prove_request_encodes_every_key_blob() {
+        let (session, _sender, _reply, host_key) = hostkeys_prove_session();
+
+        let written = session.common.encrypted.as_ref().unwrap().write.to_vec();
+        let packet_len = u32::from_be_bytes(written[..4].try_into().unwrap()) as usize;
+        let mut payload = &written[4..4 + packet_len];
+
+        assert_eq!(
+            u8::decode(&mut payload).unwrap(),
+            crate::msg::GLOBAL_REQUEST
+        );
+        assert_eq!(
+            String::decode(&mut payload).unwrap(),
+            "hostkeys-prove-00@openssh.com"
+        );
+        assert_eq!(
+            u8::decode(&mut payload).unwrap(),
+            1,
+            "want_reply must be set"
+        );
+        assert_eq!(
+            Vec::<u8>::decode(&mut payload).unwrap(),
+            host_key.public_key().to_bytes().unwrap()
+        );
+        assert!(payload.is_empty());
+
+        assert!(matches!(
+            session.open_global_requests.front(),
+            Some(GlobalRequestResponse::HostKeysProve { .. })
+        ));
+    }
+
+    #[test]
+    fn hostkeys_prove_empty_key_list_resolves_without_a_request() {
+        let (mut session, _sender, _replies) = keyboard_interactive_session();
+        let (reply_channel, mut reply) = oneshot::channel();
+        session
+            .request_hostkeys_prove(reply_channel, vec![])
+            .unwrap();
+
+        assert!(matches!(reply.try_recv(), Ok(Ok(()))));
+        assert!(session.common.encrypted.as_ref().unwrap().write.is_empty());
+        assert!(session.open_global_requests.is_empty());
+    }
+
+    #[tokio::test]
+    async fn hostkeys_prove_reply_verifies_signature() {
+        let (mut session, _sender, mut reply, host_key) = hostkeys_prove_session();
+        let packet = hostkeys_proof_packet(&host_key, HOSTKEYS_SESSION_ID);
+        session
+            .process_packet(&mut TestHandler, &packet)
+            .await
+            .unwrap();
+
+        assert!(matches!(reply.try_recv(), Ok(Ok(()))));
+        assert!(session.open_global_requests.is_empty());
+    }
+
+    #[tokio::test]
+    async fn hostkeys_prove_reply_rejects_signature_over_other_session() {
+        let (mut session, _sender, mut reply, host_key) = hostkeys_prove_session();
+        let packet = hostkeys_proof_packet(&host_key, b"some-other-session");
+        session
+            .process_packet(&mut TestHandler, &packet)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            reply.try_recv(),
+            Ok(Err(crate::Error::WrongServerSig))
+        ));
+    }
+
+    #[tokio::test]
+    async fn hostkeys_prove_reply_rejects_missing_signature() {
+        let (mut session, _sender, mut reply, _host_key) = hostkeys_prove_session();
+        session
+            .process_packet(&mut TestHandler, &[crate::msg::REQUEST_SUCCESS])
+            .await
+            .unwrap();
+
+        assert!(matches!(reply.try_recv(), Ok(Err(_))));
+    }
+
+    #[tokio::test]
+    async fn hostkeys_prove_failure_reply_is_denied() {
+        let (mut session, _sender, mut reply, _host_key) = hostkeys_prove_session();
+        session
+            .process_packet(&mut TestHandler, &[crate::msg::REQUEST_FAILURE])
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            reply.try_recv(),
+            Ok(Err(crate::Error::RequestDenied))
+        ));
+    }
+
+    /// `keyboard_interactive_session` negotiates the `none` kex, which cannot
+    /// be repeated; swap in one that can and install `limits`.
+    fn allow_rekey(session: &mut Session, limits: crate::Limits) {
+        Arc::get_mut(&mut session.common.config).unwrap().limits = limits;
+        session.common.encrypted.as_mut().unwrap().kex =
+            KEXES.get(&crate::kex::CURVE25519).unwrap().make();
+    }
+
+    #[test]
+    fn limit_triggered_rekey_waits_for_authentication() {
+        let (mut session, _sender, _replies) = keyboard_interactive_session();
+        allow_rekey(&mut session, crate::Limits::new(0, 0, Duration::from_secs(3600)));
+
+        session.flush().unwrap();
+        assert!(!session.kex.active(), "write limit hit before authentication");
+        assert_eq!(session.rekey_time_remaining(), None);
+
+        session.common.encrypted.as_mut().unwrap().state = EncryptedState::Authenticated;
+        assert_eq!(session.rekey_time_remaining(), Some(Duration::ZERO));
+        session.flush().unwrap();
+        assert!(session.kex.active());
+    }
+
+    #[test]
+    fn explicit_rekey_is_not_gated_on_authentication() {
+        // `keyboard_interactive_session` is still waiting for authentication.
+        let (mut session, _sender, _replies) = keyboard_interactive_session();
+        allow_rekey(&mut session, crate::Limits::default());
+
+        session.initiate_rekey().unwrap();
+        assert!(session.kex.active());
+    }
+
+    /// Drives the client event loop on one end of an in-memory stream and
+    /// returns the type of the first packet it writes.
+    async fn first_packet_from_event_loop(
+        mut session: Session,
+        peer: &mut tokio::io::DuplexStream,
+        stream: tokio::io::DuplexStream,
+    ) -> Option<u8> {
+        let (stream_read, mut stream_write) = SshRead::new(stream).split();
+        let mut handler = TestHandler;
+        let mut kex_done_signal = None;
+        let event_loop = session.run_inner(
+            stream_read,
+            &mut stream_write,
+            &mut handler,
+            &mut kex_done_signal,
+        );
+        tokio::pin!(event_loop);
+        let mut buffer = SSHBuffer::new();
+        let mut opening_key = cipher::clear::Key;
+        let packet = cipher::read(peer, &mut buffer, &mut opening_key);
+        tokio::select! {
+            r = &mut event_loop => panic!("event loop ended before rekeying: {:?}", r.map(drop)),
+            r = tokio::time::timeout(Duration::from_secs(5), packet) => {
+                r.ok()?.unwrap();
+                buffer.buffer.get(5).copied()
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn read_limit_starts_rekey_from_the_event_loop() {
+        let (mut session, _sender, _replies) = keyboard_interactive_session();
+        allow_rekey(
+            &mut session,
+            crate::Limits::new(1 << 30, 16, Duration::from_secs(3600)),
+        );
+        session.common.encrypted.as_mut().unwrap().state = EncryptedState::Authenticated;
+        let (mut peer, stream) = tokio::io::duplex(64 * 1024);
+        let mut ignore = PacketWriter::clear();
+        ignore.packet_raw(&[msg::IGNORE; 32]).unwrap();
+        peer.write_all(&ignore.buffer().buffer).await.unwrap();
+
+        assert_eq!(
+            first_packet_from_event_loop(session, &mut peer, stream).await,
+            Some(msg::KEXINIT)
+        );
+    }
+
+    #[tokio::test]
+    async fn time_limit_starts_rekey_from_the_event_loop() {
+        let (mut session, _sender, _replies) = keyboard_interactive_session();
+        allow_rekey(
+            &mut session,
+            crate::Limits::new(1 << 30, 1 << 30, Duration::from_millis(50)),
+        );
+        session.common.encrypted.as_mut().unwrap().state = EncryptedState::Authenticated;
+        let (mut peer, stream) = tokio::io::duplex(64 * 1024);
+
+        assert_eq!(
+            first_packet_from_event_loop(session, &mut peer, stream).await,
+            Some(msg::KEXINIT)
+        );
     }
 
     #[cfg(feature = "flate2")]
@@ -2728,7 +3087,13 @@ pub trait Handler: Sized + Send {
         window
     }
 
-    /// Called when the server signals success.
+    /// Called when the server announces its host keys
+    /// (`hostkeys-00@openssh.com`, sent by OpenSSH after authentication).
+    ///
+    /// Announced keys must not be trusted until the server proves it holds
+    /// them: hand them to [`Handle::hostkeys_prove`] from another task, or
+    /// call [`Session::request_hostkeys_prove`] here and forward the receiver.
+    /// Do not await the proof inside this callback.
     #[allow(unused_variables)]
     fn openssh_ext_host_keys_announced(
         &mut self,

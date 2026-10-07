@@ -297,7 +297,7 @@ onBeforeUnmount(() => {
                       @click.stop
                       @dblclick.stop
                       @input="$emit('updateInlineEditValue', $event.target.value)"
-                      @keydown.enter.prevent="commitInlineEdit"
+                      @keydown.enter.prevent.stop="commitInlineEdit"
                       @keydown.esc.prevent="cancelInlineEdit"
                       @blur="commitInlineEdit"
                     >
@@ -357,7 +357,7 @@ onBeforeUnmount(() => {
                       @click.stop
                       @dblclick.stop
                       @input="$emit('updateInlineEditValue', $event.target.value)"
-                      @keydown.enter.prevent="commitInlineEdit"
+                      @keydown.enter.prevent.stop="commitInlineEdit"
                       @keydown.esc.prevent="cancelInlineEdit"
                       @blur="commitInlineEdit"
                     >

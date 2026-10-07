@@ -15,11 +15,15 @@ ed25519-dalek 3.0.0 等）无法统一。
 经 grep 核实，sspi 0.21.3 的 `src/` **完全没有引用这些 crate**（纯传递性版本
 钳制残留，上游 0.22.0 已整组删除），因此本副本直接删除这些死依赖段落。
 
-## 补丁点（相对 crates.io 0.21.3，全部在 Cargo.toml，未动任何源码）
+## 补丁点（相对 crates.io 0.21.3，除注明外全部在 Cargo.toml）
 
 删除 macOS/iOS target 段落中的死依赖：`curve25519-dalek`、`ed25519-dalek`、
 `p256`、`p384`、`p521`、`pkcs1`、`primeorder`、`rustcrypto-ff`、
 `rustcrypto-ff_derive`、`rustcrypto-group`。保留 `async-dnssd` 等实际使用的依赖。
+
+源码仅一处（标注 `PATCH(xterm)`）：`src/lib.rs` 的 `From<GssApiMessageError>`
+补上 `InvalidMechanismOid` 分支——picky-krb 0.12.5 新增该枚举变体（上游 semver
+失误，sspi 0.22.1 同样未适配），否则 picky-krb 升到 0.12.5 后 match 不穷尽、无法编译。
 
 ## 升级注意
 

@@ -1,6 +1,6 @@
 # Vendored russh
 
-- 上游：<https://github.com/Eugeny/russh>，版本 0.63.3（crates.io 副本原样复制）。
+- 上游：<https://github.com/Eugeny/russh>，版本 0.64.1（crates.io 副本原样复制）。
 - 引入方式：`src-tauri/Cargo.toml` 的 `[patch.crates-io]` 指向本目录，对所有依赖方
   （包括 russh-sftp）生效。
 
@@ -30,5 +30,8 @@ OpenSSH 的宽容策略（`match.c` 的 `match_list` 静默跳过空条目），
 
 - 0.61.2 → 0.63.3：全部补丁点在新版本仍然存在（0.63 重构未移除这些严格解码路径），
   逐一重新移植，无语义变化。
+- 0.63.3 → 0.64.1：0.64 新增 hostkeys-prove 支持与流量统计等改动，补丁涉及的
+  helpers.rs / negotiation.rs 上游未变，encrypted.rs / client/mod.rs / cipher/mod.rs
+  的补丁点仍在，直接以 diff 重贴（仅一处插入位置偏移），无语义变化。
 
 上游 main 分支仍为严格解码，升级 russh 版本时需同步移植上述补丁。

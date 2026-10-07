@@ -2359,6 +2359,11 @@ impl From<GssApiMessageError> for Error {
             GssApiMessageError::InvalidMicFiller(_) => Self::new(ErrorKind::InvalidToken, err.to_string()),
             GssApiMessageError::InvalidWrapFiller(_) => Self::new(ErrorKind::InvalidToken, err.to_string()),
             GssApiMessageError::Asn1Error(_) => Self::new(ErrorKind::InvalidToken, err.to_string()),
+            // PATCH(xterm): picky-krb 0.12.5 新增 InvalidMechanismOid 变体（上游 semver 失误，
+            // sspi 0.22.1 也未适配），按同类 token 错误处理，否则 picky-krb 升级后无法编译。
+            GssApiMessageError::InvalidMechanismOid(_, _) => {
+                Self::new(ErrorKind::InvalidToken, err.to_string())
+            }
         }
     }
 }

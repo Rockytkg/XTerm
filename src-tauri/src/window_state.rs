@@ -45,8 +45,8 @@ mod windows_impl {
         },
         Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH},
         UI::WindowsAndMessaging::{
-            GetWindowPlacement, SetWindowPlacement, SW_HIDE, SW_SHOWMAXIMIZED,
-            WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
+            GetWindowPlacement, SetWindowPlacement, SW_HIDE, SW_SHOWMAXIMIZED, WINDOWPLACEMENT,
+            WPF_RESTORETOMAXIMIZED,
         },
     };
 

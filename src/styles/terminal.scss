@@ -182,7 +182,8 @@
 // behavioral override unlayered as well; otherwise its opacity: 0 can lose to
 // xterm's unlayered .xterm-visible { opacity: 1 } despite a more specific
 // selector. The root class is stable while xterm rewrites scrollbar classes.
-.terminal-mount .xterm.xterm-addon-scrollbar-idle-hidden
+.terminal-mount
+  .xterm.xterm-addon-scrollbar-idle-hidden
   .xterm-scrollable-element
   > .xterm-scrollbar {
   opacity: 0;

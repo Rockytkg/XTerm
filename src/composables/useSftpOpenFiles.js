@@ -101,18 +101,17 @@ export function useSftpOpenFiles({
       }
 
       // 类型判定以内容为准：魔数嗅探命中具体类型时 mime/editable 均以嗅探结果为准
-      // （覆盖扩展名映射与"转编辑"入口）；否则维持扩展名判定并吸收无扩展名的嗅探结果
+      // （覆盖扩展名映射与"转编辑"入口）；否则维持扩展名判定并吸收无扩展名的嗅探结果。
+      // 嗅探为文本时保持预览模式：内容包成文本 Blob 交给预览库的文本插件渲染，
+      // editable 仅驱动"转编辑"入口，不再自动切换进编辑器。
       const sniffed = resolveSniffedPreview(tab.name, meta.size, stat?.mime);
       if (sniffed.editable) {
         const { content, stat: textStat } = await loadTextContent(tab.path, session);
         if (!isCurrent(tab, session)) return;
         patchTab(tab, {
           ...statPatch(textStat, meta),
-          mode: "edit",
-          content,
-          savedContent: content,
-          blob: null,
-          mime: sniffed.mime,
+          blob: new Blob([content], { type: sniffed.mime || tab.mime || "text/plain" }),
+          mime: sniffed.mime || tab.mime,
           editable: true,
           tooLarge: false,
           loading: false,
@@ -162,6 +161,8 @@ export function useSftpOpenFiles({
     return tab;
   }
 
+  // 预览始终进入预览模式（文本亦如此，经"转编辑"按钮或双击进编辑器），
+  // 不再按扩展名把可编辑文本分流到 openEditor。
   async function openPreview(entries) {
     const files = (Array.isArray(entries) ? entries : [entries]).filter(
       (entry) => entry && entry.kind !== "dir" && entry.path,
@@ -173,11 +174,6 @@ export function useSftpOpenFiles({
 
     // 多选传入时逐个替换，最后一个生效
     for (const entry of files) {
-      const classification = classifySftpPreview(entry);
-      if (classification.editable && !classification.tooLarge) {
-        await openEditor(entry);
-        continue;
-      }
       const tab = await replaceOpenFile(entry, "preview", session);
       if (!tab) return;
       await loadPreviewTab(tab, session);

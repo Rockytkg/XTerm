@@ -22,14 +22,16 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 - `src/services/`：前端到 Tauri Rust 命令的封装（`ipc/` 子目录为底层调用；`scripting/` 子目录为脚本引擎：终端桥接、运行器、弹窗交互）。组件中不要散落裸 `invoke`，应在 service 中添加明确封装。
 - `src/i18n/`：中英文案。`src/utils/`：通用工具（如 `eventBridge.js`）。
 - `src-tauri/src/`：Rust 后端。`lib.rs` 初始化状态、插件并注册 `tauri::generate_handler!`；模块包括 `terminal/`（api/app/domain/protocol 分层）、`credentials/`、`file_service/`、`tftp/`、`storage/`、`session_recording/`、`paths/`、`logging/`、`proxy/`、`firewall.rs` 等。
-- `src-tauri/vendor/`：vendored 依赖。`russh/` 为 russh 0.63.3 的本地补丁副本，经 `Cargo.toml` 的 `[patch.crates-io]` 对所有依赖方生效（补丁内容与升级注意事项见 `vendor/russh/UPSTREAM.md`，补丁点以 `PATCH(xterm)` 注释标注）。`picky/`、`sspi/` 为 RDP 协议栈（IronRDP）的传递依赖补丁副本：上游 rc 版本携带的 RustCrypto pre-release 依赖 pin 与本仓库正式版冲突，副本仅放宽/删除这些 Cargo.toml 声明、未动源码（详见各自 `UPSTREAM.md`；上游放宽后删除）。RDP 协议栈依赖为 ironrdp 0.17 + ironrdp-tokio + ironrdp-tls（rustls-ring），挂在默认开启的 `rdp` cargo feature 下，`cargo check --no-default-features` 必须可编译。
+- `src-tauri/vendor/`：vendored 依赖。`russh/` 为 russh 0.64.1 的本地补丁副本，经 `Cargo.toml` 的 `[patch.crates-io]` 对所有依赖方生效（补丁内容与升级注意事项见 `vendor/russh/UPSTREAM.md`，补丁点以 `PATCH(xterm)` 注释标注）。`picky/`、`sspi/` 为 RDP 协议栈（IronRDP）的传递依赖补丁副本：上游 rc 版本携带的 RustCrypto pre-release 依赖 pin 与本仓库正式版冲突，副本放宽/删除这些 Cargo.toml 声明（sspi 另有一处 picky-krb 0.12.5 枚举变体适配，详见各自 `UPSTREAM.md`；上游修复后删除）。RDP 协议栈依赖为 ironrdp 0.17 + ironrdp-tokio + ironrdp-tls（rustls-ring），挂在默认开启的 `rdp` cargo feature 下，`cargo check --no-default-features` 必须可编译。
 - 日志体系：`src-tauri/src/logging/`（`level`/`event`/`writer`/`retention`/`panic`/`commands` 子模块）。后端写日志一律用 `crate::logging::event(scope, action)` 结构化事件或带显式 `target: "<scope>"` 的 `log::<level>!`，scope 为点分逻辑名（如 `terminal.serial`），不使用默认模块路径 target；panic/启动应急路径除外。日志按日写入 `<log_dir>/YYYYMMDD.log`（无缓冲逐条 flush，保留 7 天 / 最多 14 个文件），`panic.log`、`startup-error.log` 超 4 MiB 截尾。级别持久化于 settings（`logLevel`），`log_level_set` 立即生效；嘈杂依赖 crate（russh/keyring/mio/tao）在级别低于 debug 时被钳制。前端统一用 `createLogger("frontend.<area>.<module>")` + 点分事件名（`src/utils/logger.js`），启动时经 `src/services/logging.js` 同步后端级别；生产模式 error/warn 转发到后端日志文件。日志相关 Tauri 命令：`log_level_get/set`、`log_files_list`、`log_file_tail`、`log_files_prune`、`log_dir_open`；设置页"通用"内置日志查看对话框。
 - `src-tauri/capabilities/default.json`：Tauri 2 权限能力配置。
 - `src-tauri/tauri.conf.json`：开发地址（`http://127.0.0.1:1420`）、`dist` 输出、无边框窗口（`decorations: false`）、deep-link scheme（`ssh`、`telnet`）和打包配置。
 - `tests/`：Node 内置测试运行器的前端单元测试（如 `eventBridge.test.js`、`connectionStateMachine.test.js`）。
 - `docs/DESIGN.md`、`docs/SCRIPTING.md`、`docs/HIGHLIGHTING.md`、`README.md`：设计、脚本编写、关键字高亮使用指南与产品说明（中文）。
 - `examples/`：可供用户导入的示例资源（`highlight-schemes/` 终端高亮方案、`scripts/` 示例脚本，kebab-case 命名）。
-- `patches/`：pnpm patch（在 `pnpm-workspace.yaml` 的 `patchedDependencies` 登记）。`@xterm__addon-webgl@0.19.0.patch` 修复 WebGL 渲染器图集页数超过纹理容量时的致命崩溃（`Cannot read properties of undefined (reading 'version')`）：`_createNewPage` 无法合并出 4 个同尺寸页时改为整体驱逐图集（移植自上游 master 的 `_evictAllPages`），`GlyphRenderer.render` 的页遍历按纹理容量钳制；上游 0.20 正式版带此修复，升级后可移除该 patch。
+- `patches/`：pnpm patch（在 `pnpm-workspace.yaml` 的 `patchedDependencies` 登记），均同时打 `lib/*.js` 与 `lib/*.mjs` 两份产物；升级对应依赖后需复核补丁是否仍适用。
+  - `@xterm__xterm@6.1.0-beta.304.patch`：修复 DecorationService/SortedList 的 decoration 泄漏（搜索高亮、关键字高亮关闭后残留单格高亮的根因）。SearchAddon 等消费方批量 dispose decoration 时，marker 被连带 dispose 会把 `SortedList._array` 中"已逻辑删除、待 idle 物理移除"条目的 key（`marker.line`）就地改为 -1，破坏排序不变量，使后续 `delete()` 的二分查找在目标明明存在时返回 false；而 `DecorationService` 把 `_lineCache.remove`（渲染数据源）门控在 `delete` 成功上，导致 decoration 永远残留渲染层。补丁三处：`SortedList.delete` 二分查找的三个早退点统一收敛为线性 `indexOf` 回退；`_flushInserted` 开头先 `_flushCleanupDeleted()` 结算待删索引（消除 deletedIndices 跨代错位）；`DecorationService` 的 `lineCache.remove` 与事件不再门控于 `delete` 返回值。可向上游提交后移除。
+  - `@xterm__addon-search@0.17.0-beta.301.patch`：`clearDecorations()` 同时取消内部 `_highlightTimeout` 增量重排定时器（此前关闭搜索后定时器仍会触发一次 `findPrevious`，重排高亮并清掉用户选区）；定时器回调在缓存词已清空时直接返回，不再发起空词搜索。
 
 不要直接编辑 `node_modules/`、`dist/`、`src-tauri/target/`、`src-tauri/gen/` 等生成或依赖目录。
 
@@ -43,7 +45,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 - `pnpm format` / `pnpm format:check`：Prettier（js/scss）+ ESLint/Stylelint fix + `cargo fmt`。
 - `pnpm check`：`format:check` + `lint` + `test` 一键检查。
 - `pnpm tauri dev`（或 `pnpm tauri`）：启动 Tauri 桌面开发环境（自动执行 `pnpm dev`）。`tauri` 脚本以 `-- --` 结尾：pnpm 追加的多余参数（如 `pnpm tauri dev` 中的 `dev`）会落为应用参数而非 runner 参数——runner 参数会被 tauri CLI 插到 `cargo run` 之后、cargo flags 之前，导致后续 `--features` 等被 cargo 吞掉、编译失败。
-- `pnpm release`（即 `tauri build`）/ `pnpm release:debug`：构建生产/调试桌面包。
+- `pnpm release`（即 `tauri build`）/ `pnpm release:debug`：构建生产/调试桌面包。非 dev 构建会把 `dist/` 整体嵌入二进制（编译期 `generate_context!`），`src-tauri/build.rs` 会校验 `dist/index.html` 与 `dist/assets/` 存在、不完整则直接报错；不要在 release 编译期间并行运行 `pnpm build`（vite 会先清空 `dist/`，并行编译会把残缺产物嵌进二进制）。
 - `cd src-tauri && cargo check`：快速检查 Rust 后端。
 
 修改 Rust 后端后至少运行 `cargo check`（理想情况 `cargo clippy` 无警告）；修改前端后至少运行 `pnpm build` 和 `pnpm test`。涉及界面、窗口、主题、SFTP、终端或权限的变更，需要通过 `pnpm tauri dev` 手动验证。

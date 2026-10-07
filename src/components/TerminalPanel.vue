@@ -273,6 +273,7 @@ const {
   focusTerminal: () => terminal?.focus(),
   isForegroundRuntime,
   getSearchAddon: () => searchAddon,
+  clearTerminalSelection: () => terminal?.clearSelection(),
 });
 
 const terminalDragDrop = useTerminalDragDrop({

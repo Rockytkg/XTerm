@@ -28,7 +28,7 @@ use ssh_key::{PublicKey, Signature};
 use tokio::time::Instant;
 
 use super::*;
-use crate::helpers::NameList;
+use crate::helpers::{AlgorithmExt, NameList};
 use crate::map_err;
 use crate::parsing::{ChannelOpenConfirmation, ChannelType, OpenChannelMessage, ensure_end};
 
@@ -484,6 +484,61 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "rsa")]
+    #[tokio::test]
+    async fn signature_algorithm_must_match_requested_algorithm() {
+        #[derive(Default)]
+        struct AcceptAnyKey {
+            authenticated: bool,
+        }
+
+        impl Handler for AcceptAnyKey {
+            type Error = Error;
+
+            async fn auth_publickey_offered(
+                &mut self,
+                _user: &str,
+                _public_key: &PublicKey,
+            ) -> Result<Auth, Self::Error> {
+                Ok(Auth::Accept)
+            }
+
+            async fn auth_publickey(
+                &mut self,
+                _user: &str,
+                _public_key: &PublicKey,
+            ) -> Result<Auth, Self::Error> {
+                self.authenticated = true;
+                Ok(Auth::Accept)
+            }
+        }
+
+        let rsa = ssh_key::private::RsaKeypair::random(&mut rand::rng(), 2048).unwrap();
+        let private = Arc::new(PrivateKey::from(rsa));
+
+        // Announces rsa-sha2-512, but the signature blob is ssh-rsa (SHA-1).
+        let mut session = test_auth_session();
+        let mut handler = AcceptAnyKey::default();
+        let packet = publickey_signed_packet_as("alice", private.clone(), "rsa-sha2-512", None);
+        session.process_packet(&mut handler, &packet).await.unwrap();
+        assert!(
+            !handler.authenticated,
+            "an ssh-rsa (SHA-1) signature was accepted for a request announcing rsa-sha2-512"
+        );
+
+        // Same announcement, matching signature: still accepted.
+        let mut session = test_auth_session();
+        let mut handler = AcceptAnyKey::default();
+        let packet = publickey_signed_packet_as(
+            "alice",
+            private,
+            "rsa-sha2-512",
+            Some(ssh_key::HashAlg::Sha512),
+        );
+        session.process_packet(&mut handler, &packet).await.unwrap();
+        assert!(handler.authenticated);
+    }
+
     #[tokio::test]
     async fn channel_request_for_unconfirmed_server_open_does_not_call_handler() {
         let mut session = test_authenticated_session();
@@ -590,20 +645,36 @@ mod tests {
         private_key: Arc<PrivateKey>,
         public_key: &PublicKey,
     ) -> Vec<u8> {
+        publickey_signed_packet_as(user, private_key, public_key.algorithm().as_str(), None)
+    }
+
+    /// A signed publickey request announcing `announced` as its algorithm,
+    /// signed with `hash` (`None` = the key's plain algorithm, `ssh-rsa` for RSA).
+    fn publickey_signed_packet_as(
+        user: &str,
+        private_key: Arc<PrivateKey>,
+        announced: &str,
+        hash: Option<ssh_key::HashAlg>,
+    ) -> Vec<u8> {
         let mut packet = Vec::new();
         packet.push(msg::USERAUTH_REQUEST);
         user.encode(&mut packet).unwrap();
         "ssh-connection".encode(&mut packet).unwrap();
         "publickey".encode(&mut packet).unwrap();
         1u8.encode(&mut packet).unwrap();
-        public_key.algorithm().as_str().encode(&mut packet).unwrap();
-        public_key.to_bytes().unwrap().encode(&mut packet).unwrap();
+        announced.encode(&mut packet).unwrap();
+        private_key
+            .public_key()
+            .to_bytes()
+            .unwrap()
+            .encode(&mut packet)
+            .unwrap();
 
         let mut signed = Vec::new();
         CryptoVec::new().as_ref().encode(&mut signed).unwrap();
         signed.extend_from_slice(&packet);
         let signature =
-            sign_with_hash_alg(&PrivateKeyWithHashAlg::new(private_key, None), &signed).unwrap();
+            sign_with_hash_alg(&PrivateKeyWithHashAlg::new(private_key, hash), &signed).unwrap();
         signature.encode(&mut packet).unwrap();
         packet
     }
@@ -658,7 +729,9 @@ mod tests {
 
     fn test_auth_encrypted() -> Encrypted {
         Encrypted {
-            state: EncryptedState::WaitingAuthRequest(AuthRequest::server(MethodSet::server_supported())),
+            state: EncryptedState::WaitingAuthRequest(AuthRequest::server(
+                MethodSet::server_supported(),
+            )),
             exchange: Some(Exchange::default()),
             kex: KEXES.get(&KEX_NONE).expect("none kex").make(),
             key: 0,
@@ -729,6 +802,7 @@ impl Encrypted {
                 if auth_request.bind_or_reset_principal(&user, &service_name) {
                     auth_user.clear();
                 }
+                auth_request.partial_success = false;
             }
 
             if method == "password" {
@@ -760,16 +834,20 @@ impl Encrypted {
                 } else {
                     auth_user.clear();
                     if let Auth::Reject {
-                        proceed_with_methods: Some(proceed_with_methods),
+                        proceed_with_methods,
                         partial_success,
                     } = auth
                     {
-                        auth_request.methods = proceed_with_methods;
                         auth_request.partial_success = partial_success;
+                        match proceed_with_methods {
+                            Some(methods) => auth_request.methods = methods,
+                            None => {
+                                auth_request.methods.remove(MethodKind::Password);
+                            }
+                        }
                     } else {
                         auth_request.methods.remove(MethodKind::Password);
                     }
-                    auth_request.partial_success = false;
                     reject_auth_request(until, &mut self.write, auth_request).await?;
                 }
                 Ok(())
@@ -801,16 +879,20 @@ impl Encrypted {
                 } else {
                     auth_user.clear();
                     if let Auth::Reject {
-                        proceed_with_methods: Some(proceed_with_methods),
+                        proceed_with_methods,
                         partial_success,
                     } = auth
                     {
-                        auth_request.methods = proceed_with_methods;
                         auth_request.partial_success = partial_success;
+                        match proceed_with_methods {
+                            Some(methods) => auth_request.methods = methods,
+                            None => {
+                                auth_request.methods.remove(MethodKind::None);
+                            }
+                        }
                     } else {
                         auth_request.methods.remove(MethodKind::None);
                     }
-                    auth_request.partial_success = false;
                     reject_auth_request(until, &mut self.write, auth_request).await?;
                 }
                 Ok(())
@@ -948,6 +1030,24 @@ impl Encrypted {
                     map_err!(ensure_end(&signature_reader))?;
                     map_err!(ensure_end(r))?;
 
+                    // RFC 4252 §7 / RFC 8332 §3: the signature must use the
+                    // algorithm named in the request. Otherwise a client can
+                    // announce rsa-sha2-512 and sign with ssh-rsa (SHA-1).
+                    let requested_algo = match pk_or_cert {
+                        PublicKeyOrCertificate::PublicKey { .. } => {
+                            ssh_key::Algorithm::new(&pubkey_algo)
+                        }
+                        PublicKeyOrCertificate::Certificate(_) => {
+                            ssh_key::Algorithm::new_certificate_ext(&pubkey_algo)
+                        }
+                    };
+                    if requested_algo.ok() != Some(sig.algorithm()) {
+                        debug!("signature algorithm does not match the requested one");
+                        auth_user.clear();
+                        reject_auth_request(until, &mut self.write, auth_request).await?;
+                        return Ok(());
+                    }
+
                     let is_valid = if accepted_probe_matches && user == auth_user {
                         true
                     } else {
@@ -983,14 +1083,15 @@ impl Encrypted {
                                 self.state = EncryptedState::InitCompression;
                             } else {
                                 if let Auth::Reject {
-                                    proceed_with_methods: Some(proceed_with_methods),
+                                    proceed_with_methods,
                                     partial_success,
                                 } = auth
                                 {
-                                    auth_request.methods = proceed_with_methods;
                                     auth_request.partial_success = partial_success;
+                                    if let Some(methods) = proceed_with_methods {
+                                        auth_request.methods = methods;
+                                    }
                                 }
-                                auth_request.partial_success = false;
                                 auth_user.clear();
                                 reject_auth_request(until, &mut self.write, auth_request).await?;
                             }
@@ -1031,14 +1132,15 @@ impl Encrypted {
                         }
                         auth => {
                             if let Auth::Reject {
-                                proceed_with_methods: Some(proceed_with_methods),
+                                proceed_with_methods,
                                 partial_success,
                             } = auth
                             {
-                                auth_request.methods = proceed_with_methods;
                                 auth_request.partial_success = partial_success;
+                                if let Some(methods) = proceed_with_methods {
+                                    auth_request.methods = methods;
+                                }
                             }
-                            auth_request.partial_success = false;
                             auth_user.clear();
                             reject_auth_request(until, &mut self.write, auth_request).await?;
                         }
@@ -1073,7 +1175,9 @@ async fn reject_auth_request(
         write.push(auth_request.partial_success as u8);
     });
     auth_request.current = None;
-    auth_request.rejection_count += 1;
+    if !auth_request.partial_success {
+        auth_request.rejection_count += 1;
+    }
     debug!("packet pushed");
     tokio::time::sleep_until(until).await;
     Ok(())
@@ -1223,6 +1327,7 @@ impl Session {
                 map_err!(ensure_end(r))?;
                 let target = self.target_window_size;
 
+                #[allow(clippy::collapsible_if)]
                 if let Some(ref mut enc) = self.common.encrypted {
                     if enc.adjust_window_size(channel_num, &data, target)? {
                         let window = handler.adjust_window(channel_num, self.target_window_size);
@@ -1271,13 +1376,11 @@ impl Session {
                 let is_rekeying = self.kex.active();
                 let common = &mut self.common;
                 if let Some(enc) = common.encrypted.as_mut() {
-                    new_size -= enc
-                        .flush_pending_with_writer(
-                            &mut common.packet_writer,
-                            channel_num,
-                            is_rekeying,
-                        )?
-                        as u32;
+                    new_size -= enc.flush_pending_with_writer(
+                        &mut common.packet_writer,
+                        channel_num,
+                        is_rekeying,
+                    )? as u32;
                 }
                 if let Some(chan) = self.channels.get(&channel_num) {
                     chan.window_size().update(new_size).await;
@@ -1333,10 +1436,10 @@ impl Session {
                 let channel_num = map_err!(ChannelId::decode(r))?;
                 let req_type = map_err!(String::decode(r))?;
                 let wants_reply = map_err!(u8::decode(r))?;
-                if let Some(ref mut enc) = self.common.encrypted {
-                    if let Some(channel) = enc.channels.get_mut(&channel_num) {
-                        channel.wants_reply = wants_reply != 0;
-                    }
+                if let Some(ref mut enc) = self.common.encrypted
+                    && let Some(channel) = enc.channels.get_mut(&channel_num)
+                {
+                    channel.wants_reply = wants_reply != 0;
                 }
                 if !self.common.is_established_channel(channel_num) {
                     // Request for a channel that was never opened (or whose open
@@ -1498,9 +1601,9 @@ impl Session {
 
                         let response = handler.agent_request(channel_num, self).await?;
                         if response {
-                            self.request_success()
+                            self.channel_success(channel_num)?
                         } else {
-                            self.request_failure()
+                            self.channel_failure(channel_num)?
                         }
                         Ok(())
                     }
@@ -1596,17 +1699,20 @@ impl Session {
                         let result = handler
                             .tcpip_forward(&address, &mut returned_port, self)
                             .await?;
-                        if let Some(ref mut enc) = self.common.encrypted {
-                            if result {
+                        if result {
+                            if self.common.wants_reply
+                                && let Some(ref mut enc) = self.common.encrypted
+                            {
+                                self.common.wants_reply = false;
                                 push_packet!(enc.write, {
                                     enc.write.push(msg::REQUEST_SUCCESS);
-                                    if self.common.wants_reply && port == 0 && returned_port != 0 {
+                                    if port == 0 && returned_port != 0 {
                                         map_err!(returned_port.encode(&mut enc.write))?;
                                     }
                                 })
-                            } else {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
                             }
+                        } else {
+                            self.request_failure();
                         }
                         Ok(())
                     }
@@ -1616,12 +1722,10 @@ impl Session {
                         map_err!(ensure_end(r))?;
                         debug!("handler.cancel_tcpip_forward {address:?} {port:?}");
                         let result = handler.cancel_tcpip_forward(&address, port, self).await?;
-                        if let Some(ref mut enc) = self.common.encrypted {
-                            if result {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_SUCCESS))
-                            } else {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
-                            }
+                        if result {
+                            self.request_success();
+                        } else {
+                            self.request_failure();
                         }
                         Ok(())
                     }
@@ -1632,12 +1736,10 @@ impl Session {
                         let result = handler
                             .streamlocal_forward(&server_socket_path, self)
                             .await?;
-                        if let Some(ref mut enc) = self.common.encrypted {
-                            if result {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_SUCCESS))
-                            } else {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
-                            }
+                        if result {
+                            self.request_success();
+                        } else {
+                            self.request_failure();
                         }
                         Ok(())
                     }
@@ -1648,21 +1750,15 @@ impl Session {
                         let result = handler
                             .cancel_streamlocal_forward(&socket_path, self)
                             .await?;
-                        if let Some(ref mut enc) = self.common.encrypted {
-                            if result {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_SUCCESS))
-                            } else {
-                                push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
-                            }
+                        if result {
+                            self.request_success();
+                        } else {
+                            self.request_failure();
                         }
                         Ok(())
                     }
                     _ => {
-                        if let Some(ref mut enc) = self.common.encrypted {
-                            push_packet!(enc.write, {
-                                enc.write.push(msg::REQUEST_FAILURE);
-                            });
-                        }
+                        self.request_failure();
                         Ok(())
                     }
                 }

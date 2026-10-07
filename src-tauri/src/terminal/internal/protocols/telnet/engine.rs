@@ -618,7 +618,10 @@ impl TelnetEngine {
             // SE. Only honour the marker when COMPRESS2 was actually
             // negotiated; otherwise the peer could silently corrupt every
             // following byte by forcing us into decompression.
-            if matches!(self.options[COMPRESS2 as usize].him, QState::Yes | QState::WantYes) {
+            if matches!(
+                self.options[COMPRESS2 as usize].him,
+                QState::Yes | QState::WantYes
+            ) {
                 self.decompressor = Some(Decompress::new(true));
             } else {
                 self.warning(

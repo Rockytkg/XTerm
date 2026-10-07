@@ -10,7 +10,6 @@ const SEARCH_DECORATIONS = Object.freeze({
 });
 
 const EMPTY_SEARCH_RESULT = Object.freeze({ resultIndex: -1, resultCount: 0 });
-const SEARCH_CLEANUP_DELAY_MS = 250;
 
 export function useTerminalSearchPanel({
   props,
@@ -18,12 +17,12 @@ export function useTerminalSearchPanel({
   focusTerminal,
   isForegroundRuntime,
   getSearchAddon,
+  clearTerminalSelection,
 }) {
   const searchOpen = ref(false);
   const searchTerm = ref("");
   const searchResult = ref(EMPTY_SEARCH_RESULT);
   let handledSearchOpenToken = 0;
-  let delayedCleanupTimer = 0;
   let searchQueryActive = false;
 
   const searchResultLabel = computed(() => {
@@ -50,30 +49,14 @@ export function useTerminalSearchPanel({
     searchResult.value = result;
   }
 
-  function cancelDelayedCleanup() {
-    if (!delayedCleanupTimer) return;
-    clearTimeout(delayedCleanupTimer);
-    delayedCleanupTimer = 0;
-  }
-
-  function clearSearchDecorations() {
-    cancelDelayedCleanup();
-    const searchAddon = getSearchAddon();
-    if (!searchAddon) return;
-
-    searchAddon.clearDecorations();
-
-    // addon-search can have an already queued incremental highlight job. Its
-    // public clearDecorations API clears the current decorations but cannot
-    // cancel that internal timer, so perform one final cleanup after it has
-    // had a chance to run. The identity check prevents clearing a replacement
-    // addon after a terminal rebuild.
-    delayedCleanupTimer = setTimeout(() => {
-      delayedCleanupTimer = 0;
-      if (getSearchAddon() === searchAddon && (!searchOpen.value || !searchTerm.value)) {
-        searchAddon.clearDecorations();
-      }
-    }, SEARCH_CLEANUP_DELAY_MS);
+  // 清除搜索在终端上留下的全部视觉痕迹：匹配高亮 decoration，以及 addon 为
+  // 当前命中项设置的终端选区（clearDecorations 不清选区，不清就会残留一处
+  // “高亮”）。addon 内部已排队的增量重排定时器无法从外部取消，但它触发时会
+  // 重新读取缓存词；此处缓存词已被 clearDecorations 清空，定时器只会落入
+  // 空词分支自我清理，不会重新绘制高亮。
+  function clearSearchPaint() {
+    getSearchAddon()?.clearDecorations();
+    clearTerminalSelection();
   }
 
   function resetSearchResult() {
@@ -83,10 +66,12 @@ export function useTerminalSearchPanel({
   watch(
     searchTerm,
     () => {
-      // A debounced query has not been executed yet. Ignore result events from
-      // the previous query until runSearch activates this one.
+      // 输入词变化后，旧词的高亮与命中选区立即失效。立即清除而不是等
+      // debounced 搜索覆盖：否则在 debounce 窗口内（以及 addon 在终端输出后
+      // 用缓存旧词做增量重排时）屏幕上会残留与输入框不符的中间词高亮。
       searchQueryActive = false;
       resetSearchResult();
+      clearSearchPaint();
     },
     { flush: "sync" },
   );
@@ -96,12 +81,13 @@ export function useTerminalSearchPanel({
     searchTerm.value = "";
     searchQueryActive = false;
     resetSearchResult();
-    clearSearchDecorations();
+    clearSearchPaint();
   }
 
   function openSearchPanel() {
     const searchAddon = getSearchAddon();
     if (!searchAddon || !isForegroundRuntime()) return false;
+    // 只清 decoration：用户在打开搜索前手动选择的文本不应被清掉。
     searchAddon.clearDecorations();
     searchOpen.value = true;
     searchTerm.value = "";
@@ -115,21 +101,21 @@ export function useTerminalSearchPanel({
     searchTerm.value = "";
     searchQueryActive = false;
     resetSearchResult();
-    clearSearchDecorations();
+    clearSearchPaint();
     focusTerminal();
   }
 
   function runSearch({ previous = false } = {}) {
-    const searchAddon = getSearchAddon();
-    if (!searchAddon) return;
-
     const term = searchTerm.value;
     if (!term) {
+      // 空查询没有可执行搜索；高亮与选区已由 searchTerm 的 watch 同步清除。
       searchQueryActive = false;
-      searchOpen.value && clearSearchDecorations();
       resetSearchResult();
       return;
     }
+
+    const searchAddon = getSearchAddon();
+    if (!searchAddon) return;
 
     searchQueryActive = true;
     const options = {

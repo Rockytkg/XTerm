@@ -162,11 +162,7 @@ mod tests {
     fn io_errors_are_always_failed() {
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        send_telnet_transport_failure(
-            &event_tx,
-            TelnetReadError::Failed("boom".to_string()),
-            true,
-        );
+        send_telnet_transport_failure(&event_tx, TelnetReadError::Failed("boom".to_string()), true);
 
         match event_rx.try_recv().unwrap() {
             SessionWorkerEvent::Failed(detail) => assert_eq!(detail, "boom"),

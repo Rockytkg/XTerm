@@ -23,6 +23,7 @@ import { closeSftpSession, saveSftpPreviewResource } from "../services/sftp";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { contextMenuItem, isEditableContextTarget } from "../utils/editableContext";
 import { resolveEditorTheme } from "../utils/editorTheme";
+import { classifySftpPreview } from "../utils/filePreview";
 import { blurActiveElement } from "../utils/focusGuards";
 import { createShortcutRegistry } from "../utils/shortcutRegistry";
 import { createLogger } from "../utils/logger";
@@ -557,10 +558,16 @@ async function downloadPreviewResource({ name, contentBase64 }) {
   }
 }
 
+// 双击/回车的默认打开方式：目录进入，可编辑文本进编辑器，其余进预览
 function openEntryOrPreview(entry) {
   if (!entry) return;
   if (entry.kind === "dir") {
     openEntry(entry);
+    return;
+  }
+  const { editable, tooLarge } = classifySftpPreview(entry);
+  if (editable && !tooLarge) {
+    openEditor(entry);
     return;
   }
   openPreview([entry]);

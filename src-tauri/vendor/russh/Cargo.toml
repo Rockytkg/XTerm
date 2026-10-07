@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.89"
 name = "russh"
-version = "0.63.3"
+version = "0.64.1"
 authors = ["Pierre-Étienne Meunier <pe@pijul.org>"]
 build = false
 autolib = false
@@ -44,7 +44,6 @@ default = [
 ]
 des = ["dep:des"]
 dsa = ["ssh-key/dsa"]
-legacy-ed25519-pkcs8-parser = ["yasna"]
 ring = ["dep:ring"]
 rsa = [
     "dep:rsa",
@@ -96,6 +95,14 @@ path = "examples/sftp_server.rs"
 [[example]]
 name = "test"
 path = "examples/test.rs"
+
+[[test]]
+name = "auth_agent_req_channel_reply"
+path = "tests/auth_agent_req_channel_reply.rs"
+
+[[test]]
+name = "auth_partial_success"
+path = "tests/auth_partial_success.rs"
 
 [[test]]
 name = "auth_state_reset"
@@ -378,14 +385,6 @@ version = "1.17"
 
 [dependencies.universal-hash]
 version = "0.6.1"
-
-[dependencies.yasna]
-version = "0.6"
-features = [
-    "bit-vec",
-    "num-bigint",
-]
-optional = true
 
 [dependencies.zeroize]
 version = "1.7"
