@@ -86,8 +86,9 @@ class TerminalOutputFlowControl {
 
   async write(terminal, data) {
     if (!terminal || !data) return;
-    await this._blocked.wait();
     const generation = this._generation;
+    await this._blocked.wait();
+    if (generation !== this._generation) return;
     this._pendingCallbacks += 1;
     if (this._pendingCallbacks >= this._highWatermark) {
       this._blocked.setOpen(false);

@@ -941,16 +941,16 @@ pub(super) fn analyze_serial_sample(sample: &[u8], encoding: Option<&str>) -> Se
 
     let text = decoded.data.trim_end();
     let lower = text.to_ascii_lowercase();
-    let mut ascii_human = 0_usize;
+    let mut human_chars = 0_usize;
     let mut structural_chars = 0_usize;
     for ch in text.chars() {
-        if ch.is_ascii_alphanumeric()
+        if ch.is_alphanumeric()
             || matches!(
                 ch,
                 ' ' | '_' | '-' | '.' | '/' | '@' | '(' | ')' | '[' | ']'
             )
         {
-            ascii_human += 1;
+            human_chars += 1;
         }
         if ch.is_whitespace() || ch.is_ascii_punctuation() {
             structural_chars += 1;
@@ -969,15 +969,15 @@ pub(super) fn analyze_serial_sample(sample: &[u8], encoding: Option<&str>) -> Se
         || (newline_evidence
             && meaningful_chars >= SERIAL_MIN_DETECT_BYTES * 2
             && printable_ratio >= 0.72
-            && ascii_human >= 4);
-    let has_text_structure = strong_evidence || (structural_chars >= 2 && ascii_human >= 4);
+            && human_chars >= 4);
+    let has_text_structure = strong_evidence || (structural_chars >= 2 && human_chars >= 4);
     let prompt_bonus = if prompt_evidence { 0.20 } else { 0.0 };
     let device_hint_bonus = if device_evidence { 0.16 } else { 0.0 };
     let ansi_bonus = if ansi_evidence { 0.10 } else { 0.0 };
     let newline_bonus = if newline_evidence { 0.07 } else { 0.0 };
     let marker_bonus = ((terminal_markers as f32 / sample.len() as f32).min(0.20)) * 0.25;
     let length_bonus = ((sample.len() as f32 / 48.0).min(1.0)) * 0.07;
-    let human_bonus = ((ascii_human as f32 / chars as f32).min(0.70)) * 0.14;
+    let human_bonus = ((human_chars as f32 / chars as f32).min(0.70)) * 0.14;
     let mut score = (printable as f32 / chars as f32) * 0.34
         + (ascii_terminal as f32 / sample.len() as f32) * 0.22
         + decoded.confidence * 0.10

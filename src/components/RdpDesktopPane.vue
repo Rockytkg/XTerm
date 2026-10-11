@@ -56,6 +56,7 @@ let resizeDebounceTimer = 0;
 let resizeObserver = null;
 // 已按下未释放的按键，blur/断线时统一补 keyup，避免远端按键卡死。
 const pressedKeys = new Map();
+const pressedButtons = new Set();
 
 // 攒够一个滚轮刻度才发一次 Wheel 消息（单位"格"，正=向上）；浏览器 deltaY 向下
 // 为正，桥协议向上为正，发送时取反。
@@ -75,6 +76,14 @@ function releaseAllKeys() {
     sendFrame(encodeKey(entry.scancode, false, entry.extended));
   }
   pressedKeys.clear();
+}
+
+function releaseAllInputs() {
+  releaseAllKeys();
+  for (const button of pressedButtons) {
+    sendFrame(encodePointerButton(button, false));
+  }
+  pressedButtons.clear();
 }
 
 function handleDesktopWheel(event) {
@@ -287,6 +296,7 @@ function connectBridge() {
     ws = null;
     bridgeConnected.value = false;
     pressedKeys.clear();
+    pressedButtons.clear();
     // 后端桥在 RDP 断开时会同步把 connectionState 置为 closed；这里只补充
     // WebSocket 自身异常断开（后端仍认为 connected）的情况。
     if (!event.wasClean && wasConnected && connectionStatus.value === "connected") {
@@ -403,6 +413,9 @@ function handlePointerButton(event, pressed) {
     } catch {
       // 指针已失效（如触摸点被取消）时忽略，不影响本次按下。
     }
+    pressedButtons.add(button);
+  } else {
+    pressedButtons.delete(button);
   }
   desktopCanvas.value?.focus();
   sendFrame(encodePointerButton(button, pressed));
@@ -425,7 +438,7 @@ function handleKeyEvent(event, pressed) {
 }
 
 function handleCanvasBlur() {
-  releaseAllKeys();
+  releaseAllInputs();
 }
 
 function scheduleResizeRequest() {
@@ -577,6 +590,7 @@ onBeforeUnmount(() => {
           @pointermove="handlePointerMove"
           @pointerdown="handlePointerButton($event, true)"
           @pointerup="handlePointerButton($event, false)"
+          @pointercancel="handlePointerButton($event, false)"
         />
       </div>
 

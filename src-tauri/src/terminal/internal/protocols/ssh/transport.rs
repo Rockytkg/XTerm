@@ -67,6 +67,7 @@ pub(super) fn spawn_ssh_transport_actor(
                                 &event_tx,
                                 Some("SSH channel closed by remote host".to_string()),
                             );
+                            let _ = disconnect_ssh_session(&transport.session).await;
                             return;
                         }
                         Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
@@ -79,6 +80,7 @@ pub(super) fn spawn_ssh_transport_actor(
                                     "SSH shell exited with status {exit_status}"
                                 ));
                             };
+                            let _ = disconnect_ssh_session(&transport.session).await;
                             return;
                         }
                         Some(russh::ChannelMsg::ExitSignal { signal_name, error_message, .. }) => {
@@ -88,6 +90,7 @@ pub(super) fn spawn_ssh_transport_actor(
                                 format!("SSH shell exited by signal {signal_name:?}: {error_message}")
                             };
                             send_transport_failed(&event_tx, reason);
+                            let _ = disconnect_ssh_session(&transport.session).await;
                             return;
                         }
                         Some(_) => {}

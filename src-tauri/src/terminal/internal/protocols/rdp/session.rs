@@ -28,6 +28,7 @@ use ironrdp::input::{
     Database as InputDatabase, MouseButton, MousePosition, Operation, Scancode, WheelRotations,
 };
 use ironrdp::pdu::geometry::{InclusiveRectangle, Rectangle as _};
+use ironrdp::pdu::input::fast_path::FastPathInputEvent;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput};
 use ironrdp_tokio::{FramedWrite as _, TokioFramed};
@@ -363,6 +364,21 @@ async fn run_session_actor(
                     // 前端断开/出错：会话继续存活，重连时重发 Hello + 全帧。
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
                         client = None;
+                        let mut state = ActorState {
+                            framed: &mut framed,
+                            active: &mut active,
+                            image: &mut image,
+                            input_db: &mut input_db,
+                            local_clipboard_text: &local_clipboard_text,
+                            client: &mut client,
+                            pending_resize: &mut pending_resize,
+                            event_tx: &event_tx,
+                        };
+                        // 浏览器断开后不会再发送 keyup/pointerup；清理数据库状态并
+                        // 把释放事件发给服务器，避免重连前远端仍卡住输入。
+                        if !state.release_all_input().await {
+                            break;
+                        }
                     }
                     Some(Ok(_)) => {}
                 }
@@ -656,6 +672,18 @@ impl ActorState<'_> {
     /// 产出的脏矩形随批推给前端。返回 false 表示会话应结束。
     async fn apply_input(&mut self, operations: Vec<Operation>) -> bool {
         let events = self.input_db.apply(operations);
+        self.apply_input_events(&events).await
+    }
+
+    async fn release_all_input(&mut self) -> bool {
+        let events = self.input_db.release_all();
+        self.apply_input_events(&events).await
+    }
+
+    async fn apply_input_events(&mut self, events: &[FastPathInputEvent]) -> bool {
+        if events.is_empty() {
+            return true;
+        }
         let outputs = match self.active.process_fastpath_input(self.image, &events) {
             Ok(outputs) => outputs,
             Err(error) => {
