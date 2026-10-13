@@ -368,15 +368,6 @@ watch(
   openCredentialEditorFromRoute,
 );
 
-watch(isGraphLayout, async (graphLayout) => {
-  if (graphLayout) {
-    destroySortable();
-    return;
-  }
-  await nextTick();
-  createSortable();
-});
-
 onBeforeUnmount(() => {
   unmounted = true;
   destroySortable();

@@ -37,40 +37,27 @@ const pendingDelete = ref(null);
 const listRef = ref(null);
 const { scheduleExitTeardown, cancelExitTeardown } = useDialogExitTeardown();
 
-const CLICK_SUPPRESS_MS = 180;
-let suppressClickTimer = 0;
-let suppressNextClick = false;
-
 function connectionIds() {
   return connectionProfiles.value.map((connection) => connection.id);
 }
 
-function suppressUpcomingClick() {
-  suppressNextClick = true;
-  if (suppressClickTimer) window.clearTimeout(suppressClickTimer);
-  suppressClickTimer = window.setTimeout(() => {
-    suppressNextClick = false;
-    suppressClickTimer = 0;
-  }, CLICK_SUPPRESS_MS);
-}
-
-const { dragging, sortableCleanup, createSortable, destroySortable } = useSortableList({
-  listRef,
-  ids: connectionIds,
-  draggable: ".session-card",
-  filter: ".session-card-actions, .session-card-actions *",
-  delay: 0,
-  delayOnTouchOnly: true,
-  onDragEnd: suppressUpcomingClick,
-  onReorder: reorderConnections,
-  onReorderError(error) {
-    showToast({
-      type: "error",
-      title: t("notifications.connectionOrderSaveFailed"),
-      message: String(error),
-    });
-  },
-});
+const { dragging, sortableCleanup, consumeSuppressedClick, createSortable, destroySortable } =
+  useSortableList({
+    listRef,
+    ids: connectionIds,
+    draggable: ".session-card",
+    filter: ".session-card-actions, .session-card-actions *",
+    delay: 0,
+    delayOnTouchOnly: true,
+    onReorder: reorderConnections,
+    onReorderError(error) {
+      showToast({
+        type: "error",
+        title: t("notifications.connectionOrderSaveFailed"),
+        message: String(error),
+      });
+    },
+  });
 
 async function onSave({ id }) {
   logger.info("connection.save", id, editingConn.value ? "(edit)" : "(new)");
@@ -100,14 +87,7 @@ async function onSave({ id }) {
 }
 
 function onConnect(conn) {
-  if (dragging.value || suppressNextClick) {
-    suppressNextClick = false;
-    if (suppressClickTimer) {
-      window.clearTimeout(suppressClickTimer);
-      suppressClickTimer = 0;
-    }
-    return;
-  }
+  if (consumeSuppressedClick()) return;
   logger.info("connection.connect", conn.name);
   connectTo(conn.id);
   router.push({ name: "workspace" });
@@ -195,7 +175,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   destroySortable();
-  if (suppressClickTimer) window.clearTimeout(suppressClickTimer);
   sortableCleanup.unbindReleaseCleanup();
 });
 </script>
