@@ -7,15 +7,10 @@ import { GitBranch, Link2, Minus, Plus, RefreshCw, SlidersHorizontal, Trash2 } f
 import AppTooltip from "../components/AppTooltip.vue";
 import "../styles/views-relationship.scss";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
-import {
-  clearCredentialReferences,
-  deleteCredential,
-  loadCredentialUsages,
-  loadCredentials,
-} from "../services/credentials";
+import { clearCredentialReferences, deleteCredential } from "../services/credentials";
+import { loadCredentialContext } from "../services/credentialContext";
 import {
   clearConnectionSavedCredential,
-  loadWorkspaceBootstrap,
   setConnectionSavedCredential,
 } from "../services/workspace";
 import { useAppPreferences } from "../composables/useAppPreferences";
@@ -169,12 +164,10 @@ async function loadGraphState(snapshot = null) {
   loading.value = true;
   graphError.value = "";
   try {
-    const [savedCredentials, savedUsages, workspace] = snapshot
-      ? [snapshot.credentials, snapshot.usages, { connections: snapshot.connections }]
-      : await Promise.all([loadCredentials(), loadCredentialUsages(), loadWorkspaceBootstrap()]);
-    credentials.value = Array.isArray(savedCredentials) ? savedCredentials : [];
-    credentialUsagesList.value = Array.isArray(savedUsages) ? savedUsages : [];
-    const loadedConnections = Array.isArray(workspace?.connections) ? workspace.connections : [];
+    const context = snapshot || (await loadCredentialContext());
+    credentials.value = context.credentials;
+    credentialUsagesList.value = context.usages;
+    const loadedConnections = context.connections;
     connections.value = loadedConnections.filter((connection) => isCredentialConnection(connection));
   } catch (error) {
     logger.error("graph.load.failed", error);

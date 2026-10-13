@@ -36,11 +36,9 @@ import CredentialGraphView from "./CredentialGraphView.vue";
 import { appFieldNames, NO_NATIVE_AUTOCOMPLETE } from "../utils/autocomplete";
 import {
   deleteUnusedCredentials,
-  loadCredentialUsages,
-  loadCredentials,
   reorderCredentials,
 } from "../services/credentials";
-import { loadWorkspaceBootstrap } from "../services/workspace";
+import { loadCredentialContext, loadCredentialRelations } from "../services/credentialContext";
 import { useAppPreferences } from "../composables/useAppPreferences";
 import { useCredentialEditor } from "../composables/useCredentialEditor";
 import { useDialogExitTeardown } from "../composables/useDialogExitTeardown";
@@ -127,14 +125,10 @@ const isGraphLayout = computed(() => credentialLayoutMode.value === "graph");
 async function loadCredentialState() {
   formError.value = "";
   try {
-    const [saved, usages, workspace] = await Promise.all([
-      loadCredentials(),
-      loadCredentialUsages(),
-      loadWorkspaceBootstrap(),
-    ]);
-    credentials.value = Array.isArray(saved) ? saved : [];
-    credentialUsages.value = Array.isArray(usages) ? usages : [];
-    connections.value = Array.isArray(workspace?.connections) ? workspace.connections : [];
+    const context = await loadCredentialContext();
+    credentials.value = context.credentials;
+    credentialUsages.value = context.usages;
+    connections.value = context.connections;
   } catch (error) {
     formError.value = String(error);
   }
@@ -190,13 +184,17 @@ async function persistCredentialSave(request) {
       )
     : [...credentials.value, saved];
   await refreshCredentialUsages();
-  await graphView.value?.refreshGraph?.({
+  await graphView.value?.refreshGraph?.(credentialGraphSnapshot());
+  closeEditor();
+  showToast({ type: "success", title: t("notifications.credentialSaved") });
+}
+
+function credentialGraphSnapshot() {
+  return {
     credentials: credentials.value,
     usages: credentialUsages.value,
     connections: connections.value,
-  });
-  closeEditor();
-  showToast({ type: "success", title: t("notifications.credentialSaved") });
+  };
 }
 
 async function resolveTypeChangeConfirm(action) {
@@ -217,12 +215,9 @@ async function resolveTypeChangeConfirm(action) {
 
 async function refreshCredentialUsages() {
   try {
-    const [usages, workspace] = await Promise.all([
-      loadCredentialUsages(),
-      loadWorkspaceBootstrap(),
-    ]);
-    credentialUsages.value = Array.isArray(usages) ? usages : [];
-    connections.value = Array.isArray(workspace?.connections) ? workspace.connections : [];
+    const context = await loadCredentialRelations();
+    credentialUsages.value = context.usages;
+    connections.value = context.connections;
   } catch (error) {
     logger.warn("credential-usages.refresh.failed", error);
   }
@@ -251,11 +246,7 @@ async function confirmCleanupUnused() {
       credentials.value = credentials.value.filter((cred) => !deleted.has(cred.id));
     }
     await refreshCredentialUsages();
-    await graphView.value?.refreshGraph?.({
-      credentials: credentials.value,
-      usages: credentialUsages.value,
-      connections: connections.value,
-    });
+    await graphView.value?.refreshGraph?.(credentialGraphSnapshot());
     cleanupConfirmOpen.value = false;
     showToast({
       type: "success",
@@ -364,11 +355,7 @@ const {
   async onDeleted(pending) {
     credentials.value = credentials.value.filter((credential) => credential.id !== pending.id);
     await refreshCredentialUsages();
-    await graphView.value?.refreshGraph?.({
-      credentials: credentials.value,
-      usages: credentialUsages.value,
-      connections: connections.value,
-    });
+    await graphView.value?.refreshGraph?.(credentialGraphSnapshot());
     if (editingId.value === pending.id) closeEditor();
   },
   onFailed(error) {

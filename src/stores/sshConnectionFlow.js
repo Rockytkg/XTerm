@@ -1,11 +1,7 @@
-import {
-  createCredential,
-  loadCredentialUsages,
-  loadCredentials,
-  updateCredential,
-} from "../services/credentials";
+import { createCredential, loadCredentials, updateCredential } from "../services/credentials";
+import { loadCredentialContext } from "../services/credentialContext";
 import { authenticateBackendConnection } from "../services/terminalSessions";
-import { loadWorkspaceBootstrap, updateConnectionProfile } from "../services/workspace";
+import { updateConnectionProfile } from "../services/workspace";
 import { createLogger } from "../utils/logger";
 import {
   buildCredentialTypeChangeImpact,
@@ -77,16 +73,12 @@ function resolvePersistence(input, prompt) {
 }
 
 async function loadCredentialChangeContext(credentialId) {
-  const [credentials, usages, workspace] = await Promise.all([
-    loadCredentials(),
-    loadCredentialUsages(),
-    loadWorkspaceBootstrap(),
-  ]);
+  const context = await loadCredentialContext();
   const id = String(credentialId || "");
   return {
-    credential: (Array.isArray(credentials) ? credentials : []).find((item) => item.id === id),
-    connections: Array.isArray(workspace?.connections) ? workspace.connections : [],
-    usages: (Array.isArray(usages) ? usages : []).filter((usage) => usage.credentialId === id),
+    credential: context.credentials.find((item) => item.id === id),
+    connections: context.connections,
+    usages: context.usages.filter((usage) => usage.credentialId === id),
   };
 }
 
