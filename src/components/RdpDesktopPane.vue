@@ -2,11 +2,12 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ClipboardPaste, Keyboard, Maximize, Scaling } from "@lucide/vue";
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { useToasts } from "../composables/useToasts";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { useRemoteDesktopPane } from "../composables/useRemoteDesktopPane";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { createLogger } from "../utils/logger";
 import { scancodeForKeyEvent } from "../utils/rdpScancodeMap";
+import { createDebounced } from "../utils/schedulers";
 import { createWheelAccumulator } from "../utils/wheelAccumulator";
 import {
   RDP_SERVER_MESSAGE,
@@ -19,8 +20,6 @@ import {
   encodeWheel,
 } from "../utils/rdpCodec";
 
-const SCALE_MODES = ["fit", "none", "clip"];
-const AUTH_RETRY_ERROR_CODES = new Set(["rdp_auth_required", "rdp_auth_failed"]);
 const RESIZE_DEBOUNCE_MS = 300;
 
 const props = defineProps({
@@ -35,8 +34,7 @@ const props = defineProps({
 
 const emit = defineEmits(["retryConnection"]);
 
-const { t, te } = useI18n();
-const { showToast } = useToasts();
+const { t } = useI18n();
 const { sessionRegistry } = useWorkspaceStore();
 const logger = createLogger("frontend.terminal.rdp");
 
@@ -48,11 +46,9 @@ const bridgeError = ref("");
 const disconnectReason = ref("");
 const desktopSize = ref({ width: 0, height: 0 });
 const containerSize = ref({ width: 0, height: 0 });
-const passwordInput = ref("");
 
 let ws = null;
 let canvasContext = null;
-let resizeDebounceTimer = 0;
 let resizeObserver = null;
 // 已按下未释放的按键，blur/断线时统一补 keyup，避免远端按键卡死。
 const pressedKeys = new Map();
@@ -94,30 +90,6 @@ function handleDesktopWheel(event) {
   wheelAccumulator.feed(event);
 }
 
-const connectionStatus = computed(() => props.connectionState?.status || "idle");
-const authRetryRequested = computed(() =>
-  AUTH_RETRY_ERROR_CODES.has(props.connectionState?.error?.code || ""),
-);
-
-const endpointLabel = computed(() => {
-  const host = props.activeConnection?.host || props.activeConnection?.name || "-";
-  const port = props.activeConnection?.port ? `:${props.activeConnection.port}` : "";
-  return `${host}${port}`;
-});
-
-const failureLabel = computed(() => {
-  const error = props.connectionState?.error;
-  if (!error) return "";
-  const code = error.code || "unknown";
-  const key = `connectionErrors.${code}`;
-  return te(key) ? t(key, error.args || {}) : error.detail || t("connectionErrors.unknown");
-});
-
-const failureDetail = computed(() => {
-  const detail = props.connectionState?.error?.detail || props.connectionState?.statusDetail;
-  return typeof detail === "string" ? detail.trim() : "";
-});
-
 const scaleMode = computed(() => props.activeConnection?.rdpScaleMode || "fit");
 
 // 与接收路径（CLIPBOARD_TEXT）的门控口径一致：默认开，仅显式 false 关闭。
@@ -132,61 +104,36 @@ function syncBridgeSize(width, height) {
   sessionRegistry.setSessionRdpBridge(props.frontendSessionId, { ...bridge, width, height });
 }
 
-// 单一状态浮层：优先级 桥错误 > 连接中 > 失败 > 已断开。
-const overlayKind = computed(() => {
-  if (bridgeError.value) return "error";
-  if (connectionStatus.value === "connecting") return "connecting";
-  if (connectionStatus.value === "failed") return "failed";
-  if (connectionStatus.value === "closed" && !bridgeConnected.value) return "closed";
-  return null;
+// 浮层、缩放、全屏、剪贴板等协议无关壳层逻辑收敛于共享 composable。
+const {
+  passwordInput,
+  connectionStatus,
+  endpointLabel,
+  overlayKind,
+  overlayTitle,
+  overlayDescription,
+  overlayNeedsPassword,
+  overlaySubmitDisabled,
+  handleOverlaySubmit,
+  effectiveScaleMode,
+  scaleModeLabel,
+  cycleScaleMode,
+  toggleFullscreen,
+  sendLocalClipboard,
+} = useRemoteDesktopPane({
+  protocol: "rdp",
+  props,
+  emit,
+  logger,
+  connected: bridgeConnected,
+  sessionError: bridgeError,
+  closedDescription: disconnectReason,
+  scaleMode,
+  getCurrentScaleMode: () => scaleMode.value,
+  fullscreenTarget: desktopViewport,
+  canSendClipboard: () => bridgeConnected.value,
+  sendClipboardText: (text) => sendFrame(encodeClipboardText(text)),
 });
-
-const overlayTitle = computed(() => {
-  switch (overlayKind.value) {
-    case "error":
-      return t("rdpDesktop.connectionError");
-    case "connecting":
-      return t("terminal.connectionConnectingRdp");
-    case "failed":
-      return failureLabel.value || t("connectionErrors.unknown");
-    case "closed":
-      return t("rdpDesktop.sessionClosed");
-    default:
-      return "";
-  }
-});
-
-const overlayDescription = computed(() => {
-  switch (overlayKind.value) {
-    case "error":
-      return bridgeError.value;
-    case "connecting":
-      return endpointLabel.value;
-    case "failed":
-      return failureDetail.value;
-    case "closed":
-      return disconnectReason.value;
-    default:
-      return "";
-  }
-});
-
-const overlayNeedsPassword = computed(
-  () => overlayKind.value === "failed" && authRetryRequested.value,
-);
-
-const overlaySubmitDisabled = computed(
-  () => overlayNeedsPassword.value && !passwordInput.value,
-);
-
-function handleOverlaySubmit() {
-  if (overlayKind.value === "failed" && authRetryRequested.value) {
-    retryConnection({ rdpPassword: passwordInput.value });
-    passwordInput.value = "";
-    return;
-  }
-  retryConnection();
-}
 
 function applyDesktopSize(width, height) {
   desktopSize.value = { width, height };
@@ -245,10 +192,6 @@ function destroyBridge() {
   ws = null;
   bridgeConnected.value = false;
   wheelAccumulator.reset();
-  if (resizeDebounceTimer) {
-    window.clearTimeout(resizeDebounceTimer);
-    resizeDebounceTimer = 0;
-  }
   if (socket) {
     // 销毁中不再关心 close/error 回调。
     socket.onclose = null;
@@ -305,22 +248,6 @@ function connectBridge() {
   };
 }
 
-function retryConnection(options = {}) {
-  bridgeError.value = "";
-  emit("retryConnection", options);
-}
-
-async function sendLocalClipboard() {
-  if (!bridgeConnected.value) return;
-  try {
-    const text = await readText();
-    if (text) sendFrame(encodeClipboardText(text));
-  } catch (error) {
-    logger.warn("clipboard.read.failed", error);
-    showToast({ type: "error", title: t("rdpDesktop.clipboardSendFailed") });
-  }
-}
-
 function pressKey(code, pressed) {
   const entry = scancodeForKeyEvent({ code });
   if (!entry) return;
@@ -333,21 +260,6 @@ function sendCtrlAltDel() {
   for (const code of ["ControlLeft", "AltLeft", "Delete"]) pressKey(code, true);
   for (const code of ["Delete", "AltLeft", "ControlLeft"]) pressKey(code, false);
 }
-
-// 工具条循环切换的本地缩放覆盖；profile 的 scaleMode 变化时清空回退。
-const scaleModeLocal = ref("");
-
-function cycleScaleMode() {
-  const current = scaleModeLocal.value || scaleMode.value;
-  const next = SCALE_MODES[(SCALE_MODES.indexOf(current) + 1) % SCALE_MODES.length];
-  scaleModeLocal.value = next;
-}
-
-const effectiveScaleMode = computed(() => scaleModeLocal.value || scaleMode.value);
-
-const scaleModeLabel = computed(() =>
-  t(`connectionDialog.rdp.scaleModes.${effectiveScaleMode.value}`),
-);
 
 // fit 模式按容器等比缩放画布（CSS 尺寸缩放，像素仍由桥帧填充）。
 const fitScale = computed(() => {
@@ -366,16 +278,6 @@ const canvasStyle = computed(() => {
     height: `${Math.max(1, Math.round(height * fitScale.value))}px`,
   };
 });
-
-function toggleFullscreen() {
-  const viewport = desktopViewport.value;
-  if (!viewport) return;
-  if (document.fullscreenElement) {
-    void document.exitFullscreen?.();
-  } else {
-    void viewport.requestFullscreen?.();
-  }
-}
 
 // 画布显示尺寸（fit 下被 CSS 缩放）换算回桌面像素坐标。
 function desktopPointFromEvent(event) {
@@ -441,21 +343,23 @@ function handleCanvasBlur() {
   releaseAllInputs();
 }
 
-function scheduleResizeRequest() {
+// guard 放在防抖回调内部（而非调度时）：断开后迟到的回调经 connected 检查与
+// sendFrame 的 ws null 短路自我抵消，destroyBridge 无需再清理定时器。
+const debouncedResizeRequest = createDebounced(() => {
   if (!bridgeConnected.value) return;
   if (props.activeConnection?.rdpResizeSession !== true) return;
   const viewport = desktopViewport.value;
   if (!viewport) return;
-  if (resizeDebounceTimer) window.clearTimeout(resizeDebounceTimer);
-  resizeDebounceTimer = window.setTimeout(() => {
-    resizeDebounceTimer = 0;
-    // 偶数对齐：RDP 显示通道要求宽高为 2 的倍数。
-    const width = Math.max(2, viewport.clientWidth & ~1);
-    const height = Math.max(2, viewport.clientHeight & ~1);
-    const { width: currentWidth, height: currentHeight } = desktopSize.value;
-    if (width === currentWidth && height === currentHeight) return;
-    sendFrame(encodeResizeRequest(width, height));
-  }, RESIZE_DEBOUNCE_MS);
+  // 偶数对齐：RDP 显示通道要求宽高为 2 的倍数。
+  const width = Math.max(2, viewport.clientWidth & ~1);
+  const height = Math.max(2, viewport.clientHeight & ~1);
+  const { width: currentWidth, height: currentHeight } = desktopSize.value;
+  if (width === currentWidth && height === currentHeight) return;
+  sendFrame(encodeResizeRequest(width, height));
+}, RESIZE_DEBOUNCE_MS);
+
+function scheduleResizeRequest() {
+  debouncedResizeRequest();
 }
 
 watch(
@@ -474,10 +378,6 @@ watch(
   },
   { immediate: true },
 );
-
-watch(scaleMode, () => {
-  scaleModeLocal.value = "";
-});
 
 onMounted(() => {
   // setup 阶段的 immediate watch 可能已连桥并写入 desktopSize，彼时 canvas 尚未

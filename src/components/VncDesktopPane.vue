@@ -2,13 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ClipboardPaste, Keyboard, Maximize, Scaling } from "@lucide/vue";
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { useToasts } from "../composables/useToasts";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { useRemoteDesktopPane } from "../composables/useRemoteDesktopPane";
 import { createLogger } from "../utils/logger";
 import { createWheelAccumulator } from "../utils/wheelAccumulator";
-
-const SCALE_MODES = ["fit", "none", "clip"];
-const AUTH_RETRY_ERROR_CODES = new Set(["vnc_auth_required", "vnc_auth_failed"]);
 
 // noVNC 内部以 50px（WHEEL_STEP）为一步且每步直接清零余量，快速滚动丢量、反向
 // 滚动余量互相抵消，表现为滚不动/抖动。这里在捕获阶段拦截垂直滚轮，归一化累积
@@ -28,19 +25,16 @@ const props = defineProps({
 
 const emit = defineEmits(["retryConnection"]);
 
-const { t, te } = useI18n();
-const { showToast } = useToasts();
+const { t } = useI18n();
 const logger = createLogger("frontend.terminal.vnc");
 
 const desktopMount = ref(null);
 const desktopName = ref("");
 const rfbConnected = ref(false);
 // 密码等凭证由用户在弹层里输入，绝不从后端凭证库读取（passthrough 模式下
-// noVNC 自己应答服务器认证挑战）。passwordInput 同时服务 passthrough 凭证
-// 弹层与认证失败后的密码重试。
+// noVNC 自己应答服务器认证挑战）。
 const credentialsPrompt = ref(null);
 const credentialUsername = ref("");
-const passwordInput = ref("");
 // RFB 实例侧的错误（securityfailure / 非干净断开），与后端 connectionState 互补。
 const rfbError = ref("");
 
@@ -82,96 +76,45 @@ function handleDesktopWheel(event) {
   wheelAccumulator.feed(event);
 }
 
-const connectionStatus = computed(() => props.connectionState?.status || "idle");
-const authRetryRequested = computed(() =>
-  AUTH_RETRY_ERROR_CODES.has(props.connectionState?.error?.code || ""),
-);
-
-const endpointLabel = computed(() => {
-  const host = props.activeConnection?.host || props.activeConnection?.name || "-";
-  const port = props.activeConnection?.port ? `:${props.activeConnection.port}` : "";
-  return `${host}${port}`;
-});
-
-const failureLabel = computed(() => {
-  const error = props.connectionState?.error;
-  if (!error) return "";
-  const code = error.code || "unknown";
-  const key = `connectionErrors.${code}`;
-  return te(key) ? t(key, error.args || {}) : error.detail || t("connectionErrors.unknown");
-});
-
-const failureDetail = computed(() => {
-  const detail = props.connectionState?.error?.detail || props.connectionState?.statusDetail;
-  return typeof detail === "string" ? detail.trim() : "";
-});
-
 const scaleMode = computed(() => props.activeConnection?.vncScaleMode || "fit");
 
-// 单一状态浮层：优先级 凭证请求 > RFB 错误 > 连接中 > 失败 > 已断开。
-const overlayKind = computed(() => {
-  if (credentialsPrompt.value) return "credentials";
-  if (rfbError.value) return "error";
-  if (connectionStatus.value === "connecting") return "connecting";
-  if (connectionStatus.value === "failed") return "failed";
-  if (connectionStatus.value === "closed" && !rfbConnected.value) return "closed";
-  return null;
+// 浮层、缩放、全屏、剪贴板等协议无关壳层逻辑收敛于共享 composable；
+// passwordInput 由其持有，同时服务 passthrough 凭证弹层与认证失败后的密码重试。
+const {
+  passwordInput,
+  connectionStatus,
+  endpointLabel,
+  overlayKind,
+  overlayTitle,
+  overlayDescription,
+  overlayNeedsPassword,
+  overlaySubmitDisabled,
+  handleOverlaySubmit,
+  scaleModeLabel,
+  cycleScaleMode,
+  toggleFullscreen,
+  sendLocalClipboard,
+} = useRemoteDesktopPane({
+  protocol: "vnc",
+  props,
+  emit,
+  logger,
+  connected: rfbConnected,
+  sessionError: rfbError,
+  credentialsPrompt,
+  scaleMode,
+  getCurrentScaleMode: () => {
+    if (!rfb) return "";
+    return rfb.scaleViewport ? "fit" : rfb.clipViewport ? "clip" : "none";
+  },
+  onScaleModeChange: (mode) => {
+    if (rfb) applyScaleMode(rfb, mode);
+  },
+  fullscreenTarget: desktopMount,
+  canSendClipboard: () => Boolean(rfb) && rfbConnected.value,
+  sendClipboardText: (text) => rfb.clipboardPasteFrom(text),
+  onCredentialsSubmit: submitCredentials,
 });
-
-const overlayTitle = computed(() => {
-  switch (overlayKind.value) {
-    case "credentials":
-      return t("vncDesktop.credentialsTitle");
-    case "error":
-      return t("vncDesktop.connectionError");
-    case "connecting":
-      return t("terminal.connectionConnectingVnc");
-    case "failed":
-      return failureLabel.value || t("connectionErrors.unknown");
-    case "closed":
-      return t("vncDesktop.sessionClosed");
-    default:
-      return "";
-  }
-});
-
-const overlayDescription = computed(() => {
-  switch (overlayKind.value) {
-    case "credentials":
-      return t("vncDesktop.credentialsDescription");
-    case "error":
-      return rfbError.value;
-    case "connecting":
-      return endpointLabel.value;
-    case "failed":
-      return failureDetail.value;
-    default:
-      return "";
-  }
-});
-
-const overlayNeedsPassword = computed(
-  () =>
-    overlayKind.value === "credentials" ||
-    (overlayKind.value === "failed" && authRetryRequested.value),
-);
-
-const overlaySubmitDisabled = computed(
-  () => overlayNeedsPassword.value && !passwordInput.value,
-);
-
-function handleOverlaySubmit() {
-  if (overlayKind.value === "credentials") {
-    submitCredentials();
-    return;
-  }
-  if (overlayKind.value === "failed" && authRetryRequested.value) {
-    retryConnection({ vncPassword: passwordInput.value });
-    passwordInput.value = "";
-    return;
-  }
-  retryConnection();
-}
 
 async function loadRfbClass() {
   if (!rfbLoadPromise) {
@@ -298,51 +241,9 @@ function submitCredentials() {
   }
 }
 
-function retryConnection(options = {}) {
-  rfbError.value = "";
-  emit("retryConnection", options);
-}
-
-async function sendLocalClipboard() {
-  if (!rfb || !rfbConnected.value) return;
-  try {
-    const text = await readText();
-    if (text) rfb.clipboardPasteFrom(text);
-  } catch (error) {
-    logger.warn("clipboard.read.failed", error);
-    showToast({ type: "error", title: t("vncDesktop.clipboardSendFailed") });
-  }
-}
-
 function sendCtrlAltDel() {
   if (!rfb || !rfbConnected.value) return;
   rfb.sendCtrlAltDel();
-}
-
-// 工具条循环切换的本地缩放覆盖；profile 的 scaleMode 变化时清空回退。
-const scaleModeLocal = ref("");
-
-function cycleScaleMode() {
-  if (!rfb) return;
-  const current =
-    scaleModeLocal.value || (rfb.scaleViewport ? "fit" : rfb.clipViewport ? "clip" : "none");
-  const next = SCALE_MODES[(SCALE_MODES.indexOf(current) + 1) % SCALE_MODES.length];
-  scaleModeLocal.value = next;
-  applyScaleMode(rfb, next);
-}
-
-const scaleModeLabel = computed(() =>
-  t(`connectionDialog.vnc.scaleModes.${scaleModeLocal.value || scaleMode.value}`),
-);
-
-function toggleFullscreen() {
-  const mount = desktopMount.value;
-  if (!mount) return;
-  if (document.fullscreenElement) {
-    void document.exitFullscreen?.();
-  } else {
-    void mount.requestFullscreen?.();
-  }
 }
 
 watch(
@@ -373,11 +274,6 @@ watch(
     if (rfb) applyLiveOptions(rfb);
   },
 );
-
-watch(scaleMode, (mode) => {
-  scaleModeLocal.value = "";
-  if (rfb) applyScaleMode(rfb, mode);
-});
 
 onMounted(() => {
   // 捕获阶段 + 非 passive：必须先于 noVNC 的 canvas 监听拿到事件才能拦截，
