@@ -63,19 +63,21 @@ enum SftpTransferRuntimeState {
     CancelRequested,
 }
 
+/// 传输控制标志的临界区无任何 `.await`，用同步锁即可，不必让每个检查点
+/// 走一遍 tokio 异步互斥的公平队列。
 struct SftpTransferControl {
-    state: tokio::sync::Mutex<SftpTransferRuntimeState>,
+    state: Mutex<SftpTransferRuntimeState>,
 }
 
 impl SftpTransferControl {
     fn new() -> Self {
         Self {
-            state: tokio::sync::Mutex::new(SftpTransferRuntimeState::Running),
+            state: Mutex::new(SftpTransferRuntimeState::Running),
         }
     }
 
-    async fn request_pause(&self) {
-        let mut state = self.state.lock().await;
+    fn request_pause(&self) {
+        let mut state = self.state.lock();
         if matches!(*state, SftpTransferRuntimeState::Running) {
             *state = SftpTransferRuntimeState::PauseRequested;
         }
@@ -84,19 +86,19 @@ impl SftpTransferControl {
     /// Undo a pending pause before the transfer task reaches its next
     /// checkpoint; once the task has already observed the pause and exited,
     /// the registry no longer holds this control and resume respawns instead.
-    async fn cancel_pause(&self) {
-        let mut state = self.state.lock().await;
+    fn cancel_pause(&self) {
+        let mut state = self.state.lock();
         if matches!(*state, SftpTransferRuntimeState::PauseRequested) {
             *state = SftpTransferRuntimeState::Running;
         }
     }
 
-    async fn request_cancel(&self) {
-        *self.state.lock().await = SftpTransferRuntimeState::CancelRequested;
+    fn request_cancel(&self) {
+        *self.state.lock() = SftpTransferRuntimeState::CancelRequested;
     }
 
-    async fn checkpoint(&self) -> Result<(), SftpTransferStop> {
-        match *self.state.lock().await {
+    fn checkpoint(&self) -> Result<(), SftpTransferStop> {
+        match *self.state.lock() {
             SftpTransferRuntimeState::PauseRequested => Err(SftpTransferStop::Paused),
             SftpTransferRuntimeState::CancelRequested => Err(SftpTransferStop::Canceled),
             SftpTransferRuntimeState::Running => Ok(()),
@@ -460,7 +462,7 @@ pub(super) async fn start_sftp_transfer_task(
 
 pub(super) async fn pause_sftp_transfer(transfer_id: &str) -> Result<(), String> {
     let control = sftp_transfer_store().lock().control(transfer_id)?;
-    control.request_pause().await;
+    control.request_pause();
     Ok(())
 }
 
@@ -474,7 +476,7 @@ pub(super) async fn resume_sftp_transfer_task(
         // The task is still alive: a pause may have been requested but not yet
         // observed at the next chunk checkpoint. Flip it back to running so the
         // resume click is not swallowed while the task drains its current chunk.
-        control.cancel_pause().await;
+        control.cancel_pause();
         return Ok(());
     }
     let mut record = sftp_transfer_store().lock().record(transfer_id)?;
@@ -504,7 +506,7 @@ pub(super) async fn cancel_sftp_transfer_task(
 ) -> Result<(), String> {
     let control = sftp_transfer_store().lock().control(transfer_id).ok();
     if let Some(control) = control {
-        control.request_cancel().await;
+        control.request_cancel();
         return Ok(());
     }
     let record = sftp_transfer_store().lock().remove(transfer_id)?;
@@ -530,7 +532,7 @@ pub(crate) fn cancel_sftp_transfers_for_session(session_id: &str) {
     let session_id = session_id.to_string();
     tokio::spawn(async move {
         for control in controls {
-            control.request_cancel().await;
+            control.request_cancel();
         }
         log::debug!(target: "terminal.sftp", "requested cancellation for SFTP transfers on '{session_id}'");
     });
@@ -633,7 +635,7 @@ async fn run_sftp_transfer_task(
             .acquire_owned()
             .await
             .map_err(|error| format!("failed to acquire SFTP transfer slot: {error}"))?;
-        control.checkpoint().await.map_err(stop_to_string)?;
+        control.checkpoint().map_err(stop_to_string)?;
         record.status = SftpTransferStatus::Running;
         record.error = None;
         sftp_transfer_store().lock().update(&record);
@@ -677,7 +679,7 @@ async fn run_sftp_transfer_task(
                         record.error = Some(format!("retrying after transfer error: {error}"));
                         sftp_transfer_store().lock().update(&record);
                         tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
-                        control.checkpoint().await.map_err(stop_to_string)?;
+                        control.checkpoint().map_err(stop_to_string)?;
                         continue;
                     }
                     break Err(error);
@@ -918,13 +920,13 @@ async fn upload_directory_streaming(
     let mut discovered_total = 0_u64;
 
     while let Some((local_directory, remote_directory)) = pending.pop() {
-        control.checkpoint().await.map_err(stop_to_string)?;
+        control.checkpoint().map_err(stop_to_string)?;
         ensure_remote_dir(sftp, &remote_directory).await?;
         let mut entries = read_sorted_local_directory(&local_directory).await?;
         entries.reverse();
 
         for entry in entries {
-            control.checkpoint().await.map_err(stop_to_string)?;
+            control.checkpoint().map_err(stop_to_string)?;
             let remote_path = join_remote_path(&remote_directory, &entry.name);
             if entry.is_dir {
                 pending.push((entry.path, remote_path));
@@ -1091,7 +1093,7 @@ async fn download_resumable_directory(
         record.transferred,
     );
     for directory in &tree.directories {
-        control.checkpoint().await.map_err(stop_to_string)?;
+        control.checkpoint().map_err(stop_to_string)?;
         tokio::fs::create_dir_all(directory)
             .await
             .map_err(|error| {
@@ -1121,7 +1123,7 @@ async fn download_planned_files(
 ) -> Result<(), String> {
     let mut completed_before_file = 0_u64;
     for file in files {
-        control.checkpoint().await.map_err(stop_to_string)?;
+        control.checkpoint().map_err(stop_to_string)?;
         let next_completed = completed_before_file.saturating_add(file.size);
         if record.transferred >= next_completed {
             completed_before_file = next_completed;
@@ -1253,7 +1255,7 @@ where
 {
     let mut buffer = vec![0_u8; SFTP_TRANSFER_BUFFER_BYTES];
     loop {
-        control.checkpoint().await.map_err(stop_to_string)?;
+        control.checkpoint().map_err(stop_to_string)?;
         let size = tokio::time::timeout(SFTP_TRANSFER_IO_TIMEOUT, reader.read(&mut buffer))
             .await
             .map_err(|_| {
