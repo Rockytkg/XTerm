@@ -109,10 +109,10 @@ export class TrzszAddon {
     this._filter?.setOptions?.(this._options);
   }
 
-  processServerOutput(payload) {
+  processServerOutput(payload, decodedBytes = null) {
     if (!this._canProcess()) return false;
     if (this._filter.isTransferringFiles() || this._filter.isWaitingForUploadStart()) {
-      const bytes = payloadBytes(payload);
+      const bytes = decodedBytes ?? payloadBytes(payload);
       this._filter.processServerOutput(bytes);
       return true;
     }
@@ -124,8 +124,8 @@ export class TrzszAddon {
       return true;
     }
 
-    if (payload?.dataBase64) {
-      const bytes = payloadBytes(payload);
+    if (decodedBytes !== null || payload?.dataBase64) {
+      const bytes = decodedBytes ?? payloadBytes(payload);
       if (bytesIncludeAscii(bytes, TRZSZ_TRIGGER)) {
         this._setRawOutputMode(true);
         this._filter.processServerOutput(bytes);

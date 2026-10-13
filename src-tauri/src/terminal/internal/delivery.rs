@@ -1,8 +1,4 @@
-use std::{
-    collections::VecDeque,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::collections::VecDeque;
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use memchr::memchr;
@@ -15,9 +11,8 @@ use crate::{
         internal::{
             codec::flush_decoded_backend_bytes_with_raw,
             core::{
-                CodecState, TerminalWorkingDirectoryEvent, MAX_UNRENDERED_BYTES,
-                OUTPUT_FLUSH_MAX_BYTES, OUTPUT_LIVE_FLUSH_MIN_BYTES, OUTPUT_LIVE_FLUSH_WINDOW_MS,
-                RENDER_GATE_FAIL_OPEN_MS, RENDER_GATE_RETRY_MS, REPLAY_CACHE_MAX_BYTES,
+                CodecState, TerminalWorkingDirectoryEvent, OUTPUT_FLUSH_MAX_BYTES,
+                REPLAY_CACHE_MAX_BYTES,
             },
             osc::extract_working_directories,
             util::RemoteWorkingDirectory,
@@ -27,32 +22,47 @@ use crate::{
 
 const REPLAY_BATCH_MAX_BYTES: usize = 64 * 1024;
 const TRZSZ_TRIGGER_BYTES: &[u8] = b"::TRZSZ:TRANSFER:";
+/// 尾块合并的尺寸上限：低波特率下输出以每秒数百个几字节小块到达，逐块入缓存
+/// 会把分配/记账开销放大数十倍；同编码的纯文本小块直接追加进尾块。超过上限
+/// 另起新块，保持裁剪与回放批次的粒度有界。
+const CACHE_CHUNK_MERGE_MAX_BYTES: usize = 32 * 1024;
 
 #[derive(Clone)]
 struct CachedOutputChunk {
     start_offset: usize,
     end_offset: usize,
-    line_break_count: usize,
     encoding: String,
-    data: Arc<str>,
-    raw_bytes: Arc<[u8]>,
+    data: String,
+    raw_bytes: Vec<u8>,
 }
 
 impl CachedOutputChunk {
     fn cached_bytes(&self) -> usize {
         self.data.len() + self.raw_bytes.len()
     }
-}
 
-/// Live-output backpressure gate. The gate arms on attach and is permanently
-/// disabled (fail-open) when no `renderedOffset` report arrives within the
-/// grace window, so legacy or broken frontends cannot deadlock a session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RenderGate {
-    Inactive,
-    Pending(Instant),
-    Active,
-    Disabled,
+    /// 就地裁掉块首 `trim_index` 字节的文本，返回被移除的 raw bytes 数（用于
+    /// cache_bytes 记账）。raw bytes 与文本等长时按比例同步裁剪；不等长说明
+    /// 文本经过重编码、字节坐标已无法对应，整体丢弃 raw，避免把错位字节当作
+    /// 原始输出交付。
+    fn trim_prefix(&mut self, trim_index: usize) -> usize {
+        let raw_aligned = !self.raw_bytes.is_empty() && self.raw_bytes.len() == self.data.len();
+        let removed_raw_bytes = if self.raw_bytes.is_empty() {
+            0
+        } else if raw_aligned {
+            trim_index
+        } else {
+            self.raw_bytes.len()
+        };
+        self.data.drain(..trim_index);
+        if raw_aligned {
+            self.raw_bytes.drain(..trim_index);
+        } else {
+            self.raw_bytes.clear();
+        }
+        self.start_offset += trim_index;
+        removed_raw_bytes
+    }
 }
 
 pub(super) struct SessionDeliveryState {
@@ -70,24 +80,15 @@ pub(super) struct SessionDeliveryState {
     base_offset: usize,
     pub(super) delivered_offset: usize,
     pub(super) next_offset: usize,
-    retained_line_breaks: usize,
-    replay_line_limit: usize,
-    live_flush_deadline: Option<Instant>,
     cache: VecDeque<CachedOutputChunk>,
     cache_bytes: usize,
     /// Index of the first cache chunk that may still hold undelivered bytes;
     /// every chunk before it is fully delivered and skipped by emit scans.
     delivery_cursor: usize,
-    rendered_offset: usize,
-    render_gate: RenderGate,
 }
 
 impl SessionDeliveryState {
-    pub(super) fn new(
-        connection_id: String,
-        replay_line_limit: usize,
-        raw_bytes_supported: bool,
-    ) -> Self {
+    pub(super) fn new(connection_id: String, raw_bytes_supported: bool) -> Self {
         Self {
             connection_id,
             raw_bytes_supported,
@@ -100,50 +101,9 @@ impl SessionDeliveryState {
             base_offset: 0,
             delivered_offset: 0,
             next_offset: 0,
-            retained_line_breaks: 0,
-            replay_line_limit: replay_line_limit.max(1),
-            live_flush_deadline: None,
             cache: VecDeque::new(),
             cache_bytes: 0,
             delivery_cursor: 0,
-            rendered_offset: 0,
-            render_gate: RenderGate::Inactive,
-        }
-    }
-
-    pub(super) fn note_channel_activated(&mut self) {
-        if self.render_gate != RenderGate::Disabled {
-            self.render_gate = RenderGate::Pending(Instant::now());
-        }
-        self.rendered_offset = self.delivered_offset;
-    }
-
-    pub(super) fn record_rendered_offset(&mut self, offset: u64) {
-        if self.render_gate == RenderGate::Disabled {
-            return;
-        }
-        self.render_gate = RenderGate::Active;
-        let offset = usize::try_from(offset).unwrap_or(usize::MAX);
-        // Reports are monotonic; a stale or rewound frontend must not reopen
-        // the gate by dragging the rendered offset backwards.
-        if offset > self.rendered_offset {
-            self.rendered_offset = offset;
-        }
-    }
-
-    /// Returns true when live output must wait for the frontend renderer.
-    fn render_gate_blocked(&mut self, now: Instant) -> bool {
-        if matches!(self.render_gate, RenderGate::Pending(since)
-            if now.duration_since(since) >= Duration::from_millis(RENDER_GATE_FAIL_OPEN_MS))
-        {
-            self.render_gate = RenderGate::Disabled;
-            self.rendered_offset = self.next_offset;
-        }
-        match self.render_gate {
-            RenderGate::Inactive | RenderGate::Disabled => false,
-            RenderGate::Pending(_) | RenderGate::Active => {
-                self.next_offset.saturating_sub(self.rendered_offset) > MAX_UNRENDERED_BYTES
-            }
         }
     }
 
@@ -158,11 +118,6 @@ impl SessionDeliveryState {
     }
 
     fn push_cached_output(&mut self, data: String, encoding: String, raw_bytes: Option<Vec<u8>>) {
-        let start_offset = self.next_offset;
-        let end_offset = start_offset + data.len();
-        self.next_offset = end_offset;
-        let line_break_count = count_line_breaks(&data);
-        self.retained_line_breaks += line_break_count;
         let raw_bytes = raw_bytes.unwrap_or_default();
         let preserve_raw_bytes = self.raw_bytes_supported
             && (self.raw_output_channel_id.is_some()
@@ -171,21 +126,46 @@ impl SessionDeliveryState {
             self.raw_output_channel_id = self.active_channel_id;
             self.raw_output_enabled = true;
         }
-        let raw_bytes: Arc<[u8]> = if preserve_raw_bytes {
-            Arc::from(raw_bytes)
+        let cached_bytes = data.len()
+            + if preserve_raw_bytes {
+                raw_bytes.len()
+            } else {
+                0
+            };
+        let end_offset = self.next_offset + data.len();
+
+        // 合并条件：双方都不携带 raw bytes（trzsz/raw 模式下的块必须保持字节级
+        // 边界）且编码一致。raw 通道一旦武装，之后的块都会保留 raw bytes，自然
+        // 落到独立入缓存的分支。
+        let merge_into_tail = !preserve_raw_bytes
+            && self.cache.back().is_some_and(|tail| {
+                tail.raw_bytes.is_empty()
+                    && tail.encoding == encoding
+                    && tail.data.len() + data.len() <= CACHE_CHUNK_MERGE_MAX_BYTES
+            });
+        if merge_into_tail {
+            let tail_index = self.cache.len() - 1;
+            let tail = self.cache.back_mut().expect("tail chunk must exist");
+            tail.data.push_str(&data);
+            tail.end_offset = end_offset;
+            // 尾块若已完全交付，游标可能已越过它；合并后它重新包含未交付字节，
+            // 必须把游标退回尾块，否则追加的数据会被 emit 扫描永久跳过。
+            self.delivery_cursor = self.delivery_cursor.min(tail_index);
         } else {
-            Arc::from([])
-        };
-        self.cache_bytes += data.len() + raw_bytes.len();
-        self.cache.push_back(CachedOutputChunk {
-            start_offset,
-            end_offset,
-            line_break_count,
-            encoding,
-            raw_bytes,
-            data: Arc::<str>::from(data),
-        });
-        prune_terminal_replay_cache(self);
+            self.cache.push_back(CachedOutputChunk {
+                start_offset: self.next_offset,
+                end_offset,
+                encoding,
+                data,
+                raw_bytes: if preserve_raw_bytes {
+                    raw_bytes
+                } else {
+                    Vec::new()
+                },
+            });
+        }
+        self.next_offset = end_offset;
+        self.cache_bytes += cached_bytes;
         prune_terminal_replay_cache_bytes(self);
     }
 }
@@ -223,36 +203,13 @@ pub(super) fn emit_terminal_data(
     }
 
     cache_terminal_data(app, session_id, delivery, data, encoding, raw_bytes);
-
-    if delivery.output_ready_channel_id.is_some() && delivery.replay_channel_id.is_none() {
-        schedule_live_output_flush(delivery);
-    }
+    // 输出不攒批：数据进缓存后由会话循环在同一回合内立即冲刷。
 }
 
 pub(super) fn should_flush_live_output(delivery: &SessionDeliveryState) -> bool {
-    if delivery.output_ready_channel_id.is_none() || delivery.replay_channel_id.is_some() {
-        return false;
-    }
-    let pending_bytes = pending_live_output_bytes(delivery);
-    pending_bytes >= OUTPUT_LIVE_FLUSH_MIN_BYTES
-        || (pending_bytes > 0 && delivery.raw_output_channel_id.is_some())
-        || delivery
-            .live_flush_deadline
-            .is_some_and(|deadline| pending_bytes > 0 && Instant::now() >= deadline)
-}
-
-pub(super) fn live_flush_delay(
-    delivery: &SessionDeliveryState,
-    replay_pending: bool,
-) -> Option<Duration> {
-    if replay_pending
-        || delivery.output_ready_channel_id.is_none()
-        || pending_live_output_bytes(delivery) == 0
-    {
-        return None;
-    }
-    let deadline = delivery.live_flush_deadline?;
-    Some(deadline.saturating_duration_since(Instant::now()))
+    delivery.output_ready_channel_id.is_some()
+        && delivery.replay_channel_id.is_none()
+        && pending_live_output_bytes(delivery) > 0
 }
 
 pub(super) fn drain_terminal_replay(
@@ -293,18 +250,8 @@ pub(super) fn drain_live_output(
     delivery: &mut SessionDeliveryState,
 ) {
     let Some(channel_id) = delivery.output_ready_channel_id else {
-        delivery.live_flush_deadline = None;
         return;
     };
-    delivery.live_flush_deadline = None;
-    if delivery.render_gate_blocked(Instant::now()) {
-        // The frontend renderer is more than MAX_UNRENDERED_BYTES behind;
-        // hold the output and retry shortly instead of growing an unbounded
-        // renderer backlog.
-        delivery.live_flush_deadline =
-            Some(Instant::now() + Duration::from_millis(RENDER_GATE_RETRY_MS));
-        return;
-    }
     while delivery.delivered_offset < delivery.next_offset {
         if matches!(
             emit_output_batch(
@@ -325,21 +272,6 @@ fn pending_live_output_bytes(delivery: &SessionDeliveryState) -> usize {
     delivery
         .next_offset
         .saturating_sub(delivery.delivered_offset)
-}
-
-fn schedule_live_output_flush(delivery: &mut SessionDeliveryState) {
-    if delivery.output_ready_channel_id.is_none() || delivery.replay_channel_id.is_some() {
-        return;
-    }
-    if delivery.raw_output_channel_id.is_some()
-        || pending_live_output_bytes(delivery) >= OUTPUT_LIVE_FLUSH_MIN_BYTES
-    {
-        return;
-    }
-    if delivery.live_flush_deadline.is_none() {
-        delivery.live_flush_deadline =
-            Some(Instant::now() + Duration::from_millis(OUTPUT_LIVE_FLUSH_WINDOW_MS));
-    }
 }
 
 fn cache_terminal_data(
@@ -374,131 +306,9 @@ fn raw_bytes_contain_trzsz_trigger(raw_bytes: &[u8]) -> bool {
     false
 }
 
-fn count_line_breaks(text: &str) -> usize {
-    let mut count = 0;
-    let mut index = 0;
-    let bytes = text.as_bytes();
-    while index < bytes.len() {
-        match bytes[index] {
-            b'\r' => {
-                count += 1;
-                index += usize::from(matches!(bytes.get(index + 1), Some(b'\n'))) + 1;
-            }
-            b'\n' => {
-                count += 1;
-                index += 1;
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-    count
-}
-
-fn byte_index_after_nth_line_break(text: &str, count: usize) -> usize {
-    if count == 0 {
-        return 0;
-    }
-    let mut seen = 0_usize;
-    let mut index = 0_usize;
-    let bytes = text.as_bytes();
-    while index < bytes.len() {
-        match bytes[index] {
-            b'\r' => {
-                seen += 1;
-                index += usize::from(matches!(bytes.get(index + 1), Some(b'\n'))) + 1;
-                if seen == count {
-                    return index;
-                }
-            }
-            b'\n' => {
-                seen += 1;
-                index += 1;
-                if seen == count {
-                    return index;
-                }
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-    text.len()
-}
-
-fn prune_terminal_replay_cache(delivery: &mut SessionDeliveryState) {
-    let allowed_breaks = delivery.replay_line_limit.saturating_sub(1);
-    while delivery.retained_line_breaks > allowed_breaks {
-        let Some(mut chunk) = delivery.cache.pop_front() else {
-            delivery.base_offset = delivery.next_offset;
-            delivery.delivered_offset = delivery.base_offset;
-            delivery.retained_line_breaks = 0;
-            delivery.delivery_cursor = 0;
-            return;
-        };
-        delivery.delivery_cursor = delivery.delivery_cursor.saturating_sub(1);
-
-        if delivery
-            .retained_line_breaks
-            .saturating_sub(chunk.line_break_count)
-            >= allowed_breaks
-        {
-            delivery.retained_line_breaks = delivery
-                .retained_line_breaks
-                .saturating_sub(chunk.line_break_count);
-            delivery.cache_bytes = delivery.cache_bytes.saturating_sub(chunk.cached_bytes());
-            delivery.base_offset = chunk.end_offset;
-            continue;
-        }
-
-        let excess_breaks = delivery.retained_line_breaks.saturating_sub(allowed_breaks);
-        let trim_index = byte_index_after_nth_line_break(&chunk.data, excess_breaks);
-        let remaining = &chunk.data[trim_index..];
-        delivery.retained_line_breaks = delivery.retained_line_breaks.saturating_sub(excess_breaks);
-        if remaining.is_empty() {
-            delivery.cache_bytes = delivery.cache_bytes.saturating_sub(chunk.cached_bytes());
-            delivery.base_offset = chunk.end_offset;
-            continue;
-        }
-
-        let removed_raw_bytes = if chunk.raw_bytes.is_empty() {
-            0
-        } else if chunk.raw_bytes.len() == chunk.data.len() {
-            trim_index
-        } else {
-            chunk.raw_bytes.len()
-        };
-        chunk.start_offset += trim_index;
-        if !chunk.raw_bytes.is_empty() {
-            chunk.raw_bytes = if chunk.raw_bytes.len() == chunk.data.len() {
-                Arc::<[u8]>::from(&chunk.raw_bytes[trim_index..])
-            } else {
-                Arc::<[u8]>::from([])
-            };
-        }
-        chunk.data = Arc::<str>::from(remaining);
-        chunk.line_break_count = chunk.line_break_count.saturating_sub(excess_breaks);
-        delivery.cache_bytes = delivery
-            .cache_bytes
-            .saturating_sub(trim_index + removed_raw_bytes);
-        delivery.base_offset = chunk.start_offset;
-        delivery.cache.push_front(chunk);
-        break;
-    }
-
-    if delivery.cache.is_empty() {
-        delivery.base_offset = delivery.next_offset;
-        delivery.delivery_cursor = 0;
-    }
-    if delivery.delivered_offset < delivery.base_offset {
-        delivery.delivered_offset = delivery.base_offset;
-    }
-}
-
-/// Byte-based hard cap for the replay cache. Runs after the line-based prune;
-/// whichever limit retains less output wins. Trimming keeps the newest tail so
-/// reattached frontends still see the most recent screenfuls.
+/// 回放缓存的字节硬上限。裁剪保留最新尾部，让重新挂载的前端看到最近的若干屏；
+/// 行数裁剪由前端 scrollback（xterm 写入时自行按行数截断）承担，后端不再重复
+/// 维护行计数。
 fn prune_terminal_replay_cache_bytes(delivery: &mut SessionDeliveryState) {
     while delivery.cache_bytes > REPLAY_CACHE_MAX_BYTES {
         let Some(mut chunk) = delivery.cache.pop_front() else {
@@ -506,7 +316,6 @@ fn prune_terminal_replay_cache_bytes(delivery: &mut SessionDeliveryState) {
             delivery.delivery_cursor = 0;
             delivery.base_offset = delivery.next_offset;
             delivery.delivered_offset = delivery.base_offset;
-            delivery.retained_line_breaks = 0;
             return;
         };
         delivery.delivery_cursor = delivery.delivery_cursor.saturating_sub(1);
@@ -518,36 +327,14 @@ fn prune_terminal_replay_cache_bytes(delivery: &mut SessionDeliveryState) {
             // The whole chunk must go to get below the cap (or the cap cut
             // lands inside a single leading multi-byte character).
             delivery.cache_bytes = delivery.cache_bytes.saturating_sub(chunk_bytes);
-            delivery.retained_line_breaks = delivery
-                .retained_line_breaks
-                .saturating_sub(chunk.line_break_count);
             delivery.base_offset = chunk.end_offset;
             continue;
         }
 
-        let removed_breaks = count_line_breaks(&chunk.data[..trim_index]);
-        let removed_raw_bytes = if chunk.raw_bytes.is_empty() {
-            0
-        } else if chunk.raw_bytes.len() == chunk.data.len() {
-            trim_index
-        } else {
-            chunk.raw_bytes.len()
-        };
-        if !chunk.raw_bytes.is_empty() {
-            chunk.raw_bytes = if chunk.raw_bytes.len() == chunk.data.len() {
-                Arc::<[u8]>::from(&chunk.raw_bytes[trim_index..])
-            } else {
-                Arc::<[u8]>::from([])
-            };
-        }
-        chunk.start_offset += trim_index;
-        chunk.data = Arc::<str>::from(&chunk.data[trim_index..]);
-        chunk.line_break_count = chunk.line_break_count.saturating_sub(removed_breaks);
+        let removed_raw_bytes = chunk.trim_prefix(trim_index);
         delivery.cache_bytes = delivery
             .cache_bytes
             .saturating_sub(trim_index + removed_raw_bytes);
-        delivery.retained_line_breaks =
-            delivery.retained_line_breaks.saturating_sub(removed_breaks);
         delivery.base_offset = chunk.start_offset;
         delivery.cache.push_front(chunk);
     }
@@ -575,21 +362,17 @@ fn emit_output_batch(
     let end_offset = batch.end_offset();
     let payload = match batch {
         OutputBatch::Text {
-            data,
-            encoding,
-            start_offset,
-            ..
+            data, start_offset, ..
         } => TerminalSessionChannelPayload::Text {
             connection_id: delivery.connection_id.clone(),
             session_id: session_id.to_string(),
             channel_id,
             data,
-            encoding,
             start_offset,
             end_offset,
         },
         OutputBatch::RawBytes {
-            raw,
+            data_base64,
             encoding,
             start_offset,
             ..
@@ -597,7 +380,7 @@ fn emit_output_batch(
             connection_id: delivery.connection_id.clone(),
             session_id: session_id.to_string(),
             channel_id,
-            data_base64: STANDARD_NO_PAD.encode(&raw),
+            data_base64,
             encoding,
             start_offset,
             end_offset,
@@ -618,12 +401,11 @@ fn emit_output_batch(
 enum OutputBatch {
     Text {
         data: String,
-        encoding: String,
         start_offset: usize,
         end_offset: usize,
     },
     RawBytes {
-        raw: Vec<u8>,
+        data_base64: String,
         encoding: String,
         start_offset: usize,
         end_offset: usize,
@@ -673,7 +455,6 @@ fn plan_text_output_batch(
 ) -> Option<OutputBatch> {
     let mut payload = String::new();
     let mut end_offset = start_offset;
-    let mut encoding = "utf-8".to_string();
 
     for chunk in delivery.cache.iter().skip(delivery.delivery_cursor) {
         if chunk.end_offset <= end_offset {
@@ -697,7 +478,6 @@ fn plan_text_output_batch(
         }
         payload.push_str(&chunk.data[local_start..local_end]);
         end_offset += local_end - local_start;
-        encoding = chunk.encoding.clone();
         if payload.len() >= max_bytes {
             break;
         }
@@ -708,7 +488,6 @@ fn plan_text_output_batch(
     }
     Some(OutputBatch::Text {
         data: payload,
-        encoding,
         start_offset,
         end_offset,
     })
@@ -728,7 +507,8 @@ fn plan_raw_output_batch(
     start_offset: usize,
     max_bytes: usize,
 ) -> Option<OutputBatch> {
-    let mut raw: Option<Vec<u8>> = None;
+    let mut raw_len = 0_usize;
+    let mut raw_encoder: Option<StreamingBase64Encoder> = None;
     let mut text: Option<String> = None;
     let mut end_offset = start_offset;
     let mut encoding = "utf-8".to_string();
@@ -748,15 +528,19 @@ fn plan_raw_output_batch(
             if text.is_some() {
                 break;
             }
-            let buffer = raw.get_or_insert_with(Vec::new);
-            if !buffer.is_empty() && buffer.len() + chunk.raw_bytes.len() > max_bytes {
+            if raw_len > 0 && raw_len.saturating_add(chunk.raw_bytes.len()) > max_bytes {
                 break;
             }
-            buffer.extend_from_slice(&chunk.raw_bytes);
+            raw_encoder
+                .get_or_insert_with(|| {
+                    StreamingBase64Encoder::new(max_bytes.saturating_add(2) / 3 * 4)
+                })
+                .push(&chunk.raw_bytes);
+            raw_len += chunk.raw_bytes.len();
             end_offset = chunk.end_offset;
             encoding = chunk.encoding.clone();
         } else {
-            if raw.is_some() {
+            if raw_len > 0 {
                 break;
             }
             let buffer = text.get_or_insert_with(String::new);
@@ -773,13 +557,13 @@ fn plan_raw_output_batch(
             }
             buffer.push_str(&chunk.data[local_start..local_end]);
             end_offset += local_end - local_start;
-            encoding = chunk.encoding.clone();
         }
     }
 
-    if let Some(raw) = raw.filter(|raw| !raw.is_empty()) {
+    if raw_len > 0 {
+        let raw_encoder = raw_encoder?;
         return Some(OutputBatch::RawBytes {
-            raw,
+            data_base64: raw_encoder.finish(),
             encoding,
             start_offset,
             end_offset,
@@ -788,10 +572,61 @@ fn plan_raw_output_batch(
     text.filter(|text| !text.is_empty())
         .map(|data| OutputBatch::Text {
             data,
-            encoding,
             start_offset,
             end_offset,
         })
+}
+
+/// Encodes adjacent raw chunks as one Base64 stream without first coalescing
+/// their bytes into a second full-size buffer. The two-byte carry preserves
+/// Base64's three-byte grouping across arbitrary cache chunk boundaries.
+struct StreamingBase64Encoder {
+    output: String,
+    carry: [u8; 3],
+    carry_len: usize,
+}
+
+impl StreamingBase64Encoder {
+    fn new(capacity: usize) -> Self {
+        Self {
+            output: String::with_capacity(capacity),
+            carry: [0; 3],
+            carry_len: 0,
+        }
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        let mut offset = 0;
+        if self.carry_len > 0 {
+            let needed = 3 - self.carry_len;
+            let copied = needed.min(bytes.len());
+            self.carry[self.carry_len..self.carry_len + copied].copy_from_slice(&bytes[..copied]);
+            self.carry_len += copied;
+            offset += copied;
+            if self.carry_len == 3 {
+                STANDARD_NO_PAD.encode_string(self.carry, &mut self.output);
+                self.carry_len = 0;
+            } else {
+                return;
+            }
+        }
+
+        let complete_len = (bytes.len() - offset) / 3 * 3;
+        if complete_len > 0 {
+            STANDARD_NO_PAD.encode_string(&bytes[offset..offset + complete_len], &mut self.output);
+            offset += complete_len;
+        }
+        let remainder = &bytes[offset..];
+        self.carry[..remainder.len()].copy_from_slice(remainder);
+        self.carry_len = remainder.len();
+    }
+
+    fn finish(mut self) -> String {
+        if self.carry_len > 0 {
+            STANDARD_NO_PAD.encode_string(&self.carry[..self.carry_len], &mut self.output);
+        }
+        self.output
+    }
 }
 
 fn previous_char_boundary(text: &str, mut index: usize) -> usize {
@@ -845,22 +680,41 @@ enum TerminalOutputDelivery {
 #[cfg(test)]
 mod tests {
     use super::{
-        next_char_boundary, plan_output_batch, previous_char_boundary, OutputBatch, RenderGate,
-        SessionDeliveryState, MAX_UNRENDERED_BYTES, RENDER_GATE_FAIL_OPEN_MS,
-        REPLAY_CACHE_MAX_BYTES,
+        next_char_boundary, plan_output_batch, previous_char_boundary, should_flush_live_output,
+        OutputBatch, SessionDeliveryState, REPLAY_CACHE_MAX_BYTES,
     };
-    use std::time::{Duration, Instant};
+    use base64::engine::general_purpose::STANDARD_NO_PAD;
+    use base64::Engine as _;
 
     fn delivery() -> SessionDeliveryState {
-        SessionDeliveryState::new("connection".to_string(), 9001, false)
+        SessionDeliveryState::new("connection".to_string(), false)
     }
 
     fn raw_delivery() -> SessionDeliveryState {
-        let mut delivery = SessionDeliveryState::new("connection".to_string(), 9001, true);
+        let mut delivery = SessionDeliveryState::new("connection".to_string(), true);
         delivery.active_channel_id = Some(7);
         delivery.output_ready_channel_id = Some(7);
         delivery.raw_output_channel_id = Some(7);
         delivery
+    }
+
+    #[test]
+    fn trickle_output_flushes_immediately_without_coalescing() {
+        let mut delivery = delivery();
+        delivery.active_channel_id = Some(7);
+        delivery.output_ready_channel_id = Some(7);
+        // 无待交付字节时不冲刷。
+        assert!(!should_flush_live_output(&delivery));
+
+        delivery.push_cached_output("echo".to_string(), "utf-8".to_string(), None);
+        assert!(should_flush_live_output(&delivery));
+
+        // 无订阅通道或回放进行中时不冲刷。
+        delivery.output_ready_channel_id = None;
+        assert!(!should_flush_live_output(&delivery));
+        delivery.output_ready_channel_id = Some(7);
+        delivery.replay_channel_id = Some(7);
+        assert!(!should_flush_live_output(&delivery));
     }
 
     #[test]
@@ -893,28 +747,11 @@ mod tests {
     }
 
     #[test]
-    fn replay_cache_line_prune_still_applies_below_the_byte_cap() {
-        // The line-based limit is `allowed_breaks = replay_line_limit - 1`,
-        // so a limit of 3 retains the last 2 newline-terminated lines.
-        let mut delivery = SessionDeliveryState::new("connection".to_string(), 3, false);
-        delivery.push_cached_output("one\n".to_string(), "utf-8".to_string(), None);
-        delivery.push_cached_output("two\n".to_string(), "utf-8".to_string(), None);
-        delivery.push_cached_output("three\n".to_string(), "utf-8".to_string(), None);
-
-        let retained: String = delivery
-            .cache
-            .iter()
-            .map(|chunk| chunk.data.as_ref())
-            .collect();
-        assert_eq!(retained, "two\nthree\n");
-        assert_eq!(delivery.cache_bytes, "two\nthree\n".len());
-    }
-
-    #[test]
     fn delivery_cursor_skips_fully_delivered_chunks() {
         let mut delivery = delivery();
+        // 交替编码阻止尾块合并，保留三个独立块来验证游标语义。
         delivery.push_cached_output("aaa".to_string(), "utf-8".to_string(), None);
-        delivery.push_cached_output("bbb".to_string(), "utf-8".to_string(), None);
+        delivery.push_cached_output("bbb".to_string(), "gbk".to_string(), None);
         delivery.push_cached_output("ccc".to_string(), "utf-8".to_string(), None);
 
         delivery.delivered_offset = 6;
@@ -959,12 +796,15 @@ mod tests {
         let end = batch.end_offset();
         match batch {
             OutputBatch::RawBytes {
-                raw,
+                data_base64,
                 encoding,
                 start_offset,
                 end_offset,
             } => {
-                assert_eq!(raw, vec![0xC1, 0xF7, 0xC1, 0xBF]);
+                assert_eq!(
+                    STANDARD_NO_PAD.decode(data_base64).expect("valid Base64"),
+                    vec![0xC1, 0xF7, 0xC1, 0xBF]
+                );
                 assert_eq!(encoding, "gbk");
                 assert_eq!((start_offset, end_offset), (0, 6));
             }
@@ -976,12 +816,15 @@ mod tests {
         let end = batch.end_offset();
         match batch {
             OutputBatch::RawBytes {
-                raw,
+                data_base64,
                 start_offset,
                 end_offset,
                 ..
             } => {
-                assert_eq!(raw, vec![0xC9, 0xF3, 0xBC, 0xC6]);
+                assert_eq!(
+                    STANDARD_NO_PAD.decode(data_base64).expect("valid Base64"),
+                    vec![0xC9, 0xF3, 0xBC, 0xC6]
+                );
                 assert_eq!((start_offset, end_offset), (6, 12));
             }
             _ => panic!("expected a raw bytes batch"),
@@ -1003,12 +846,12 @@ mod tests {
         let batch = plan_output_batch(&mut delivery, 7, 128).expect("batch");
         match batch {
             OutputBatch::RawBytes {
-                raw: payload,
+                data_base64,
                 start_offset,
                 end_offset,
                 ..
             } => {
-                assert_eq!(payload, raw);
+                assert_eq!(STANDARD_NO_PAD.decode(data_base64).unwrap(), raw);
                 assert_eq!((start_offset, end_offset), (0, 300));
             }
             _ => panic!("expected a raw bytes batch"),
@@ -1047,12 +890,15 @@ mod tests {
         let batch = plan_output_batch(&mut delivery, 7, 1024).expect("raw batch");
         match batch {
             OutputBatch::RawBytes {
-                raw,
+                data_base64,
                 start_offset,
                 end_offset,
                 ..
             } => {
-                assert_eq!(raw, vec![0xC1, 0xF7, 0xC1, 0xBF]);
+                assert_eq!(
+                    STANDARD_NO_PAD.decode(data_base64).expect("valid Base64"),
+                    vec![0xC1, 0xF7, 0xC1, 0xBF]
+                );
                 assert_eq!((start_offset, end_offset), (6, 12));
             }
             _ => panic!("expected a raw bytes batch"),
@@ -1088,47 +934,91 @@ mod tests {
     }
 
     #[test]
-    fn rendered_offset_is_monotonic_and_rewind_is_ignored() {
+    fn small_text_chunks_merge_into_the_tail_chunk() {
         let mut delivery = delivery();
-        delivery.note_channel_activated();
+        for index in 0..100 {
+            delivery.push_cached_output(format!("chunk{index}\n"), "utf-8".to_string(), None);
+        }
 
-        delivery.record_rendered_offset(10);
-        assert_eq!(delivery.rendered_offset, 10);
-        delivery.record_rendered_offset(7);
-        assert_eq!(delivery.rendered_offset, 10);
-        delivery.record_rendered_offset(42);
-        assert_eq!(delivery.rendered_offset, 42);
+        assert_eq!(delivery.cache.len(), 1);
+        let chunk = &delivery.cache[0];
+        assert_eq!(chunk.start_offset, 0);
+        assert_eq!(chunk.end_offset, delivery.next_offset);
+        assert_eq!(delivery.cache_bytes, chunk.cached_bytes());
+        assert!(chunk.data.starts_with("chunk0\n"));
+        assert!(chunk.data.ends_with("chunk99\n"));
     }
 
     #[test]
-    fn render_gate_blocks_only_beyond_max_unrendered_bytes() {
+    fn tail_merge_stops_at_the_chunk_cap() {
         let mut delivery = delivery();
-        delivery.note_channel_activated();
+        delivery.push_cached_output(
+            "x".repeat(super::CACHE_CHUNK_MERGE_MAX_BYTES),
+            "utf-8".to_string(),
+            None,
+        );
+        delivery.push_cached_output("y".to_string(), "utf-8".to_string(), None);
 
-        delivery.next_offset = MAX_UNRENDERED_BYTES;
-        assert!(!delivery.render_gate_blocked(Instant::now()));
-        delivery.next_offset = MAX_UNRENDERED_BYTES + 1;
-        assert!(delivery.render_gate_blocked(Instant::now()));
-
-        delivery.record_rendered_offset(2);
-        assert!(!delivery.render_gate_blocked(Instant::now()));
+        assert_eq!(delivery.cache.len(), 2);
+        assert_eq!(
+            delivery.cache[0].data.len(),
+            super::CACHE_CHUNK_MERGE_MAX_BYTES
+        );
+        assert_eq!(delivery.cache[1].data, "y");
+        assert_eq!(
+            delivery.cache[1].start_offset,
+            super::CACHE_CHUNK_MERGE_MAX_BYTES
+        );
     }
 
     #[test]
-    fn render_gate_fails_open_without_reports() {
+    fn chunks_with_raw_bytes_or_a_new_encoding_do_not_merge() {
+        let mut delivery = raw_delivery();
+        delivery.push_cached_output("hello".to_string(), "utf-8".to_string(), None);
+        // raw 通道已武装：后续块保留 raw bytes，不得并入纯文本尾块。
+        delivery.push_cached_output(
+            "流量".to_string(),
+            "gbk".to_string(),
+            Some(vec![0xC1, 0xF7, 0xC1, 0xBF]),
+        );
+        delivery.push_cached_output("world".to_string(), "utf-8".to_string(), None);
+        delivery.push_cached_output("!".to_string(), "ascii".to_string(), None);
+
+        assert_eq!(delivery.cache.len(), 4);
+        assert_eq!(delivery.cache[1].raw_bytes.len(), 4);
+        assert_eq!(delivery.cache[2].data, "world");
+        assert_eq!(delivery.cache[3].data, "!");
+        let total: usize = delivery.cache.iter().map(|chunk| chunk.data.len()).sum();
+        assert_eq!(
+            total,
+            "hello".len() + "流量".len() + "world".len() + "!".len()
+        );
+    }
+
+    #[test]
+    fn tail_merge_rewinds_the_delivery_cursor_past_a_fully_delivered_tail() {
         let mut delivery = delivery();
-        delivery.note_channel_activated();
-        delivery.next_offset = MAX_UNRENDERED_BYTES + 1;
+        delivery.push_cached_output("abc".to_string(), "utf-8".to_string(), None);
+        // 完整交付一次后游标越过尾块。
+        let batch = plan_output_batch(&mut delivery, 7, 1024).expect("first batch");
+        delivery.delivered_offset = batch.end_offset();
+        delivery.sync_delivery_cursor();
+        assert_eq!(delivery.delivery_cursor, 1);
 
-        let now = Instant::now();
-        assert!(delivery.render_gate_blocked(now));
-        let later = now + Duration::from_millis(RENDER_GATE_FAIL_OPEN_MS + 1);
-        assert!(!delivery.render_gate_blocked(later));
-        assert_eq!(delivery.render_gate, RenderGate::Disabled);
-        assert_eq!(delivery.rendered_offset, delivery.next_offset);
-
-        // Fail-open is permanent: a late report must not re-arm the gate.
-        delivery.record_rendered_offset(u64::MAX);
-        assert_eq!(delivery.render_gate, RenderGate::Disabled);
+        // 新数据合并进尾块后必须仍然可交付，不能落在游标之后。
+        delivery.push_cached_output("def".to_string(), "utf-8".to_string(), None);
+        assert_eq!(delivery.cache.len(), 1);
+        let batch = plan_output_batch(&mut delivery, 7, 1024).expect("merged bytes deliverable");
+        match batch {
+            OutputBatch::Text {
+                data,
+                start_offset,
+                end_offset,
+            } => {
+                assert_eq!(data, "def");
+                assert_eq!((start_offset, end_offset), (3, 6));
+            }
+            OutputBatch::RawBytes { .. } => panic!("expected a text batch"),
+        }
     }
 }

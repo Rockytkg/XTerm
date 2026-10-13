@@ -32,6 +32,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 - `patches/`：pnpm patch（在 `pnpm-workspace.yaml` 的 `patchedDependencies` 登记），均同时打 `lib/*.js` 与 `lib/*.mjs` 两份产物；升级对应依赖后需复核补丁是否仍适用。
   - `@xterm__xterm@6.1.0-beta.304.patch`：修复 DecorationService/SortedList 的 decoration 泄漏（搜索高亮、关键字高亮关闭后残留单格高亮的根因）。SearchAddon 等消费方批量 dispose decoration 时，marker 被连带 dispose 会把 `SortedList._array` 中"已逻辑删除、待 idle 物理移除"条目的 key（`marker.line`）就地改为 -1，破坏排序不变量，使后续 `delete()` 的二分查找在目标明明存在时返回 false；而 `DecorationService` 把 `_lineCache.remove`（渲染数据源）门控在 `delete` 成功上，导致 decoration 永远残留渲染层。补丁三处：`SortedList.delete` 二分查找的三个早退点统一收敛为线性 `indexOf` 回退；`_flushInserted` 开头先 `_flushCleanupDeleted()` 结算待删索引（消除 deletedIndices 跨代错位）；`DecorationService` 的 `lineCache.remove` 与事件不再门控于 `delete` 返回值。可向上游提交后移除。
   - `@xterm__addon-search@0.17.0-beta.301.patch`：`clearDecorations()` 同时取消内部 `_highlightTimeout` 增量重排定时器（此前关闭搜索后定时器仍会触发一次 `findPrevious`，重排高亮并清掉用户选区）；定时器回调在缓存词已清空时直接返回，不再发起空词搜索。
+  - `@xterm__addon-ligatures@0.11.0-beta.301.patch`：joiner 结果按行内容做有界（512 条）FIFO 缓存，命中时返回全新数组副本（xterm 核心的 `_stringRangesToCellRanges` 会就地改 pair、WebGL 渲染器会 `shift()` 返回数组，不能直接共享缓存项）；fallback 扫描 `lh` 增加首字符 Set 预筛（连字模式首字符集合，不含当前字符即跳过整轮模式循环）。原实现对每个渲染行、每帧都重扫全部 fallback 模式（或 font shaping），持续滚动时同一批行每帧重复扫描，是串口细流输出卡顿的主放大器；缓存 key 为行文本，字体加载状态迁移（加载成功/失败/字族变更）时清空缓存。
 
 不要直接编辑 `node_modules/`、`dist/`、`src-tauri/target/`、`src-tauri/gen/` 等生成或依赖目录。
 

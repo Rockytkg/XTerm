@@ -320,12 +320,9 @@ fn vnc_des_response(password: &str, challenge: &[u8; 16]) -> [u8; 16] {
     let key_array: des::cipher::Key<des::Des> = key.into();
     let cipher = des::Des::new(&key_array);
     let mut response = *challenge;
-    for block in response.chunks_exact_mut(8) {
-        cipher.encrypt_block(
-            block
-                .try_into()
-                .expect("chunks_exact_mut yields 8-byte blocks"),
-        );
+    let (blocks, _) = response.as_chunks_mut::<8>();
+    for block in blocks {
+        cipher.encrypt_block(block.into());
     }
     response
 }

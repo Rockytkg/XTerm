@@ -144,7 +144,6 @@ export function createSshConnectionFlow({
   getSessionInstance,
   hostKeyPromptController,
   isExpectedCloseError,
-  preferences,
   refreshConnectionList,
   reconnectSession,
   onAuthenticatedResponse,
@@ -375,7 +374,6 @@ export function createSshConnectionFlow({
       openRequestId: backendOpenRequestId,
       trustHostKey: resolvedMode === "save",
       acceptHostKeyOnce: resolvedMode === "once",
-      terminalScrollback: preferences.value.terminalScrollback,
       sshCredential: pendingCredentials.get(frontendSessionId),
       ...resolveTerminalGeometry(activeTerminalSize),
     })

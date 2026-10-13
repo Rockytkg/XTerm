@@ -19,8 +19,6 @@ pub(super) const STARTUP_AUTH_FOLLOWUP_TIMEOUT_MS: u64 = 5_000;
 pub(super) const SERIAL_WRITE_STALL_TIMEOUT_MS: u64 = 3_000;
 pub(super) const SERIAL_READ_BATCH_MAX_BYTES: usize = 32 * 1024;
 pub(super) const OUTPUT_FLUSH_MAX_BYTES: usize = 128 * 1024;
-pub(super) const OUTPUT_LIVE_FLUSH_WINDOW_MS: u64 = 4;
-pub(super) const OUTPUT_LIVE_FLUSH_MIN_BYTES: usize = 32 * 1024;
 pub(super) const SFTP_TRANSFER_BUFFER_BYTES: usize = 256 * 1024;
 pub(super) const CODEC_RAW_BUFFER_CAPACITY: usize = 4 * 1024;
 pub(super) const DETECTION_SAMPLE_MAX_BYTES: usize = 4096;
@@ -55,18 +53,6 @@ pub(super) const BAUD_CANDIDATES: &[u32] = &[
 /// to keep reattached frontends responsive and bound backend memory.
 pub(super) const REPLAY_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
 
-/// Maximum bytes the frontend may be behind before live output is paused.
-/// Combined with the rendered-offset report, this provides backpressure against
-/// a slow renderer without dropping data.
-pub(super) const MAX_UNRENDERED_BYTES: usize = 256 * 1024;
-
-/// Grace period before the render gate fails open if the frontend never reports
-/// a rendered offset. Prevents legacy or broken frontends from deadlocking.
-pub(super) const RENDER_GATE_FAIL_OPEN_MS: u64 = 500;
-
-/// Retry interval when live output is blocked waiting for the frontend renderer.
-pub(super) const RENDER_GATE_RETRY_MS: u64 = 16;
-
 /// Time allowed for a transport write to make progress before it is considered
 /// stalled and the session is failed.
 pub(super) const WRITE_STALL_TIMEOUT: Duration = Duration::from_secs(8);
@@ -79,7 +65,6 @@ pub struct ConnectionOpenRequest {
     pub(crate) open_request_id: Option<String>,
     pub(crate) trust_host_key: Option<bool>,
     pub(crate) accept_host_key_once: Option<bool>,
-    pub(crate) terminal_scrollback: Option<u32>,
     pub(crate) terminal_type: Option<String>,
     pub(crate) encoding: Option<String>,
     pub(crate) realtime_encoding_detection: Option<bool>,
@@ -752,12 +737,6 @@ pub(crate) enum SessionCommand {
         data: Vec<u8>,
     },
     FlushOutput,
-    /// Report from the frontend describing how much output has been rendered.
-    /// Used to apply backpressure so a slow renderer cannot be flooded.
-    RenderedOffset {
-        channel_id: u64,
-        offset: u64,
-    },
     SetEncodingDetection {
         channel_id: Option<u64>,
         enabled: bool,
@@ -915,7 +894,6 @@ pub(crate) struct ResolvedConnection {
     pub(crate) inline_private_key_passphrase: Option<String>,
     pub(crate) trust_host_key: Option<bool>,
     pub(crate) accept_host_key_once: Option<bool>,
-    pub(crate) terminal_scrollback: Option<u32>,
     pub(crate) terminal_type: Option<String>,
     pub(crate) runtime_metrics: Option<bool>,
     pub(crate) cols: Option<u32>,
@@ -937,17 +915,15 @@ pub(crate) struct SessionOpenContext {
     pub(crate) connection_id: String,
     pub(crate) encoding_label: String,
     pub(crate) codec: CodecState,
-    pub(crate) replay_line_limit: usize,
 }
 
 impl ResolvedConnection {
-    pub(crate) fn session_open_context(&self, state: &AppState) -> SessionOpenContext {
+    pub(crate) fn session_open_context(&self) -> SessionOpenContext {
         let encoding = self.encoding.clone();
         SessionOpenContext {
             connection_id: self.id.clone(),
             encoding_label: encoding.clone().unwrap_or_else(|| "auto".to_string()),
             codec: CodecState::new(encoding, self.realtime_encoding_detection.unwrap_or(true)),
-            replay_line_limit: resolve_terminal_replay_line_limit(state, self.terminal_scrollback),
         }
     }
 
@@ -1015,7 +991,6 @@ impl ResolvedConnection {
             inline_private_key_passphrase: None,
             trust_host_key: request.trust_host_key,
             accept_host_key_once: request.accept_host_key_once,
-            terminal_scrollback: request.terminal_scrollback,
             terminal_type: profile
                 .options
                 .terminal_type
@@ -1048,7 +1023,6 @@ impl ResolvedConnection {
         self.open_request_id = request.open_request_id;
         self.trust_host_key = request.trust_host_key;
         self.accept_host_key_once = request.accept_host_key_once;
-        self.terminal_scrollback = request.terminal_scrollback;
         // None means "not specified by this request" (e.g. authenticate replay
         // carries no terminal parameters); keep the transient connection's
         // original values instead of silently discarding them.
@@ -1118,23 +1092,6 @@ impl ResolvedConnection {
             }
         }
     }
-}
-
-pub(super) fn resolve_terminal_replay_line_limit(
-    state: &AppState,
-    requested_scrollback: Option<u32>,
-) -> usize {
-    let configured = requested_scrollback
-        .map(|value| value as usize)
-        .or_else(|| {
-            state
-                .store()
-                .preferences()
-                .ok()
-                .and_then(|preferences| usize::try_from(preferences.terminal_scrollback).ok())
-        })
-        .unwrap_or(9001);
-    configured.max(1)
 }
 
 fn resolve_workspace_connection(

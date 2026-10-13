@@ -1,10 +1,15 @@
 const WEBGL_INACTIVE_DISPOSE_DELAY_MS = 30_000;
+// WebGL context 丢失（GPU 重置、驱动崩溃）后的自动恢复退避。尝试耗尽后保持
+// canvas 渲染；返回前台时的常规 sync 也会重新尝试加载。
+const WEBGL_CONTEXT_RECOVERY_DELAYS_MS = [2_000, 5_000, 15_000];
 
 export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
   let webglAddon = null;
   let webglLoadPromise = null;
   let webglLoadToken = 0;
   let webglDisposeTimer = undefined;
+  let webglRecoveryTimer = undefined;
+  let webglRecoveryAttempt = 0;
   let ligaturesAddon = null;
   let ligaturesLoadHandle = null;
   let ligaturesLoadPromise = null;
@@ -17,9 +22,11 @@ export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
   function disposeOptionalAddons() {
     cancelLigaturesLoad();
     cancelWebglDispose();
+    cancelWebglRecovery();
     disposeWebglAddon();
     webglLoadToken += 1;
     webglLoadPromise = null;
+    webglRecoveryAttempt = 0;
     ligaturesAddon?.dispose?.();
     ligaturesAddon = null;
     ligaturesLoadPromise = null;
@@ -28,6 +35,11 @@ export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
   function cancelWebglDispose() {
     clearTimeout(webglDisposeTimer);
     webglDisposeTimer = undefined;
+  }
+
+  function cancelWebglRecovery() {
+    clearTimeout(webglRecoveryTimer);
+    webglRecoveryTimer = undefined;
   }
 
   function disposeWebglAddon() {
@@ -99,11 +111,37 @@ export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
     }
   }
 
+  function scheduleWebglRecovery() {
+    if (webglRecoveryTimer) return;
+    if (webglRecoveryAttempt >= WEBGL_CONTEXT_RECOVERY_DELAYS_MS.length) return;
+    webglRecoveryTimer = setTimeout(() => {
+      webglRecoveryTimer = undefined;
+      const current = getContext();
+      // 后台/已关闭的终端不恢复：返回前台时 applyRuntimePresentation 会走常规
+      // sync 路径重新加载，无需消耗退避次数。
+      if (
+        current.disposed ||
+        !current.terminal ||
+        !current.terminalWebgl ||
+        !current.isForegroundRuntime ||
+        webglAddon
+      ) {
+        return;
+      }
+      webglRecoveryAttempt += 1;
+      void Promise.resolve(syncTerminalRenderer(current.generation)).then(() => {
+        // 恢复失败（GPU 仍在重置）继续退避；成功时 sync 内已清零计数。
+        if (!webglAddon) scheduleWebglRecovery();
+      });
+    }, WEBGL_CONTEXT_RECOVERY_DELAYS_MS[webglRecoveryAttempt]);
+  }
+
   async function syncTerminalRenderer(generation) {
     const { terminal, isForegroundRuntime, terminalWebgl } = getContext();
     if (!terminal) return;
     if (!terminalWebgl) {
       cancelWebglDispose();
+      cancelWebglRecovery();
       disposeWebglAddon();
       webglLoadToken += 1;
       webglLoadPromise = null;
@@ -140,10 +178,12 @@ export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
         if (webglAddon === addon) {
           disposeWebglAddon();
           refreshTerminal(current.terminal);
+          scheduleWebglRecovery();
         }
       });
       current.terminal.loadAddon(addon);
       webglAddon = addon;
+      webglRecoveryAttempt = 0;
       // WebGL is loaded after Terminal.open(). Rebuild the complete viewport so
       // the new renderer does not inherit a stale canvas/atlas render state.
       refreshTerminal(current.terminal);

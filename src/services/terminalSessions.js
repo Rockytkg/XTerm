@@ -29,7 +29,6 @@ export function openBackendConnection(connectionId, options = {}) {
         openRequestId: request.openRequestId,
         trustHostKey: request.trustHostKey,
         acceptHostKeyOnce: request.acceptHostKeyOnce,
-        terminalScrollback: request.terminalScrollback,
         terminalType: request.terminalType,
         cols: request.cols,
         rows: request.rows,
@@ -52,7 +51,6 @@ export function authenticateBackendConnection(connectionId, options = {}) {
         openRequestId: request.openRequestId,
         trustHostKey: request.trustHostKey,
         acceptHostKeyOnce: request.acceptHostKeyOnce,
-        terminalScrollback: request.terminalScrollback,
         cols: request.cols,
         rows: request.rows,
         sshCredential: request.sshCredential

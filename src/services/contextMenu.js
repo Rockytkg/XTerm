@@ -10,6 +10,7 @@ import {
   contextMenuHeight,
   contextMenuPosition,
   normalizeContextMenuItems,
+  shouldDismissContextMenuForKeyboardInput,
 } from "../utils/contextMenu";
 import { isMacPlatform, isPrimaryModifier } from "../utils/platform";
 import { createLogger } from "../utils/logger";
@@ -33,6 +34,7 @@ const asyncListeners = createAsyncListenerRegistry();
  */
 export const contextMenuState = reactive({
   visible: false,
+  preserveFocus: false,
   items: [],
   x: 0,
   y: 0,
@@ -378,13 +380,14 @@ function dismissMenu() {
   if (!contextMenuState.visible) return;
   contextMenuState.visible = false;
   contextMenuState.items = [];
+  contextMenuState.preserveFocus = false;
 }
 
 /**
  * 打开菜单。定位用 contextmenu 事件的 clientX/Y（窗口内坐标），边缘翻转
  * 与收拢规则见 contextMenuPosition。
  */
-function openMenu(items, context, nativeEvent) {
+function openMenu(items, context, nativeEvent, preserveFocus) {
   dismissMenu();
   activeMenuActions = menuActionMap(items, context);
   const width = MENU_WIDTH;
@@ -405,6 +408,7 @@ function openMenu(items, context, nativeEvent) {
   contextMenuState.maxHeight = height;
   contextMenuState.x = x;
   contextMenuState.y = y;
+  contextMenuState.preserveFocus = preserveFocus;
   contextMenuState.visible = true;
 }
 
@@ -426,6 +430,26 @@ export function initializeContextMenuService() {
       if (event.defaultPrevented) return;
       openContextMenu(event);
     }),
+  );
+
+  // Terminal input keeps focus, so its keydown never reaches the menu panel.
+  // Dismiss in capture phase before the focused control handles the same key.
+  asyncListeners.add(
+    addDomListener(
+      document,
+      "keydown",
+      () => {
+        if (
+          shouldDismissContextMenuForKeyboardInput({
+            menuVisible: contextMenuState.visible,
+            preserveFocus: contextMenuState.preserveFocus,
+          })
+        ) {
+          dismissMenu();
+        }
+      },
+      true,
+    ),
   );
 
   // 输入框撤销/重做快捷键兜底（见 handleEditHistoryShortcut 注释）。
@@ -481,7 +505,7 @@ export function dismissContextMenu() {
 
 export async function openContextMenu(
   nativeEvent,
-  { items = [], suppressDefaultEditItems = false } = {},
+  { items = [], suppressDefaultEditItems = false, preserveFocus = false } = {},
 ) {
   initializeContextMenuService();
 
@@ -522,5 +546,5 @@ export async function openContextMenu(
     pasteItem.enabled = !!clipboardText;
   }
 
-  openMenu(nextItems, context, nativeEvent);
+  openMenu(nextItems, context, nativeEvent, preserveFocus);
 }

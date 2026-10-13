@@ -107,7 +107,7 @@ export class TerminalStatusAddon {
   release() {
     const releasedProgress = this._hasProgressBlock();
     if (releasedProgress) {
-      this._queueWrite(erasePreviousBlock(this._overlayLineCount), { immediate: true });
+      this._queueWrite(erasePreviousBlock(this._overlayLineCount));
     }
     if (releasedProgress) this._fingerprint = "";
     this._overlayLineCount = 0;
@@ -250,7 +250,7 @@ export class TerminalStatusAddon {
     this._overlayAttached = true;
     this._overlayPresentation = presentation;
     this._overlayStatus = status;
-    this._queueWrite(payload, { immediate: true });
+    this._queueWrite(payload);
   }
 
   _hasProgressBlock() {

@@ -120,7 +120,7 @@ impl VncConnectionFactory {
 
         ensure_open_not_cancelled(&request)?;
         ensure_open_current(state, &request)?;
-        let open_context = request.session_open_context(state);
+        let open_context = request.session_open_context();
         let session_id = spawn_bound_session(
             app,
             state,
@@ -138,7 +138,6 @@ impl VncConnectionFactory {
                 initial_data: None,
                 startup_auth: None,
                 resources: TerminalSessionResources::default(),
-                replay_line_limit: open_context.replay_line_limit,
             },
         );
         crate::logging::event("terminal.vnc", "vnc.open.success")

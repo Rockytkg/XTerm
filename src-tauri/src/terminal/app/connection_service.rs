@@ -284,7 +284,6 @@ impl ConnectionApplicationService {
             open_request_id: request.open_request_id,
             trust_host_key: request.trust_host_key,
             accept_host_key_once: request.accept_host_key_once,
-            terminal_scrollback: request.terminal_scrollback,
             terminal_type: None,
             encoding: None,
             realtime_encoding_detection: None,

@@ -8,8 +8,33 @@ import {
   isContextMenuDangerItem,
   nextActivatableMenuIndex,
   normalizeContextMenuItems,
+  shouldDismissContextMenuForKeyboardInput,
   typeaheadMenuIndex,
 } from "../src/utils/contextMenu.js";
+
+test("keyboard input dismisses only a visible context menu that preserves focus", () => {
+  assert.equal(
+    shouldDismissContextMenuForKeyboardInput({
+      menuVisible: true,
+      preserveFocus: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldDismissContextMenuForKeyboardInput({
+      menuVisible: true,
+      preserveFocus: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldDismissContextMenuForKeyboardInput({
+      menuVisible: false,
+      preserveFocus: true,
+    }),
+    false,
+  );
+});
 
 test("danger menu items are detected by tone or delete-ish id", () => {
   assert.equal(isContextMenuDangerItem({ id: "sftp-delete" }), true);

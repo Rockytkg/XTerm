@@ -71,23 +71,36 @@ pub(super) fn decode_backend_bytes_with_raw(
         return empty_decode_result(codec);
     }
 
-    if codec.raw_buffer.is_empty() && codec.pending_tail.is_empty() && bytes.is_ascii() {
-        let (encoding, confidence) =
-            active_encoding(codec).unwrap_or((UTF_8, default_confidence(codec, UTF_8)));
-        return ConnectionReadResult {
-            data: String::from_utf8(bytes.to_vec()).expect("ASCII bytes are valid UTF-8"),
-            raw_bytes: if include_raw_bytes {
-                bytes.to_vec()
-            } else {
-                Vec::new()
-            },
-            encoding: encoding_label(encoding),
-            confidence,
-        };
+    if codec.raw_buffer.is_empty() && codec.pending_tail.is_empty() {
+        // 单遍校验的直发路径：纯 ASCII 直接交付；合法的非 ASCII UTF-8 在检测
+        // 未定型时做置信度簿记后交付。两种情形都不会把字节复制进缓冲。
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            if text.is_ascii() {
+                let (encoding, confidence) =
+                    active_encoding(codec).unwrap_or((UTF_8, default_confidence(codec, UTF_8)));
+                return ConnectionReadResult {
+                    data: text.to_owned(),
+                    raw_bytes: if include_raw_bytes {
+                        bytes.to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    encoding: encoding_label(encoding),
+                    confidence,
+                };
+            }
+            if let Some(result) = valid_utf8_unsettled_result(codec, bytes, text, include_raw_bytes)
+            {
+                return result;
+            }
+        }
+        // 缓冲为空时直接借用新块解码，只有未消费的尾部才会进入缓冲。
+        return decode_chunk(codec, bytes, false, include_raw_bytes);
     }
 
     codec.raw_buffer.extend_from_slice(bytes);
-    decode_buffered_bytes(codec, false, include_raw_bytes)
+    let combined = take_undecoded_bytes(codec);
+    decode_chunk(codec, &combined, false, include_raw_bytes)
 }
 
 pub(super) fn flush_decoded_backend_bytes(codec: &mut CodecState) -> ConnectionReadResult {
@@ -102,55 +115,63 @@ pub(super) fn flush_decoded_backend_bytes_with_raw(
         return empty_decode_result(codec);
     }
 
-    decode_buffered_bytes(codec, true, include_raw_bytes)
+    let combined = take_undecoded_bytes(codec);
+    decode_chunk(codec, &combined, true, include_raw_bytes)
 }
 
-fn decode_buffered_bytes(
+fn decode_chunk(
     codec: &mut CodecState,
+    chunk: &[u8],
     force: bool,
     include_raw_bytes: bool,
 ) -> ConnectionReadResult {
-    let undecoded = take_undecoded_bytes(codec);
-    if undecoded.is_empty() {
-        return empty_decode_result(codec);
-    }
+    debug_assert!(!chunk.is_empty());
 
-    if let Some(result) =
-        decode_complete_utf8_prefix_before_detection(codec, &undecoded, force, include_raw_bytes)
-    {
-        if result.data.is_empty() && result.raw_bytes.is_empty() {
-            restore_undecoded_bytes(codec, undecoded);
+    // UTF-8 预检每块只跑一次，结果同时驱动直发与"撕裂尾部等待"判定。
+    match precheck_utf8(codec, chunk, force, include_raw_bytes) {
+        PrecheckUtf8::Delivered(result) => return result,
+        PrecheckUtf8::Held => {
+            stash_undecoded_bytes(codec, chunk);
+            return empty_utf8_hold_result();
         }
-        return result;
-    }
-
-    if should_wait_for_complete_provisional_sample(codec, &undecoded, force) {
-        restore_undecoded_bytes(codec, undecoded);
-        return ConnectionReadResult {
-            data: String::new(),
-            raw_bytes: Vec::new(),
-            encoding: encoding_label(UTF_8),
-            confidence: default_confidence(codec, UTF_8),
-        };
+        PrecheckUtf8::Ascii | PrecheckUtf8::Skipped => {}
+        PrecheckUtf8::Invalid => {
+            // 检测未定型时，非法 UTF-8 且带撕裂 legacy 尾部的样本等齐再判，
+            // 避免撕裂尾巴污染检测评分。
+            if !force
+                && codec.backend_encoding.is_none()
+                && codec.detected_encoding.is_none()
+                && codec.realtime_detection_enabled
+                && has_incomplete_legacy_tail(chunk)
+            {
+                stash_undecoded_bytes(codec, chunk);
+                return ConnectionReadResult {
+                    data: String::new(),
+                    raw_bytes: Vec::new(),
+                    encoding: encoding_label(UTF_8),
+                    confidence: default_confidence(codec, UTF_8),
+                };
+            }
+        }
     }
 
     if let Some(result) =
-        decode_utf8_candidate_for_auto_detected_legacy(codec, &undecoded, force, include_raw_bytes)
+        decode_utf8_candidate_for_auto_detected_legacy(codec, chunk, force, include_raw_bytes)
     {
         return result;
     }
 
-    let (mut encoding, mut confidence) = select_encoding_for_decode(&undecoded, codec, force);
-    let mut chunk = decode_complete_chunk(&undecoded, encoding, force);
+    let (mut encoding, mut confidence) = select_encoding_for_decode(chunk, codec, force);
+    let mut decoded = decode_complete_chunk(chunk, encoding, force);
 
-    if matches!(chunk, Some((_, _, _, true))) && should_recover_from_decode_errors(codec) {
+    if matches!(decoded, Some((_, _, _, true))) && should_recover_from_decode_errors(codec) {
         clear_detected_encoding(codec);
-        (encoding, confidence) = select_encoding_for_decode(&undecoded, codec, true);
-        chunk = decode_complete_chunk(&undecoded, encoding, force);
+        (encoding, confidence) = select_encoding_for_decode(chunk, codec, true);
+        decoded = decode_complete_chunk(chunk, encoding, force);
     }
 
-    let Some((data, complete_len, had_non_ascii, had_errors)) = chunk else {
-        restore_undecoded_bytes(codec, undecoded);
+    let Some((data, complete_len, had_non_ascii, had_errors)) = decoded else {
+        stash_undecoded_bytes(codec, chunk);
         return ConnectionReadResult {
             data: String::new(),
             raw_bytes: Vec::new(),
@@ -159,7 +180,7 @@ fn decode_buffered_bytes(
         };
     };
 
-    codec.pending_tail = undecoded[complete_len..].to_vec();
+    codec.pending_tail = chunk[complete_len..].to_vec();
     apply_decode_feedback(
         codec,
         encoding,
@@ -172,7 +193,7 @@ fn decode_buffered_bytes(
     ConnectionReadResult {
         data,
         raw_bytes: if include_raw_bytes {
-            undecoded[..complete_len].to_vec()
+            chunk[..complete_len].to_vec()
         } else {
             Vec::new()
         },
@@ -261,34 +282,6 @@ fn clear_detected_encoding(codec: &mut CodecState) {
     codec.detected_confidence = 0.0;
 }
 
-fn should_wait_for_complete_provisional_sample(
-    codec: &CodecState,
-    bytes: &[u8],
-    force: bool,
-) -> bool {
-    !force
-        && codec.backend_encoding.is_none()
-        && codec.detected_encoding.is_none()
-        && codec.realtime_detection_enabled
-        && !bytes.is_ascii()
-        && std::str::from_utf8(bytes).is_err()
-        && has_incomplete_legacy_tail(bytes)
-}
-
-/// Splits a buffer whose only UTF-8 flaw is a tail truncated mid-character
-/// (a stream chunking artifact). Returns the valid prefix and its byte
-/// length; `None` when the buffer is valid UTF-8 or contains genuinely
-/// invalid sequences.
-fn split_truncated_utf8_prefix(bytes: &[u8]) -> Option<(&str, usize)> {
-    let error = std::str::from_utf8(bytes).err()?;
-    if error.error_len().is_some() {
-        return None;
-    }
-    let complete_len = error.valid_up_to();
-    let prefix = std::str::from_utf8(&bytes[..complete_len]).ok()?;
-    Some((prefix, complete_len))
-}
-
 /// Buffer holds only a truncated tail character: emit nothing yet but keep
 /// waiting for the rest of the character.
 fn empty_utf8_hold_result() -> ConnectionReadResult {
@@ -300,45 +293,129 @@ fn empty_utf8_hold_result() -> ConnectionReadResult {
     }
 }
 
-fn decode_complete_utf8_prefix_before_detection(
+/// Returns the valid prefix when the only UTF-8 error is a truncated tail.
+/// Invalid interior bytes remain eligible for legacy-encoding detection.
+fn split_truncated_utf8_prefix(bytes: &[u8]) -> Option<(&str, usize)> {
+    let error = std::str::from_utf8(bytes).err()?;
+    if error.error_len().is_some() {
+        return None;
+    }
+    let complete_len = error.valid_up_to();
+    let prefix = std::str::from_utf8(&bytes[..complete_len]).ok()?;
+    Some((prefix, complete_len))
+}
+
+/// UTF-8 预检结果。每块只跑一次 `from_utf8`，调用方按枚举分流，不再重复扫描。
+enum PrecheckUtf8 {
+    /// 未做校验（force/固定编码/已锁定/检测关闭）：直接走通用解码路径。
+    Skipped,
+    /// 合法 UTF-8（或撕裂前缀 + 有效前缀）已交付。
+    Delivered(ConnectionReadResult),
+    /// 整块只有一个撕裂的 UTF-8 尾部字符：交调用方落缓冲等待。
+    Held,
+    /// 纯 ASCII：走通用路径（固定置信度），无需等待判定。
+    Ascii,
+    /// 内部存在非法字节：进入 legacy 检测路径。
+    Invalid,
+}
+
+fn precheck_utf8(
     codec: &mut CodecState,
     bytes: &[u8],
     force: bool,
     include_raw_bytes: bool,
-) -> Option<ConnectionReadResult> {
+) -> PrecheckUtf8 {
     if force
         || codec.backend_encoding.is_some()
         || codec.detected_encoding.is_some()
         || !codec.realtime_detection_enabled
     {
+        return PrecheckUtf8::Skipped;
+    }
+
+    match std::str::from_utf8(bytes) {
+        Ok(text) => {
+            // Keep the existing ASCII fast path and its fixed confidence.
+            if text.is_ascii() {
+                return PrecheckUtf8::Ascii;
+            }
+            match valid_utf8_unsettled_result(codec, bytes, text, include_raw_bytes) {
+                Some(result) => PrecheckUtf8::Delivered(result),
+                None => PrecheckUtf8::Skipped,
+            }
+        }
+        Err(error) if error.error_len().is_none() => {
+            let complete_len = error.valid_up_to();
+            if complete_len == 0 {
+                return PrecheckUtf8::Held;
+            }
+            let Some(prefix) = std::str::from_utf8(&bytes[..complete_len]).ok() else {
+                return PrecheckUtf8::Invalid;
+            };
+
+            codec.raw_buffer.clear();
+            codec.pending_tail = bytes[complete_len..].to_vec();
+            apply_decode_feedback(
+                codec,
+                UTF_8,
+                UTF8_PREFIX_CONFIDENCE,
+                !prefix.is_ascii(),
+                false,
+                complete_len,
+            );
+
+            PrecheckUtf8::Delivered(ConnectionReadResult {
+                data: prefix.to_string(),
+                raw_bytes: if include_raw_bytes {
+                    bytes[..complete_len].to_vec()
+                } else {
+                    Vec::new()
+                },
+                encoding: encoding_label(UTF_8),
+                confidence: UTF8_PREFIX_CONFIDENCE,
+            })
+        }
+        Err(_) => PrecheckUtf8::Invalid,
+    }
+}
+
+/// 检测未定型（无固定/已锁定编码且实时检测开启）时，合法非 ASCII UTF-8 的
+/// 直发路径：只做置信度簿记，不触碰缓冲。采样窗口拒绝落在 UTF-8 Continuation
+/// 上的切片（返回 None，交回统一解码路径），与改造前行为一致。
+fn valid_utf8_unsettled_result(
+    codec: &mut CodecState,
+    bytes: &[u8],
+    text: &str,
+    include_raw_bytes: bool,
+) -> Option<ConnectionReadResult> {
+    if codec.backend_encoding.is_some()
+        || codec.detected_encoding.is_some()
+        || !codec.realtime_detection_enabled
+    {
         return None;
     }
-
-    let (prefix, complete_len) = split_truncated_utf8_prefix(bytes)?;
-    if complete_len == 0 {
-        return Some(empty_utf8_hold_result());
-    }
+    let sample_start = bytes.len().saturating_sub(DETECTION_SAMPLE_MAX_BYTES);
+    let sample = &bytes[sample_start..];
+    let sample_text = if sample_start == 0 {
+        text
+    } else {
+        std::str::from_utf8(sample).ok()?
+    };
+    let confidence = utf8_sample_confidence(sample, sample_text);
 
     codec.raw_buffer.clear();
-    codec.pending_tail = bytes[complete_len..].to_vec();
-    apply_decode_feedback(
-        codec,
-        UTF_8,
-        UTF8_PREFIX_CONFIDENCE,
-        !prefix.is_ascii(),
-        false,
-        complete_len,
-    );
+    codec.pending_tail.clear();
+    apply_decode_feedback(codec, UTF_8, confidence, true, false, bytes.len());
 
     Some(ConnectionReadResult {
-        data: prefix.to_string(),
+        data: text.to_owned(),
         raw_bytes: if include_raw_bytes {
-            bytes[..complete_len].to_vec()
+            bytes.to_vec()
         } else {
             Vec::new()
         },
         encoding: encoding_label(UTF_8),
-        confidence: UTF8_PREFIX_CONFIDENCE,
+        confidence,
     })
 }
 
@@ -433,9 +510,10 @@ fn take_undecoded_bytes(codec: &mut CodecState) -> Vec<u8> {
     combined
 }
 
-fn restore_undecoded_bytes(codec: &mut CodecState, bytes: Vec<u8>) {
-    codec.raw_buffer = bytes;
-    codec.pending_tail.clear();
+fn stash_undecoded_bytes(codec: &mut CodecState, bytes: &[u8]) {
+    // 此刻 raw_buffer 必为空（要么前置条件为空，要么刚被 take_undecoded_bytes
+    // 排空），直接存入即可。
+    codec.raw_buffer.extend_from_slice(bytes);
 }
 
 fn active_encoding(codec: &CodecState) -> Option<(&'static Encoding, f32)> {
@@ -1080,7 +1158,7 @@ fn looks_like_network_device_console(lower: &str) -> bool {
 mod tests {
     use super::{
         analyze_serial_sample, decode_backend_bytes, decode_backend_bytes_with_raw,
-        flush_decoded_backend_bytes,
+        flush_decoded_backend_bytes, select_detected_encoding,
     };
     use encoding_rs::Encoding;
 
@@ -1186,6 +1264,40 @@ mod tests {
         assert_eq!(decoded, sample);
         assert!(codec.pending_tail.is_empty());
         assert!(codec.raw_buffer.is_empty());
+    }
+
+    #[test]
+    fn valid_utf8_is_decoded_without_legacy_candidate_scoring() {
+        let mut codec = CodecState::new(None, true);
+        let sample = "系统状态: 正常，接口状态: 已连接\r\n".repeat(12);
+        let bytes = sample.as_bytes();
+        let (_, expected_confidence) = select_detected_encoding(bytes);
+
+        let decoded = decode_backend_bytes(bytes, &mut codec);
+
+        assert_eq!(decoded.data, sample);
+        assert_eq!(decoded.raw_bytes, bytes);
+        assert_eq!(decoded.encoding, "utf-8");
+        assert_eq!(decoded.confidence, expected_confidence);
+        assert_eq!(codec.detected_encoding.as_deref(), Some("utf-8"));
+        assert!(codec.raw_buffer.is_empty());
+        assert!(codec.pending_tail.is_empty());
+    }
+
+    #[test]
+    fn valid_utf8_sample_window_preserves_detection_confidence() {
+        let mut codec = CodecState::new(None, true);
+        // The ASCII suffix makes the 4096-byte detector window start on a
+        // character boundary, exercising the same bounded sample as before.
+        let sample = format!("{}x", "中文".repeat(850));
+        let bytes = sample.as_bytes();
+        let (_, expected_confidence) = select_detected_encoding(bytes);
+
+        let decoded = decode_backend_bytes(bytes, &mut codec);
+
+        assert_eq!(decoded.data, sample);
+        assert_eq!(decoded.confidence, expected_confidence);
+        assert_eq!(decoded.encoding, "utf-8");
     }
 
     #[test]

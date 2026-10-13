@@ -912,8 +912,24 @@ impl AppState {
 
         let mut delivered = 0_usize;
         let mut failed = Vec::new();
-        for (subscription_id, subscription) in targets {
-            match subscription.send(payload.clone()) {
+        let mut payload = Some(payload);
+        let target_count = targets.len();
+        for (index, (subscription_id, subscription)) in targets.into_iter().enumerate() {
+            // Channel::send consumes its payload. Move the original into the
+            // final subscriber and clone only for earlier fan-out targets;
+            // the common single-subscriber path is therefore allocation-free
+            // for the large terminal data fields.
+            let outbound = if index + 1 == target_count {
+                payload
+                    .take()
+                    .expect("terminal output payload must remain for final subscriber")
+            } else {
+                payload
+                    .as_ref()
+                    .expect("terminal output payload must remain during fan-out")
+                    .clone()
+            };
+            match subscription.send(outbound) {
                 Ok(()) => {
                     delivered = delivered.saturating_add(1);
                 }
@@ -989,7 +1005,6 @@ mod tests {
             inline_private_key_passphrase: None,
             trust_host_key: None,
             accept_host_key_once: None,
-            terminal_scrollback: None,
             terminal_type: None,
             runtime_metrics: None,
             cols: None,

@@ -16,7 +16,7 @@ use super::{
     },
     delivery::{
         drain_live_output, drain_terminal_replay, emit_terminal_data, flush_terminal_output,
-        live_flush_delay, should_flush_live_output, SessionDeliveryState,
+        should_flush_live_output, SessionDeliveryState,
     },
     startup_auth::{StartupAuthState, StartupPasswordAuth},
 };
@@ -28,7 +28,6 @@ pub(crate) struct SessionWorkerOptions {
     pub(crate) initial_data: Option<String>,
     pub(crate) startup_auth: Option<StartupPasswordAuth>,
     pub(crate) resources: TerminalSessionResources,
-    pub(crate) replay_line_limit: usize,
 }
 
 pub(crate) struct BoundSessionOptions {
@@ -40,7 +39,6 @@ pub(crate) struct BoundSessionOptions {
     pub(crate) initial_data: Option<String>,
     pub(crate) startup_auth: Option<StartupPasswordAuth>,
     pub(crate) resources: TerminalSessionResources,
-    pub(crate) replay_line_limit: usize,
 }
 
 pub(crate) fn spawn_bound_session(
@@ -70,7 +68,6 @@ pub(crate) fn spawn_bound_session(
             initial_data: options.initial_data,
             startup_auth: options.startup_auth,
             resources: options.resources,
-            replay_line_limit: options.replay_line_limit,
         },
     );
     state.sessions().insert(session_id.clone(), session);
@@ -89,7 +86,6 @@ pub(crate) fn spawn_session_worker(
         initial_data,
         startup_auth,
         resources,
-        replay_line_limit,
     } = options;
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     log::trace!(target: "terminal.runtime", "spawning backend worker for session '{session_id}'");
@@ -102,7 +98,6 @@ pub(crate) fn spawn_session_worker(
             codec: &mut codec,
             initial_data,
             startup_auth,
-            replay_line_limit,
         })
         .await
     });
@@ -122,7 +117,6 @@ struct SessionWorkerRuntime<'a> {
     codec: &'a mut CodecState,
     initial_data: Option<String>,
     startup_auth: Option<StartupPasswordAuth>,
-    replay_line_limit: usize,
 }
 
 struct SessionWorkerLoop<'a> {
@@ -145,7 +139,6 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
         codec,
         initial_data,
         startup_auth,
-        replay_line_limit,
     } = runtime;
     let supports_pixel_resize = transport.supports_pixel_resize();
     let raw_bytes_supported = transport.supports_raw_bytes();
@@ -163,7 +156,7 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
         .state::<AppState>()
         .connection_id_for_session(&session_id)
         .unwrap_or_default();
-    let delivery = SessionDeliveryState::new(connection_id, replay_line_limit, raw_bytes_supported);
+    let delivery = SessionDeliveryState::new(connection_id, raw_bytes_supported);
     let startup_auth = startup_auth.map(StartupAuthState::new);
     let mut session_loop = SessionWorkerLoop {
         app,
@@ -198,9 +191,7 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
         let replay_pending = session_loop.delivery.output_ready_channel_id.is_some()
             && session_loop.delivery.replay_channel_id.is_some()
             && session_loop.delivery.delivered_offset < session_loop.delivery.next_offset;
-        let live_flush_delay = live_flush_delay(&session_loop.delivery, replay_pending);
-        let event =
-            next_session_event(&mut rx, &mut event_rx, replay_pending, live_flush_delay).await;
+        let event = next_session_event(&mut rx, &mut event_rx, replay_pending).await;
 
         match event {
             SessionLoopEvent::Command(command) => {
@@ -214,13 +205,6 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
                     WorkerEventOutcome::SkipDrain => continue,
                     WorkerEventOutcome::Stop => return,
                 }
-            }
-            SessionLoopEvent::LiveFlush => {
-                drain_live_output(
-                    &session_loop.app,
-                    &session_loop.session_id,
-                    &mut session_loop.delivery,
-                );
             }
             SessionLoopEvent::CommandChannelClosed => {
                 finish_session_worker(
@@ -277,7 +261,6 @@ async fn handle_session_command(
                 .delivery
                 .raw_output_enabled
                 .then_some(channel_id);
-            session_loop.delivery.note_channel_activated();
             let _ = reply.send(Ok(()));
             true
         }
@@ -341,14 +324,6 @@ async fn handle_session_command(
                 &session_loop.session_id,
                 &mut session_loop.delivery,
             );
-            true
-        }
-        SessionCommand::RenderedOffset { channel_id, offset } => {
-            // Ignore reports from stale channels; a reattached frontend starts
-            // a fresh render timeline on the new channel.
-            if session_loop.delivery.active_channel_id == Some(channel_id) {
-                session_loop.delivery.record_rendered_offset(offset);
-            }
             true
         }
         SessionCommand::SetEncodingDetection {
@@ -666,7 +641,6 @@ fn should_forward_resize(
 enum SessionLoopEvent {
     Command(SessionCommand),
     CommandChannelClosed,
-    LiveFlush,
     Worker(SessionWorkerEvent),
     WorkerChannelClosed,
 }
@@ -675,7 +649,6 @@ async fn next_session_event(
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<SessionCommand>,
     event_rx: &mut tokio::sync::mpsc::UnboundedReceiver<SessionWorkerEvent>,
     replay_pending: bool,
-    live_flush_delay: Option<Duration>,
 ) -> SessionLoopEvent {
     if replay_pending {
         tokio::select! {
@@ -685,18 +658,6 @@ async fn next_session_event(
             }
             event = event_rx.recv() => {
                 event.map(SessionLoopEvent::Worker).unwrap_or(SessionLoopEvent::WorkerChannelClosed)
-            }
-        }
-    } else if let Some(delay) = live_flush_delay {
-        tokio::select! {
-            event = event_rx.recv() => {
-                event.map(SessionLoopEvent::Worker).unwrap_or(SessionLoopEvent::WorkerChannelClosed)
-            }
-            command = rx.recv() => {
-                command.map(SessionLoopEvent::Command).unwrap_or(SessionLoopEvent::CommandChannelClosed)
-            }
-            _ = tokio::time::sleep(delay) => {
-                SessionLoopEvent::LiveFlush
             }
         }
     } else {
@@ -865,7 +826,7 @@ mod tests {
 
     #[test]
     fn input_sequence_is_monotonic_within_a_channel() {
-        let mut delivery = SessionDeliveryState::new("connection".to_string(), 100, false);
+        let mut delivery = SessionDeliveryState::new("connection".to_string(), false);
         delivery.active_channel_id = Some(7);
 
         assert!(accept_input_sequence(&mut delivery, Some(7), Some(1)));
@@ -876,7 +837,7 @@ mod tests {
 
     #[test]
     fn legacy_input_without_a_sequence_remains_compatible() {
-        let mut delivery = SessionDeliveryState::new("connection".to_string(), 100, false);
+        let mut delivery = SessionDeliveryState::new("connection".to_string(), false);
         delivery.active_channel_id = Some(7);
 
         assert!(accept_input_sequence(&mut delivery, Some(7), None));

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   classifyTerminalOutputPayload,
   createTerminalOutputByteDecoder,
+  decodeTerminalOutputBytes,
 } from "../src/utils/terminalOutputPayload.js";
 
 function toBase64(bytes) {
@@ -35,6 +36,53 @@ test("raw output trims bytes already covered by the cursor", () => {
   assert.equal(decision.kind, "raw");
   assert.equal(atob(decision.normalized.dataBase64), "CD");
   assert.equal(decision.normalized.endOffset, 14);
+});
+
+test("large raw output trimming encodes base64 in bounded chunks", () => {
+  const bytes = new Uint8Array(40_000).fill(65);
+  const decision = classifyTerminalOutputPayload(
+    {
+      kind: "bytes",
+      sessionId: "session-1",
+      channelId: 7,
+      dataBase64: Buffer.from(bytes).toString("base64"),
+      startOffset: 0,
+      endOffset: bytes.length,
+    },
+    outputState({ terminalOutputCursor: 1 }),
+  );
+
+  assert.equal(decision.kind, "raw");
+  const trimmed = atob(decision.normalized.dataBase64);
+  assert.equal(trimmed.length, bytes.length - 1);
+  assert.equal(trimmed[0], "A");
+  assert.equal(trimmed.at(-1), "A");
+});
+
+test("text replay trimming respects UTF-8 byte offsets without splitting code points", () => {
+  const data = "A你🙂Z";
+  const payload = {
+    kind: "text",
+    sessionId: "session-1",
+    channelId: 7,
+    data,
+    startOffset: 10,
+    endOffset: 19,
+  };
+
+  for (const [cursor, expected] of [
+    [12, "你🙂Z"], // byte offset lands inside 你
+    [14, "🙂Z"], // exact boundary after 你
+    [15, "🙂Z"], // byte offset lands inside the surrogate-pair emoji
+    [18, "Z"], // exact boundary before the final ASCII character
+  ]) {
+    const decision = classifyTerminalOutputPayload(
+      payload,
+      outputState({ terminalOutputCursor: cursor }),
+    );
+    assert.equal(decision.kind, "text");
+    assert.equal(decision.normalized.data, expected);
+  }
 });
 
 test("raw output without the required range is rejected", () => {
@@ -107,6 +155,15 @@ test("streaming byte decoder preserves UTF-8 characters split across payloads", 
 
   assert.equal(decoder.decode(toBase64(bytes.subarray(0, 2))), "");
   assert.equal(decoder.decode(toBase64(bytes.subarray(2))), "你");
+});
+
+test("decoded raw bytes can be reused by the streaming text decoder", () => {
+  const decoder = createTerminalOutputByteDecoder();
+  const bytes = new TextEncoder().encode("你");
+
+  assert.deepEqual(decodeTerminalOutputBytes(toBase64(bytes)), bytes);
+  assert.equal(decoder.decodeBytes(bytes.subarray(0, 2)), "");
+  assert.equal(decoder.decodeBytes(bytes.subarray(2)), "你");
 });
 
 test("reset discards an incomplete byte sequence from the previous session", () => {

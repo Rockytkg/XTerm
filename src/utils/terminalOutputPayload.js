@@ -2,7 +2,7 @@ import { createLogger } from "./logger.js";
 
 const logger = createLogger("frontend.terminal.output-payload");
 
-const utf8Encoder = new TextEncoder();
+const BASE64_CHUNK_SIZE = 0x8000;
 
 function isTerminalOutputChannelAccepted(payload, state = {}) {
   const payloadChannelId = payload?.channelId;
@@ -77,9 +77,15 @@ function decodeBase64Bytes(dataBase64) {
   return written === maxOutputLength ? output : output.subarray(0, written);
 }
 
+export function decodeTerminalOutputBytes(dataBase64) {
+  return decodeBase64Bytes(dataBase64);
+}
+
 function encodeBase64Bytes(bytes) {
   let raw = "";
-  for (const byte of bytes) raw += String.fromCharCode(byte);
+  for (let index = 0; index < bytes.length; index += BASE64_CHUNK_SIZE) {
+    raw += String.fromCharCode(...bytes.subarray(index, index + BASE64_CHUNK_SIZE));
+  }
   return btoa(raw);
 }
 
@@ -95,15 +101,21 @@ export function createTerminalOutputByteDecoder() {
   let decoder = null;
   let activeEncoding = "";
 
+  function decodeBytes(bytes, encoding) {
+    const nextEncoding = String(encoding || "utf-8").toLowerCase();
+    if (!decoder || activeEncoding !== nextEncoding) {
+      decoder = createTextDecoder(nextEncoding);
+      activeEncoding = nextEncoding;
+    }
+    return decoder.decode(bytes, { stream: true });
+  }
+
   return {
     decode(dataBase64, encoding = "utf-8") {
-      const bytes = decodeBase64Bytes(dataBase64);
-      const nextEncoding = String(encoding || "utf-8").toLowerCase();
-      if (!decoder || activeEncoding !== nextEncoding) {
-        decoder = createTextDecoder(nextEncoding);
-        activeEncoding = nextEncoding;
-      }
-      return decoder.decode(bytes, { stream: true });
+      return decodeBytes(decodeBase64Bytes(dataBase64), encoding);
+    },
+    decodeBytes(bytes, encoding = "utf-8") {
+      return decodeBytes(bytes, encoding);
     },
     reset() {
       decoder = null;
@@ -117,7 +129,12 @@ function sliceUtf8ByByteOffset(text, byteOffset) {
   let consumed = 0;
   let codeUnitIndex = 0;
   for (const char of text) {
-    const next = consumed + utf8Encoder.encode(char).length;
+    const codePoint = char.codePointAt(0);
+    let byteLength = 4;
+    if (codePoint <= 0x7f) byteLength = 1;
+    else if (codePoint <= 0x7ff) byteLength = 2;
+    else if (codePoint <= 0xffff) byteLength = 3;
+    const next = consumed + byteLength;
     if (next > byteOffset) {
       return text.slice(codeUnitIndex);
     }

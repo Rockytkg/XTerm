@@ -205,7 +205,6 @@ impl ParsedUri {
             inline_private_key_passphrase: None,
             trust_host_key: None,
             accept_host_key_once: None,
-            terminal_scrollback: None,
             terminal_type: None,
             runtime_metrics: None,
             cols: None,

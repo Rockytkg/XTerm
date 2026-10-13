@@ -93,9 +93,12 @@ export class TerminalHighlightAddon {
   }
 
   _handleWrite() {
-    // Row indexes in a negative cache cannot follow scrollback trimming.
-    // Positive highlights use markers and are synchronized before scanning.
-    this._analysisCache.clear();
+    // 负缓存按 (规则 hash, 行文本) 自校验：_refreshRow 总是先重读行当前文本再
+    // 比较，滚动/修剪导致的行号漂移只会让文本比较失配而触发重扫，不会误用
+    // 陈旧结论。因此这里不能清 _analysisCache——流式输出期间每次 write 都清空
+    // 会把全视口行重新跑一遍规则匹配，形成与数据量无关的恒定 CPU 烧耗
+    // （低波特率大块输出卡顿的主要来源）。只有正高亮依赖 marker 跟随行号，
+    // 需要在扫描前同步。
     this._synchronizeDecoratedRows();
     this._enqueueViewport();
   }

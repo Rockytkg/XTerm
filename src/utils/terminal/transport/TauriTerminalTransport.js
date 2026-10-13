@@ -181,7 +181,6 @@ class TauriTerminalTransport {
       case TERMINAL_FRAME_TYPES.INPUT_BYTES:
       case TERMINAL_FRAME_TYPES.RESIZE:
       case TERMINAL_FRAME_TYPES.RAW_OUTPUT:
-      case TERMINAL_FRAME_TYPES.RENDERED_OFFSET:
         return this.queueBatchFrame(frame);
       default:
         this.logger?.warn("Unsupported terminal transport frame", frame);

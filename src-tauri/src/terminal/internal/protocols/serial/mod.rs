@@ -155,7 +155,7 @@ impl SerialConnectionFactory {
         )
         .await?;
         let serial_settings = SerialLineSettings::from_open_request(&request)?;
-        let open_context = request.session_open_context(state);
+        let open_context = request.session_open_context();
         let startup_encoding = request.encoding.clone();
         let quick_auto_baud = request.serial_quick_auto_baud.unwrap_or(true);
 
@@ -230,7 +230,6 @@ impl SerialConnectionFactory {
                 initial_data,
                 startup_auth,
                 resources: TerminalSessionResources::serial(port_name.clone(), close_ack_rx),
-                replay_line_limit: open_context.replay_line_limit,
             },
         );
 

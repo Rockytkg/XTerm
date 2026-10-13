@@ -42,12 +42,7 @@ import {
   TerminalStatusAddon,
   TrzszAddon,
 } from "../utils/terminal/addons";
-import {
-  createRawOutputFrame,
-  createRenderedOffsetFrame,
-  createResizeFrame,
-} from "../utils/terminal/protocol/frames";
-import { createRenderedOffsetReporter } from "../utils/terminal/renderedOffsetReporter";
+import { createRawOutputFrame, createResizeFrame } from "../utils/terminal/protocol/frames";
 import { createBackgroundSessionSuspender } from "../utils/terminal/backgroundSessionSuspender";
 import { createTauriTerminalTransport } from "../utils/terminal/transport/TauriTerminalTransport";
 import { createTerminalShortcutHandler } from "../utils/terminal/createTerminalShortcutHandler";
@@ -57,16 +52,12 @@ import { connectionCan } from "../utils/connectionCapabilities";
 import {
   classifyTerminalOutputPayload,
   createTerminalOutputByteDecoder,
+  decodeTerminalOutputBytes,
 } from "../utils/terminalOutputPayload";
-import { createFrameIntervalSampler } from "../utils/renderingCapabilities";
 import { MorePromptCleanup } from "../utils/terminal/addons/pager/MorePromptCleanup";
 import {
-  TERMINAL_OUTPUT_BACKPRESSURE_HIGH_WATERMARK,
-  TERMINAL_OUTPUT_BACKPRESSURE_LOW_WATERMARK,
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
-  TERMINAL_OUTPUT_FLUSH_MAX_CHARS,
-  TERMINAL_OUTPUT_FLUSH_MS,
   TERMINAL_OUTPUT_WRITE_CHUNK_CHARS,
 } from "../utils/terminalPanelHelpers";
 import { binaryStringToBase64, shouldSendBackspaceAsBs } from "../utils/terminal/inputRouting";
@@ -145,10 +136,11 @@ let sessionRuntimeController;
 let terminalSessionRuntime;
 let preserveViewportForNextBackendSession = false;
 let terminalPayloadQueue = Promise.resolve();
+let terminalPayloadQueuePending = 0;
+let terminalPayloadQueueGeneration = 0;
 let terminalInputQueue = Promise.resolve();
-let serialBaudPresentation = { sessionId: "", promise: Promise.resolve(), resolve: null };
+let serialBaudPresentation = { sessionId: "", promise: null, resolve: null };
 let unregisterScriptBridge = null;
-const frameIntervalSampler = createFrameIntervalSampler();
 const terminalOutputByteDecoder = createTerminalOutputByteDecoder();
 
 function refreshTerminalViewport({ clearTextureAtlas = false } = {}) {
@@ -278,8 +270,7 @@ const {
 
 const terminalDragDrop = useTerminalDragDrop({
   logger,
-  shouldListen: () =>
-    props.transferDragUpload && props.terminalTrzsz && isForegroundRuntime(),
+  shouldListen: () => props.transferDragUpload && props.terminalTrzsz && isForegroundRuntime(),
   handleDrop: (paths) => {
     trzszAddon?.uploadPaths?.(paths).catch((error) => {
       logger.warn("trzsz.drag_upload.failed", error);
@@ -333,8 +324,9 @@ function resetTerminalOutputCursor() {
   terminalOutputCursor = 0;
   terminalOutputCursorSessionId = "";
   terminalPayloadQueue = Promise.resolve();
+  terminalPayloadQueuePending = 0;
+  terminalPayloadQueueGeneration += 1;
   terminalOutputByteDecoder.reset();
-  renderedOffsetReporter.reset();
   sessionRuntimeController.resetOutputRouting();
 }
 
@@ -394,41 +386,17 @@ function handleBackspace(event) {
   return false;
 }
 
-const renderedOffsetReporter = createRenderedOffsetReporter({
-  send: (offset) => {
-    const channel = sessionRuntimeController?.currentChannel();
-    if (!channel || (props.sessionId && channel.sessionId !== props.sessionId)) return;
-    terminalTransport
-      .send(
-        createRenderedOffsetFrame({
-          sessionId: channel.sessionId,
-          channelId: channel.channelId,
-          offset,
-        }),
-      )
-      .catch((error) => {
-        logger.warn("rendered_offset.report.failed", error);
-      });
-  },
-});
-
 const terminalOutputAddon = new TerminalOutputAddon({
   onRecordChunk: (chunk) => emit("terminalRecordChunk", chunk),
-  onBackpressureResume: () => renderedOffsetReporter.onBackpressureResume(),
   isDisposed: () => disposed,
   isRecordingActive: () => props.recordingActive,
-  flushDelay: TERMINAL_OUTPUT_FLUSH_MS,
-  getFrameBudgetMs: () => frameIntervalSampler.currentFrameIntervalMs(),
-  maxChars: TERMINAL_OUTPUT_FLUSH_MAX_CHARS,
   writeChunkChars: TERMINAL_OUTPUT_WRITE_CHUNK_CHARS,
-  highWatermark: TERMINAL_OUTPUT_BACKPRESSURE_HIGH_WATERMARK,
-  lowWatermark: TERMINAL_OUTPUT_BACKPRESSURE_LOW_WATERMARK,
 });
 
 const morePromptCleanup = new MorePromptCleanup({
   isEnabled: () => props.activeConnection?.terminalMorePromptCleanup === true,
   readCurrentLine: () => currentTerminalLineText(),
-  queueLocalClear: (data) => terminalOutputAddon.queue(data, { immediate: true }),
+  queueLocalClear: (data) => terminalOutputAddon.queue(data),
 });
 
 // 脚本桥接：脚本引擎的输入/屏幕/输出能力都经这个 xterm 插件暴露。
@@ -824,6 +792,7 @@ async function provideTerminalContextMenu(event) {
   const hasSelection = !!selectedText;
   await openContextMenu(event, {
     suppressDefaultEditItems: true,
+    preserveFocus: true,
     items: createTerminalContextMenuItems({
       t,
       hasSelection,
@@ -936,12 +905,13 @@ watch(
   ],
   () => {
     if (props.connectionState?.status === "connecting") {
-      serialBaudPresentation = { sessionId: "", promise: Promise.resolve(), resolve: null };
+      serialBaudPresentation = { sessionId: "", promise: null, resolve: null };
     }
     replayConnectionStatus();
     if (["failed", "closed"].includes(props.connectionState?.status)) {
       serialBaudPresentation.resolve?.();
       serialBaudPresentation.resolve = null;
+      serialBaudPresentation.promise = null;
     } else {
       void waitForSerialBaudPresentation();
     }
@@ -950,25 +920,43 @@ watch(
 );
 
 function enqueueTerminalPayload(payload) {
+  const presentation = waitForSerialBaudPresentation();
+  if (!presentation && terminalPayloadQueuePending === 0) {
+    try {
+      handleTerminalData(payload);
+    } catch (error) {
+      logger.error("terminal.payload.handle.failed", error);
+    }
+    return;
+  }
+
+  const generation = terminalPayloadQueueGeneration;
+  terminalPayloadQueuePending += 1;
   terminalPayloadQueue = terminalPayloadQueue
     .catch((error) => logger.error("terminal.payload.handle.failed", error))
-    .then(() => handleTerminalData(payload));
+    .then(() => presentation)
+    .then(() => {
+      if (generation === terminalPayloadQueueGeneration) handleTerminalData(payload);
+    })
+    .catch((error) => logger.error("terminal.payload.handle.failed", error))
+    .finally(() => {
+      if (generation === terminalPayloadQueueGeneration) {
+        terminalPayloadQueuePending = Math.max(0, terminalPayloadQueuePending - 1);
+      }
+    });
 }
 
-async function handleTerminalData(payload) {
+function handleTerminalData(payload) {
   if (!payload?.kind || !terminal) return;
-  await waitForSerialBaudPresentation();
   const payloadState = terminalOutputPayloadState();
   const decision = classifyTerminalOutputPayload(payload, payloadState);
   if (decision.kind === "ignore") return;
   const { normalized } = decision;
 
-  if (trzszAddon?.processServerOutput({ ...payload, ...normalized })) {
+  const rawBytes =
+    decision.kind === "raw" ? decodeTerminalOutputBytes(normalized.dataBase64) : null;
+  if (trzszAddon?.processServerOutput(normalized, rawBytes)) {
     rememberTerminalOffset(normalized.endOffset);
-    renderedOffsetReporter.noteConsumed(
-      (normalized.dataBase64 || normalized.data || "").length,
-      normalized.endOffset,
-    );
     return;
   }
   terminalStatusAddon.release();
@@ -976,20 +964,16 @@ async function handleTerminalData(payload) {
   // 跨包流式 TextDecoder 保留多字节字符，不能合并进 classify 的纯函数里。
   const rawData =
     decision.kind === "raw"
-      ? terminalOutputByteDecoder.decode(normalized.dataBase64, payload.encoding)
+      ? terminalOutputByteDecoder.decodeBytes(rawBytes, payload.encoding)
       : normalized.data;
   if (decision.kind === "text") terminalOutputByteDecoder.reset();
   const data = morePromptCleanup.cleanOutput(rawData);
   if (data) {
-    terminalOutputAddon.queue(data, {
-      immediate: connectionCan(props.activeConnection, "serialBaudDetection"),
-      recordable: true,
-    });
+    terminalOutputAddon.queue(data, { recordable: true });
     // 同步发布给脚本引擎（无订阅者时是零成本短路）。
     publishTerminalOutput(props.activeConnection?.id || "", data);
   }
   rememberTerminalOffset(normalized.endOffset);
-  renderedOffsetReporter.noteConsumed(data.length, normalized.endOffset);
 }
 
 function waitForSerialBaudPresentation() {
@@ -998,7 +982,7 @@ function waitForSerialBaudPresentation() {
     !connectionCan(connection, "serialBaudDetection") ||
     String(connection.baudRate).toLowerCase() !== "auto"
   ) {
-    return Promise.resolve();
+    return null;
   }
 
   const sessionId = props.sessionId || connection.id || "";
@@ -1021,9 +1005,13 @@ function waitForSerialBaudPresentation() {
     serialBaudPresentation.resolve = null;
     void terminalOutputAddon
       .waitForFlush()
-      .then(resolve)
+      .then(() => {
+        serialBaudPresentation.promise = null;
+        resolve();
+      })
       .catch((error) => {
         logger.error("terminal.serial_baud_status.write_failed", error);
+        serialBaudPresentation.promise = null;
         resolve();
       });
   }
@@ -1034,11 +1022,9 @@ function syncTerminalRuntimeResources() {
   applyRuntimePresentation();
   backgroundSuspender.sync(isForegroundRuntime());
   if (isForegroundRuntime()) {
-    frameIntervalSampler.start();
     // 仅前台面板挂窗口级拖放监听：后台面板attach 会被 shouldListen 拦截（幂等）
     void terminalDragDrop.attachDragDropListener();
   } else {
-    frameIntervalSampler.stop();
     // 后台面板摘掉窗口级拖放监听，避免 N 个会话每个 drop 都被唤醒
     terminalDragDrop.detachDragDropListener();
   }
@@ -1075,7 +1061,6 @@ onBeforeUnmount(() => {
   unregisterScriptBridge?.();
   unregisterScriptBridge = null;
   backgroundSuspender.dispose();
-  frameIntervalSampler.stop();
   terminalDragDrop.disposeDragDropListener();
   void sessionRuntimeController.deactivate();
   terminalOutputAddon.flush();

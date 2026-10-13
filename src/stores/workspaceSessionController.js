@@ -75,7 +75,6 @@ export function createWorkspaceSessionController({
     getSessionInstance,
     hostKeyPromptController,
     isExpectedCloseError,
-    preferences,
     refreshConnectionList,
     reconnectSession,
     onAuthenticatedResponse: (connectionId, response, context = {}) => {

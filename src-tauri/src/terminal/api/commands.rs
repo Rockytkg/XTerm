@@ -31,7 +31,6 @@ pub(crate) async fn terminal_connection_open(
                 open_request_id: request.open_request_id,
                 trust_host_key: request.trust_host_key,
                 accept_host_key_once: request.accept_host_key_once,
-                terminal_scrollback: request.terminal_scrollback,
                 terminal_type: request.terminal_type,
                 encoding: request.encoding,
                 realtime_encoding_detection: request.realtime_encoding_detection,
@@ -250,9 +249,20 @@ async fn cleanup_failed_attach(
 #[tauri::command]
 pub(crate) fn terminal_send_batch(
     state: tauri::State<'_, AppState>,
-    frames: Vec<TerminalClientFrame>,
+    frames: Vec<serde_json::Value>,
 ) -> Result<(), String> {
     for frame in frames {
+        // 逐帧反序列化：单个畸形帧（例如契约漂移）只跳过该帧并告警，不再让
+        // 整批输入帧一起被拒——严格整体反序列化曾导致重输出期间按键丢失。
+        let frame = match serde_json::from_value::<TerminalClientFrame>(frame) {
+            Ok(frame) => frame,
+            Err(error) => {
+                logging::event("terminal.api", "terminal.batch.frame_rejected")
+                    .field("error", error.to_string())
+                    .warn();
+                continue;
+            }
+        };
         handle_terminal_client_frame(state.inner(), frame).map_err(api_error)?;
     }
     Ok(())
@@ -303,11 +313,6 @@ fn handle_terminal_client_frame(
             channel_id,
             enabled,
         } => session_service().set_raw_output(state, &session_id, channel_id, enabled),
-        TerminalClientFrame::RenderedOffset {
-            session_id,
-            channel_id,
-            offset,
-        } => session_service().rendered_offset(state, &session_id, Some(channel_id), offset),
     }
 }
 

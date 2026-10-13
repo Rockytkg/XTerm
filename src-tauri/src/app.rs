@@ -78,9 +78,10 @@ mod single_instance {
     /// Decode null-terminated UTF-16LE bytes. Returns `None` when the
     /// content is not valid UTF-16.
     fn decode_utf16le_nullterm(bytes: &[u8]) -> Option<String> {
-        let words: Vec<u16> = bytes
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        let (pairs, _) = bytes.as_chunks::<2>();
+        let words: Vec<u16> = pairs
+            .iter()
+            .map(|&pair| u16::from_le_bytes(pair))
             .take_while(|&w| w != 0)
             .collect();
         String::from_utf16(&words).ok()

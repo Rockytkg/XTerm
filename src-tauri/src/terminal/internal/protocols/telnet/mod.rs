@@ -153,7 +153,7 @@ impl TelnetConnectionFactory {
         configure_telnet_tcp_keepalive(&stream);
 
         let encoding = normalize_telnet_charset(request.encoding.as_deref());
-        let open_context = request.session_open_context(state);
+        let open_context = request.session_open_context();
         let config = TelnetConfig {
             terminal_type: normalize_terminal_type(request.terminal_type.as_deref()),
             cols: request.cols.unwrap_or(80).clamp(1, u16::MAX as u32) as u16,
@@ -196,7 +196,6 @@ impl TelnetConnectionFactory {
                 initial_data: None,
                 startup_auth,
                 resources: TerminalSessionResources::default(),
-                replay_line_limit: open_context.replay_line_limit,
             },
         );
         Ok(ConnectionOpenResult::connected_shell(

@@ -108,7 +108,6 @@ mod tests {
             session_id: session_id.to_string(),
             channel_id,
             data: String::new(),
-            encoding: "utf-8".to_string(),
             start_offset: 0,
             end_offset: 0,
         }

@@ -33,8 +33,6 @@ pub(crate) struct ConnectionOpenCommand {
     #[serde(default)]
     pub accept_host_key_once: Option<bool>,
     #[serde(default)]
-    pub terminal_scrollback: Option<u32>,
-    #[serde(default)]
     pub terminal_type: Option<String>,
     #[serde(default)]
     pub encoding: Option<String>,
@@ -87,8 +85,6 @@ pub(crate) struct ConnectionAuthenticateCommand {
     pub trust_host_key: Option<bool>,
     #[serde(default)]
     pub accept_host_key_once: Option<bool>,
-    #[serde(default)]
-    pub terminal_scrollback: Option<u32>,
     #[serde(default)]
     pub cols: Option<u32>,
     #[serde(default)]
@@ -207,12 +203,6 @@ pub(crate) enum TerminalClientFrame {
         channel_id: Option<u64>,
         enabled: bool,
     },
-    #[serde(rename = "renderedOffset")]
-    RenderedOffset {
-        session_id: String,
-        channel_id: u64,
-        offset: u64,
-    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -227,7 +217,6 @@ pub(crate) enum TerminalSessionChannelPayload {
         session_id: String,
         channel_id: u64,
         data: String,
-        encoding: String,
         start_offset: usize,
         end_offset: usize,
     },
@@ -317,7 +306,6 @@ mod tests {
             session_id: "session-1".to_string(),
             channel_id: 7,
             data: "abc".to_string(),
-            encoding: "utf-8".to_string(),
             start_offset: 0,
             end_offset: 3,
         };
@@ -327,32 +315,9 @@ mod tests {
         assert_eq!(value["connectionId"], "connection-1");
         assert_eq!(value["sessionId"], "session-1");
         assert_eq!(value["channelId"], 7);
+        assert!(value.get("encoding").is_none());
         assert_eq!(value["startOffset"], 0);
         assert_eq!(value["endOffset"], 3);
-    }
-
-    #[test]
-    fn rendered_offset_frame_accepts_contract_fields() {
-        let frame: TerminalClientFrame = serde_json::from_value(json!({
-            "type": "renderedOffset",
-            "sessionId": "session-1",
-            "channelId": 7,
-            "offset": 12345
-        }))
-        .expect("renderedOffset frame should deserialize from frontend payload");
-
-        match frame {
-            TerminalClientFrame::RenderedOffset {
-                session_id,
-                channel_id,
-                offset,
-            } => {
-                assert_eq!(session_id, "session-1");
-                assert_eq!(channel_id, 7);
-                assert_eq!(offset, 12345);
-            }
-            _ => panic!("unexpected frame variant"),
-        }
     }
 
     #[test]

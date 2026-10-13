@@ -975,7 +975,7 @@ impl SshConnectionFactory {
             );
         }
 
-        let open_context = request.session_open_context(state);
+        let open_context = request.session_open_context();
         ensure_open_current(state, &request)?;
         // 运行时指标默认开启；会话选项可关闭——仅支持单通道 shell 的设备
         //（部分交换机）会在 exec 探测时被远端断开整个会话。
@@ -1000,7 +1000,6 @@ impl SshConnectionFactory {
                 initial_data: None,
                 startup_auth: None,
                 resources: TerminalSessionResources::ssh(shared_session, connected.chain_sessions),
-                replay_line_limit: open_context.replay_line_limit,
             },
         );
         log::info!(

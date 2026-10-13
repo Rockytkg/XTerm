@@ -31,8 +31,6 @@ export function createWorkspaceConnectionOpener({
     const connection = getConnection?.(connectionId);
     // Per-connection overrides take priority; fall back to global preferences.
     const terminalType = connection?.terminalType || preferences.value.terminalType;
-    const terminalScrollback =
-      connection?.terminalScrollback ?? preferences.value.terminalScrollback;
     // Coerce empty string → undefined so the backend receives None rather than Some("").
     const encoding = connection?.encoding || undefined;
     // Detection ON when encoding is "auto" (falsy), OFF for a specific encoding.
@@ -47,7 +45,6 @@ export function createWorkspaceConnectionOpener({
     try {
       const response = await openBackendConnection(connectionId, {
         openRequestId,
-        terminalScrollback,
         terminalType,
         encoding,
         realtimeEncodingDetection,

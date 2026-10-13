@@ -5,7 +5,6 @@ export const TERMINAL_FRAME_TYPES = Object.freeze({
   INPUT_BYTES: "terminal.input.bytes",
   OUTPUT: "terminal.output",
   RAW_OUTPUT: "terminal.raw_output",
-  RENDERED_OFFSET: "terminal.rendered_offset",
   RESIZE: "terminal.resize",
 });
 
@@ -45,21 +44,6 @@ export function createResizeFrame({ sessionId, channelId, cols, rows, widthPx, h
 
 export function createRawOutputFrame({ sessionId, channelId, enabled }) {
   return { type: TERMINAL_FRAME_TYPES.RAW_OUTPUT, sessionId, channelId, enabled };
-}
-
-/**
- * 渲染进度上报帧（端到端背压）：告诉后端 xterm 实际消费到的输出 offset，
- * 后端据此控制 replay cache 的补发节奏。
- * 线格式按契约携带 `type: "terminal.rendered_offset"` + camelCase
- * `channelId`/`offset`/`sessionId`；serde 以 `type` 为 tag 解析。
- */
-export function createRenderedOffsetFrame({ sessionId, channelId, offset }) {
-  return {
-    type: TERMINAL_FRAME_TYPES.RENDERED_OFFSET,
-    sessionId,
-    channelId,
-    offset,
-  };
 }
 
 export function normalizeOutputFrame(payload) {

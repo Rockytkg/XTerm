@@ -331,7 +331,7 @@ impl SftpTransferStore {
                 entry.record.connection_id == connection_id && entry.record.session_id == session_id
             })
             .collect();
-        entries.sort_by(|a, b| b.record.sequence.cmp(&a.record.sequence));
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.record.sequence));
         entries
             .into_iter()
             .map(|entry| entry.record.to_item(entry.control.is_some()))

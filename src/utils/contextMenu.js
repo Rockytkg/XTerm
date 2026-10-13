@@ -18,6 +18,11 @@ export function isContextMenuActivatable(item) {
   return !!item && item.type !== "separator" && item.enabled !== false;
 }
 
+/** Keyboard input dismisses a visible menu that leaves focus with its invoking control. */
+export function shouldDismissContextMenuForKeyboardInput({ menuVisible, preserveFocus }) {
+  return menuVisible && preserveFocus;
+}
+
 /** 禁用但仍保留展示的全局编辑项：原生菜单里剪切/复制/粘贴以灰色呈现而不是消失。 */
 const PRESERVED_DISABLED_ITEM_IDS = new Set(["global-cut", "global-copy", "global-paste"]);
 

@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, fmt::Write as _, time::Duration};
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use tokio::io::AsyncWriteExt;
 
 use super::{
@@ -44,7 +44,7 @@ async fn run_serial_transport_actor(
     if !send_transport_ready(event_tx) {
         return;
     }
-    let mut buffer = BytesMut::zeroed(SERIAL_READ_BATCH_MAX_BYTES);
+    let mut buffer = vec![0u8; SERIAL_READ_BATCH_MAX_BYTES];
     let mut aborted_read_recovery_available = true;
     // A baud probe is serialized with transport commands, but Close must be
     // able to cancel its waits. Commands received while probing are replayed
@@ -90,8 +90,9 @@ async fn run_serial_transport_actor(
                         // 一次成功读取说明重叠 IO 健康,重新武装 aborted 恢复名额。
                         aborted_read_recovery_available = true;
                         log_serial_read_chunk(port_name, &buffer[..size]);
-                        let bytes = buffer.split_to(size).freeze();
-                        buffer.resize(SERIAL_READ_BATCH_MAX_BYTES, 0);
+                        // 按实际读取量拷贝：低波特率下每块仅几字节，此前的
+                        // split_to + resize 会每块重新清零整个 32KiB 缓冲。
+                        let bytes = Bytes::copy_from_slice(&buffer[..size]);
                         if !send_transport_data(event_tx, bytes, None) {
                             return;
                         }

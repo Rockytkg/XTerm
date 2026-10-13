@@ -5,6 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
+  '@xterm/addon-ligatures@0.11.0-beta.301':
+    hash: 0e70b2f88c5354275c947bcec62393e4f08aa70778832d5da207ed93374fbdc7
+    path: patches/@xterm__addon-ligatures@0.11.0-beta.301.patch
   '@xterm/addon-search@0.17.0-beta.301':
     hash: 81bc494ab34d82ce3274c522167893c991ed179dd2b6ed78a462786a1e44007b
     path: patches/@xterm__addon-search@0.17.0-beta.301.patch
@@ -81,7 +84,7 @@ importers:
         version: 0.10.0-beta.301(@xterm/xterm@6.1.0-beta.304(patch_hash=5295c9a8e7ce7b699c812486f713e474ed487026ab50514b4337239e20186541))
       '@xterm/addon-ligatures':
         specifier: 0.11.0-beta.301
-        version: 0.11.0-beta.301(@xterm/xterm@6.1.0-beta.304(patch_hash=5295c9a8e7ce7b699c812486f713e474ed487026ab50514b4337239e20186541))
+        version: 0.11.0-beta.301(patch_hash=0e70b2f88c5354275c947bcec62393e4f08aa70778832d5da207ed93374fbdc7)(@xterm/xterm@6.1.0-beta.304(patch_hash=5295c9a8e7ce7b699c812486f713e474ed487026ab50514b4337239e20186541))
       '@xterm/addon-progress':
         specifier: 0.3.0-beta.301
         version: 0.3.0-beta.301(@xterm/xterm@6.1.0-beta.304(patch_hash=5295c9a8e7ce7b699c812486f713e474ed487026ab50514b4337239e20186541))
@@ -4419,7 +4422,7 @@ snapshots:
     dependencies:
       '@xterm/xterm': 6.1.0-beta.304(patch_hash=5295c9a8e7ce7b699c812486f713e474ed487026ab50514b4337239e20186541)
 
-  '@xterm/addon-ligatures@0.11.0-beta.301(@xterm/xterm@6.1.0-beta.304(patch_hash=5295c9a8e7ce7b699c812486f713e474ed487026ab50514b4337239e20186541))':
+  '@xterm/addon-ligatures@0.11.0-beta.301(patch_hash=0e70b2f88c5354275c947bcec62393e4f08aa70778832d5da207ed93374fbdc7)(@xterm/xterm@6.1.0-beta.304(patch_hash=5295c9a8e7ce7b699c812486f713e474ed487026ab50514b4337239e20186541))':
     dependencies:
       '@xterm/xterm': 6.1.0-beta.304(patch_hash=5295c9a8e7ce7b699c812486f713e474ed487026ab50514b4337239e20186541)
       lru-cache: 11.5.3

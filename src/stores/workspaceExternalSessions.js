@@ -66,7 +66,6 @@ export function createWorkspaceExternalSessionController({ connectTo, upsertExte
       encoding: undefined,
       realtimeEncodingDetection: undefined,
       terminalType: undefined,
-      terminalScrollback: undefined,
       backspaceSends: undefined,
       terminalHighlightEnabled: undefined,
       serialQuickAutoBaud: undefined,

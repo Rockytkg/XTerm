@@ -441,30 +441,6 @@ impl SessionApplicationService {
         )
     }
 
-    pub(crate) fn rendered_offset(
-        &self,
-        state: &AppState,
-        session_id: &str,
-        channel_id: Option<u64>,
-        offset: u64,
-    ) -> Result<(), TerminalApiError> {
-        let bus = SessionCommandBus::new(state);
-        bus.send_channel_command(
-            ChannelCommand {
-                session_id,
-                channel_id,
-                requirement: ChannelRequirement::CurrentWhenPresent,
-                event_name: "session.rendered_offset",
-                success_level: SuccessLogLevel::Trace,
-                command: SessionCommand::RenderedOffset {
-                    channel_id: channel_id.unwrap_or(0),
-                    offset,
-                },
-            },
-            |log| log.field("offset", offset),
-        )
-    }
-
     pub(crate) async fn redetect_serial_baud(
         &self,
         state: &AppState,

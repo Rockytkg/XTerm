@@ -684,7 +684,7 @@ impl ActorState<'_> {
         if events.is_empty() {
             return true;
         }
-        let outputs = match self.active.process_fastpath_input(self.image, &events) {
+        let outputs = match self.active.process_fastpath_input(self.image, events) {
             Ok(outputs) => outputs,
             Err(error) => {
                 log::warn!(target: "terminal.rdp", "RDP input processing failed: {error}");

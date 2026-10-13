@@ -25,6 +25,7 @@ watch(
     if (visible) {
       previousActiveElement =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (contextMenuState.preserveFocus) return;
       void nextTick(() => menuRef.value?.focus?.());
       return;
     }
