@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
+use std::io::Write as _;
 
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, write::EncoderStringWriter};
 use memchr::memchr;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -508,7 +509,7 @@ fn plan_raw_output_batch(
     max_bytes: usize,
 ) -> Option<OutputBatch> {
     let mut raw_len = 0_usize;
-    let mut raw_encoder: Option<StreamingBase64Encoder> = None;
+    let mut raw_encoder = None;
     let mut text: Option<String> = None;
     let mut end_offset = start_offset;
     let mut encoding = "utf-8".to_string();
@@ -531,11 +532,12 @@ fn plan_raw_output_batch(
             if raw_len > 0 && raw_len.saturating_add(chunk.raw_bytes.len()) > max_bytes {
                 break;
             }
+            // 分块流式编码由 base64 的 EncoderStringWriter 承担（内部已处理
+            // 跨 write 的三字节分组），不再手写 carry 状态机。
             raw_encoder
-                .get_or_insert_with(|| {
-                    StreamingBase64Encoder::new(max_bytes.saturating_add(2) / 3 * 4)
-                })
-                .push(&chunk.raw_bytes);
+                .get_or_insert_with(|| EncoderStringWriter::new(&STANDARD_NO_PAD))
+                .write_all(&chunk.raw_bytes)
+                .expect("base64 encoding into a String cannot fail");
             raw_len += chunk.raw_bytes.len();
             end_offset = chunk.end_offset;
             encoding = chunk.encoding.clone();
@@ -563,7 +565,7 @@ fn plan_raw_output_batch(
     if raw_len > 0 {
         let raw_encoder = raw_encoder?;
         return Some(OutputBatch::RawBytes {
-            data_base64: raw_encoder.finish(),
+            data_base64: raw_encoder.into_inner(),
             encoding,
             start_offset,
             end_offset,
@@ -575,58 +577,6 @@ fn plan_raw_output_batch(
             start_offset,
             end_offset,
         })
-}
-
-/// Encodes adjacent raw chunks as one Base64 stream without first coalescing
-/// their bytes into a second full-size buffer. The two-byte carry preserves
-/// Base64's three-byte grouping across arbitrary cache chunk boundaries.
-struct StreamingBase64Encoder {
-    output: String,
-    carry: [u8; 3],
-    carry_len: usize,
-}
-
-impl StreamingBase64Encoder {
-    fn new(capacity: usize) -> Self {
-        Self {
-            output: String::with_capacity(capacity),
-            carry: [0; 3],
-            carry_len: 0,
-        }
-    }
-
-    fn push(&mut self, bytes: &[u8]) {
-        let mut offset = 0;
-        if self.carry_len > 0 {
-            let needed = 3 - self.carry_len;
-            let copied = needed.min(bytes.len());
-            self.carry[self.carry_len..self.carry_len + copied].copy_from_slice(&bytes[..copied]);
-            self.carry_len += copied;
-            offset += copied;
-            if self.carry_len == 3 {
-                STANDARD_NO_PAD.encode_string(self.carry, &mut self.output);
-                self.carry_len = 0;
-            } else {
-                return;
-            }
-        }
-
-        let complete_len = (bytes.len() - offset) / 3 * 3;
-        if complete_len > 0 {
-            STANDARD_NO_PAD.encode_string(&bytes[offset..offset + complete_len], &mut self.output);
-            offset += complete_len;
-        }
-        let remainder = &bytes[offset..];
-        self.carry[..remainder.len()].copy_from_slice(remainder);
-        self.carry_len = remainder.len();
-    }
-
-    fn finish(mut self) -> String {
-        if self.carry_len > 0 {
-            STANDARD_NO_PAD.encode_string(&self.carry[..self.carry_len], &mut self.output);
-        }
-        self.output
-    }
 }
 
 fn previous_char_boundary(text: &str, mut index: usize) -> usize {
