@@ -73,15 +73,17 @@ pub(crate) async fn canonical_shared_dir(service: &str, path: &str) -> Result<Pa
 pub(crate) async fn await_runtime_task(
     service: &str,
     drain_timeout: Duration,
-    mut task: tauri::async_runtime::JoinHandle<()>,
+    task: tauri::async_runtime::JoinHandle<()>,
 ) -> Result<(), String> {
-    tokio::select! {
-        result = &mut task => result.map_err(|error| format!("{service} server task failed: {error}")),
-        _ = tokio::time::sleep(drain_timeout) => {
-            task.abort();
-            let _ = task.await;
-            Err(format!("timed out stopping {service} server; the server task was aborted"))
+    use crate::runtime_task::RuntimeTaskOutcome;
+    match crate::runtime_task::await_runtime_task(task, drain_timeout).await {
+        RuntimeTaskOutcome::Completed => Ok(()),
+        RuntimeTaskOutcome::JoinFailed(error) => {
+            Err(format!("{service} server task failed: {error}"))
         }
+        RuntimeTaskOutcome::TimedOut => Err(format!(
+            "timed out stopping {service} server; the server task was aborted"
+        )),
     }
 }
 

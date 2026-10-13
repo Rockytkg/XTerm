@@ -134,10 +134,15 @@ pub(crate) async fn stop_runtime<R: tauri::Runtime>(
     Ok(())
 }
 
-async fn await_runtime_task(name: &'static str, mut task: tauri::async_runtime::JoinHandle<()>) {
-    tokio::select! {
-        result = &mut task => if let Err(error) = result { logging::event("tftp.runtime", "tftp.task.join_failed").field("task", name).field("error", error.to_string()).warn(); },
-        _ = tokio::time::sleep(TFTP_TASK_DRAIN_TIMEOUT) => { task.abort(); let _ = task.await; }
+async fn await_runtime_task(name: &'static str, task: tauri::async_runtime::JoinHandle<()>) {
+    use crate::runtime_task::RuntimeTaskOutcome;
+    if let RuntimeTaskOutcome::JoinFailed(error) =
+        crate::runtime_task::await_runtime_task(task, TFTP_TASK_DRAIN_TIMEOUT).await
+    {
+        logging::event("tftp.runtime", "tftp.task.join_failed")
+            .field("task", name)
+            .field("error", error.to_string())
+            .warn();
     }
 }
 

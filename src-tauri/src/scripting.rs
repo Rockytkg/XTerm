@@ -256,13 +256,11 @@ pub(crate) async fn script_fetch_text(url: String) -> Result<String, String> {
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("script url must be http or https".to_string());
     }
-    let client = reqwest::Client::builder()
-        .user_agent(format!("xterm/{}", env!("CARGO_PKG_VERSION")))
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
+    let client = crate::http::shared_client()
         .map_err(|error| format!("failed to create script fetch client: {error}"))?;
     let response = client
         .get(parsed)
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .map_err(|error| format!("failed to fetch script: {error}"))?

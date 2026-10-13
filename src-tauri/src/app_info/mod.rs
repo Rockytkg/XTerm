@@ -94,14 +94,12 @@ pub fn app_metadata() -> AppMetadata {
 #[tauri::command]
 pub async fn check_for_updates() -> Result<UpdateStatus, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let client = reqwest::Client::builder()
-        .user_agent(format!("xterm/{}", env!("CARGO_PKG_VERSION")))
-        .timeout(std::time::Duration::from_secs(12))
-        .build()
+    let client = crate::http::shared_client()
         .map_err(|error| format!("failed to create update client: {error}"))?;
 
     let releases = client
         .get(GITHUB_RELEASES_URL)
+        .timeout(std::time::Duration::from_secs(12))
         .send()
         .await
         .map_err(|error| format!("failed to request releases: {error}"))?

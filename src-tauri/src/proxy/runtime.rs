@@ -628,14 +628,11 @@ fn host_header_value(uri: &Uri) -> Result<HeaderValue, String> {
     let authority = uri
         .authority()
         .ok_or_else(|| "Proxy request URI is missing a host.".to_string())?;
-    let host = authority.host();
-    let host = match authority.port_u16() {
-        Some(port) if host.contains(':') && !host.starts_with('[') => format!("[{host}]:{port}"),
-        Some(port) => format!("{host}:{port}"),
-        None if host.contains(':') && !host.starts_with('[') => format!("[{host}]"),
-        None => host.to_string(),
-    };
-    host.parse::<HeaderValue>()
+    // Authority 的规范化文本本身就是 `host[:port]` / `[v6][:port]` 形式，
+    // 拆开再手工拼回（含 IPv6 方括号判断）只是等价 round-trip。
+    authority
+        .as_str()
+        .parse::<HeaderValue>()
         .map_err(|_| "Proxy request Host header is invalid.".to_string())
 }
 
@@ -739,25 +736,18 @@ async fn drain_proxy_tasks(mut tasks: JoinSet<()>, mut task_rx: mpsc::Receiver<P
     }
 }
 
-async fn await_runtime_task(name: &'static str, mut task: tauri::async_runtime::JoinHandle<()>) {
-    tokio::select! {
-        result = &mut task => {
-            if let Err(error) = result {
-                logging::event("proxy.runtime", "proxy.task.join_failed")
-                    .field("task", name)
-                    .field("error", error.to_string())
-                    .warn();
-            }
-        }
-        _ = tokio::time::sleep(PROXY_TASK_DRAIN_TIMEOUT) => {
-            logging::event("proxy.runtime", "proxy.task.join_failed")
-                .field("task", name)
-                .field("error", "timed out waiting for runtime task")
-                .warn();
-            task.abort();
-            let _ = task.await;
-        }
-    }
+async fn await_runtime_task(name: &'static str, task: tauri::async_runtime::JoinHandle<()>) {
+    use crate::runtime_task::RuntimeTaskOutcome;
+    let error = match crate::runtime_task::await_runtime_task(task, PROXY_TASK_DRAIN_TIMEOUT).await
+    {
+        RuntimeTaskOutcome::Completed => return,
+        RuntimeTaskOutcome::JoinFailed(error) => error.to_string(),
+        RuntimeTaskOutcome::TimedOut => "timed out waiting for runtime task".to_string(),
+    };
+    logging::event("proxy.runtime", "proxy.task.join_failed")
+        .field("task", name)
+        .field("error", error)
+        .warn();
 }
 
 fn log_proxy_task_result(task: &'static str, result: Result<(), tokio::task::JoinError>) {

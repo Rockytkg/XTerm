@@ -58,9 +58,10 @@ pub(crate) fn validate_bind_ip(bind_ip: &str) -> Result<(), String> {
     let ip = normalized
         .parse::<IpAddr>()
         .map_err(|_| format!("invalid bind IP address '{bind_ip}'"))?;
+    // 按值比较而非字符串：非规范书写形式（如 0::1）与 canonical 形式指向同一地址。
     let exists = resolve_network_interfaces()?
         .into_iter()
-        .any(|interface| interface.ip == ip.to_string());
+        .any(|interface| interface.ip.parse::<IpAddr>() == Ok(ip));
     if exists {
         Ok(())
     } else {
