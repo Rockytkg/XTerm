@@ -2,16 +2,13 @@ use super::ssh_runtime_metrics_script::{
     runtime_metrics_script_version, runtime_metrics_stream_command, SAMPLE_BLOCK_DELIMITER,
     SAMPLE_INTERVAL_SECONDS,
 };
-use std::{
-    sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use russh_sftp::client::SftpSession as RusshSftpSession;
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    state::{AppState, SftpSession},
+    state::{AppState, MonitorTaskGuard, SftpSession},
     terminal::{
         events::emit_ssh_runtime_metrics,
         internal::{
@@ -214,7 +211,7 @@ struct MetricsMonitorContext<'a> {
     session: &'a SharedSshSession,
     connection_id: &'a str,
     session_id: &'a str,
-    guard: &'a Arc<()>,
+    guard: &'a MonitorTaskGuard,
 }
 
 impl MetricsMonitorContext<'_> {
@@ -293,7 +290,7 @@ pub(crate) async fn run_runtime_metrics_monitor(
     app: AppHandle,
     connection_id: String,
     session_id: String,
-    guard: Arc<()>,
+    guard: MonitorTaskGuard,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
     let state = state.inner();
@@ -331,7 +328,7 @@ pub(crate) async fn run_runtime_metrics_monitor(
                 }
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(SAMPLE_INTERVAL_SECONDS)) => {}
-                    _ = wait_until_monitor_stopped(state, &session_id, &guard) => {
+                    _ = guard.stopped() => {
                         log::info!(target: "ssh.auxiliary", "runtime metrics monitor stopped for '{session_id}'");
                         return Ok(());
                     }
@@ -349,7 +346,7 @@ pub(crate) async fn run_runtime_metrics_monitor(
         }
         let message = tokio::select! {
             message = channel.wait() => message,
-            _ = wait_until_monitor_stopped(state, &session_id, &guard) => None,
+            _ = guard.stopped() => None,
         };
         let Some(message) = message else {
             // wait() 返回 None 表示流被对端关闭；若非本地主动停止则判定采样不可用。
@@ -384,12 +381,6 @@ pub(crate) async fn run_runtime_metrics_monitor(
     }
     log::info!(target: "ssh.auxiliary", "runtime metrics monitor stopped for '{session_id}'");
     Ok(())
-}
-
-async fn wait_until_monitor_stopped(state: &AppState, session_id: &str, guard: &Arc<()>) {
-    while state.monitor_task_matches(session_id, guard) {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
 }
 
 fn unix_timestamp_ms() -> u64 {

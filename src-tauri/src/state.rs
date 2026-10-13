@@ -22,7 +22,7 @@ use crate::{
     terminal::{
         api::dto::TerminalSessionChannelPayload,
         internal::{trzsz::TrzszRuntime, ResolvedConnection, TerminalSession},
-        runtime_registry::{TerminalOutputSubscription, TerminalRuntimeRegistry},
+        runtime_registry::{MonitorTaskSlot, TerminalOutputSubscription, TerminalRuntimeRegistry},
     },
 };
 
@@ -31,6 +31,28 @@ use crate::{
 pub struct SftpSession {
     inner: Arc<tokio::sync::Mutex<russh_sftp::client::SftpSession>>,
     closed: Arc<AtomicBool>,
+}
+
+/// 监控任务守卫：身份（区分同一会话的先后绑定）与停止信号接收端。
+/// 注册表在移除或替换绑定时发送停止信号，等待方事件驱动接收，无需轮询。
+pub(crate) struct MonitorTaskGuard {
+    slot: Arc<MonitorTaskSlot>,
+    stop: watch::Receiver<bool>,
+}
+
+impl MonitorTaskGuard {
+    /// 等待停止信号；sender 被丢弃（绑定随注册表销毁）同样视为停止。
+    pub(crate) async fn stopped(&self) {
+        let mut stop = self.stop.clone();
+        loop {
+            if *stop.borrow() {
+                return;
+            }
+            if stop.changed().await.is_err() {
+                return;
+            }
+        }
+    }
 }
 
 /// Heuristic for errors that indicate the SFTP/SSH protocol stream is broken
@@ -398,28 +420,36 @@ impl AppState {
         }
     }
 
-    pub fn monitor_task(&self, session_id: &str) -> Option<Arc<()>> {
+    pub fn monitor_task(&self, session_id: &str) -> Option<Arc<MonitorTaskSlot>> {
         lock(&self.terminal.monitor_tasks).get(session_id).cloned()
     }
 
-    pub fn bind_monitor_task(&self, session_id: &str, guard: Arc<()>) {
-        lock(&self.terminal.monitor_tasks).insert(session_id.to_string(), guard);
+    fn bind_monitor_task(&self, session_id: &str, slot: Arc<MonitorTaskSlot>) {
+        // 覆盖旧绑定时显式停止旧监控：旧任务持有自己的停止接收端，直接收到信号，
+        // 不再靠身份失配的轮询发现被替换。
+        if let Some(replaced) =
+            lock(&self.terminal.monitor_tasks).insert(session_id.to_string(), slot)
+        {
+            let _ = replaced.stop.send(true);
+        }
         logging::event("state.monitor_tasks", "monitor_task.bind")
             .field("session_id", session_id)
             .debug();
     }
 
-    pub fn bind_new_monitor_task(&self, session_id: &str) -> Arc<()> {
-        let guard = Arc::new(());
-        self.bind_monitor_task(session_id, guard.clone());
-        guard
+    pub fn bind_new_monitor_task(&self, session_id: &str) -> MonitorTaskGuard {
+        let (stop, stop_receiver) = watch::channel(false);
+        let slot = Arc::new(MonitorTaskSlot { stop });
+        self.bind_monitor_task(session_id, slot.clone());
+        MonitorTaskGuard {
+            slot,
+            stop: stop_receiver,
+        }
     }
 
     pub fn remove_monitor_task(&self, session_id: &str) {
-        if lock(&self.terminal.monitor_tasks)
-            .remove(session_id)
-            .is_some()
-        {
+        if let Some(slot) = lock(&self.terminal.monitor_tasks).remove(session_id) {
+            let _ = slot.stop.send(true);
             logging::event("state.monitor_tasks", "monitor_task.remove")
                 .field("session_id", session_id)
                 .debug();
@@ -533,10 +563,10 @@ impl AppState {
         }
     }
 
-    pub fn monitor_task_matches(&self, session_id: &str, guard: &Arc<()>) -> bool {
+    pub fn monitor_task_matches(&self, session_id: &str, guard: &MonitorTaskGuard) -> bool {
         lock(&self.terminal.monitor_tasks)
             .get(session_id)
-            .is_some_and(|current| Arc::ptr_eq(current, guard))
+            .is_some_and(|current| Arc::ptr_eq(current, &guard.slot))
     }
 
     pub fn connection_open_matches(

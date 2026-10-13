@@ -2,15 +2,24 @@ use std::{collections::HashMap, sync::Arc};
 
 use parking_lot::Mutex;
 use tauri::ipc::Channel;
+use tokio::sync::watch;
 
 use crate::{
     state::SessionRuntimeState,
     terminal::{api::dto::TerminalSessionChannelPayload, internal::TerminalSession},
 };
 
+/// 进行中的监控任务绑定：注册表持有 slot，监控任务持有
+/// [`crate::state::MonitorTaskGuard`] 作为停止信号接收端；移除或替换绑定时
+/// 直接发送停止信号，监控任务无需轮询注册表确认绑定是否仍存活。
+/// slot 的 Arc 地址即绑定身份，用于区分同一会话的先后绑定。
+pub(crate) struct MonitorTaskSlot {
+    pub(crate) stop: watch::Sender<bool>,
+}
+
 pub(crate) struct TerminalRuntimeRegistry {
     pub(crate) sessions: Mutex<HashMap<String, TerminalSession>>,
-    pub(crate) monitor_tasks: Mutex<HashMap<String, Arc<()>>>,
+    pub(crate) monitor_tasks: Mutex<HashMap<String, Arc<MonitorTaskSlot>>>,
     pub(crate) session_connections: Mutex<HashMap<String, String>>,
     pub(crate) session_runtime: Mutex<HashMap<String, SessionRuntimeState>>,
     pub(crate) connection_sessions: Mutex<HashMap<String, Vec<String>>>,
