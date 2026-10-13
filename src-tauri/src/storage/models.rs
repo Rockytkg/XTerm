@@ -7,16 +7,28 @@ use super::schema::initialize_schema;
 
 pub(super) const DATABASE_FILE_NAME: &str = "data.redb";
 
+/// Failure modes of opening the persistent store. `AlreadyOpen` is redb's
+/// structured signal that another process holds the database file lock;
+/// matching on redb's display text instead would silently break the
+/// second-instance exit path on any redb wording change.
+#[derive(Debug)]
+pub enum StoreOpenError {
+    AlreadyOpen,
+    Failed(String),
+}
+
 pub struct Store {
     pub(super) database: Database,
 }
 
 impl Store {
-    pub fn open(database_dir: &Path) -> Result<Self, String> {
+    pub fn open(database_dir: &Path) -> Result<Self, StoreOpenError> {
         let database_path = database_dir.join(DATABASE_FILE_NAME);
-        let database = Database::create(&database_path)
-            .map_err(|e| format!("failed to open Redb store: {e}"))?;
-        initialize_schema(&database)?;
+        let database = Database::create(&database_path).map_err(|error| match error {
+            redb::DatabaseError::DatabaseAlreadyOpen => StoreOpenError::AlreadyOpen,
+            error => StoreOpenError::Failed(format!("failed to open Redb store: {error}")),
+        })?;
+        initialize_schema(&database).map_err(StoreOpenError::Failed)?;
         Ok(Self { database })
     }
 }

@@ -5,7 +5,11 @@ use log::LevelFilter;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
 
-use crate::{paths::AppPaths, state::AppState, storage::Store};
+use crate::{
+    paths::AppPaths,
+    state::AppState,
+    storage::{Store, StoreOpenError},
+};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 
@@ -389,14 +393,14 @@ pub fn run() {
         // means another instance is alive and owns the window. The single-
         // instance plugin would only detect it after the store opens, so exit
         // quietly here instead of showing a fatal startup dialog.
-        Err(error) if error.contains("Cannot acquire lock") => {
+        Err(StoreOpenError::AlreadyOpen) => {
             log::info!(
                 target: "app.lifecycle",
                 "another XTerm instance is already running; exiting"
             );
             std::process::exit(0);
         }
-        Err(error) => startup_fatal(
+        Err(StoreOpenError::Failed(error)) => startup_fatal(
             Some(&log_dir),
             &format!("failed to initialize application store: {error}"),
         ),

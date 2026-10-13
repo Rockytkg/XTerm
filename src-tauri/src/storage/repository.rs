@@ -10,6 +10,14 @@ pub(crate) trait SettingsRepository {
     fn set_preferences(&self, preferences: &AppPreferences) -> Result<(), String>;
     fn setting_value(&self, key: &str) -> Result<Option<String>, String>;
     fn set_setting(&self, key: &str, value: &str) -> Result<(), String>;
+    /// Persists multiple settings as one unit. The default loops over
+    /// `set_setting`; backends with multi-key transactions override it.
+    fn set_settings(&self, entries: &[(&str, &str)]) -> Result<(), String> {
+        for (key, value) in entries {
+            self.set_setting(key, value)?;
+        }
+        Ok(())
+    }
     fn delete_setting(&self, key: &str) -> Result<(), String>;
 }
 
@@ -36,6 +44,10 @@ impl SettingsRepository for Store {
 
     fn set_setting(&self, key: &str, value: &str) -> Result<(), String> {
         Store::set_setting(self, key, value)
+    }
+
+    fn set_settings(&self, entries: &[(&str, &str)]) -> Result<(), String> {
+        Store::set_settings(self, entries)
     }
 
     fn delete_setting(&self, key: &str) -> Result<(), String> {

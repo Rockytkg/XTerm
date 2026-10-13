@@ -169,13 +169,20 @@ impl<'a> ProxyService<'a> {
 
     fn persist_settings(&self, port: Option<u16>, bind_ip: Option<&str>) -> Result<(), String> {
         let store = self.state.store();
+        let port_value;
+        let mut entries: Vec<(&str, &str)> = Vec::new();
         if let Some(port) = port {
-            SettingsRepository::set_setting(&*store, PROXY_PORT_KEY, &port.to_string())?;
+            port_value = port.to_string();
+            entries.push((PROXY_PORT_KEY, &port_value));
         }
         if let Some(bind_ip) = bind_ip {
-            SettingsRepository::set_setting(&*store, PROXY_BIND_IP_KEY, bind_ip)?;
+            entries.push((PROXY_BIND_IP_KEY, bind_ip));
         }
-        Ok(())
+        if entries.is_empty() {
+            return Ok(());
+        }
+        // 端口与 bind IP 是一个逻辑写入，单事务提交避免崩溃留下半截组合。
+        SettingsRepository::set_settings(&*store, &entries)
     }
 }
 

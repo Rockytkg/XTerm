@@ -142,6 +142,12 @@ impl Store {
     }
 
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), String> {
+        self.set_settings(&[(key, value)])
+    }
+
+    /// Writes several settings in a single transaction so a crash cannot leave
+    /// a half-applied pair (e.g. a new proxy port with the old bind IP).
+    pub fn set_settings(&self, entries: &[(&str, &str)]) -> Result<(), String> {
         let write_txn = self
             .database
             .begin_write()
@@ -150,13 +156,15 @@ impl Store {
             let mut table = write_txn
                 .open_table(SETTINGS)
                 .map_err(|error| format!("failed to open settings table: {error}"))?;
-            table
-                .insert(key, value)
-                .map_err(|error| format!("failed to save setting '{key}': {error}"))?;
+            for (key, value) in entries {
+                table
+                    .insert(*key, *value)
+                    .map_err(|error| format!("failed to save setting '{key}': {error}"))?;
+            }
         }
         write_txn
             .commit()
-            .map_err(|error| format!("failed to commit setting '{key}': {error}"))
+            .map_err(|error| format!("failed to commit settings: {error}"))
     }
 
     pub fn delete_setting(&self, key: &str) -> Result<(), String> {
