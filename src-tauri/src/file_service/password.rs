@@ -127,6 +127,8 @@ pub(crate) fn is_explicit_password(password: &str) -> bool {
 
 /// 恒定时间比较，避免口令校验在首个不匹配字节处提前返回而泄露时序信息。
 /// 长度不等时直接失败（长度本身不视为秘密）。FTP 与 SFTP 服务端共用。
+/// 注：ring 0.17 的 constant_time 模块已标记 deprecated/internal（不承诺
+/// 侧信道语义），依赖树中无其它审定型常量时间比较实现，故保留此前手写版。
 pub(crate) fn passwords_equal(provided: &str, expected: &str) -> bool {
     let provided = provided.as_bytes();
     let expected = expected.as_bytes();
