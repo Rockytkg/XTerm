@@ -4,10 +4,14 @@ const DEFAULT_STAT = { size: 5, modified: 1700000000, mime: "text/plain" };
 
 export const mockSftpState = {
   stat: { ...DEFAULT_STAT },
+  statCalls: 0,
+  readCalls: 0,
 };
 
 export function resetMockSftpState() {
   mockSftpState.stat = { ...DEFAULT_STAT };
+  mockSftpState.statCalls = 0;
+  mockSftpState.readCalls = 0;
 }
 
 export function closeSftpSession() {
@@ -47,6 +51,7 @@ export function createRemoteSftpFile() {
   return Promise.resolve();
 }
 export function readRemoteSftpFile() {
+  mockSftpState.readCalls += 1;
   return Promise.resolve("hello text");
 }
 export function readRemoteSftpFileBase64() {
@@ -59,6 +64,7 @@ export function writeRemoteSftpFile() {
   return Promise.resolve({ modified: 1700000001 });
 }
 export function statRemoteSftpFile() {
+  mockSftpState.statCalls += 1;
   return Promise.resolve(mockSftpState.stat);
 }
 export function renameRemoteSftp() {

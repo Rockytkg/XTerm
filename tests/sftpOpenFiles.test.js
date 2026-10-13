@@ -17,6 +17,10 @@ const props = {
 };
 const t = (key) => key;
 
+test.beforeEach(() => {
+  resetMockSftpState();
+});
+
 function createApi(overrides = {}) {
   return useSftpOpenFiles({ props, t, ...overrides });
 }
@@ -35,6 +39,8 @@ test("openPreview 对已知文本保持预览并标记可转编辑", async () =>
   assert.equal(file.blob.type, "text/plain");
   assert.equal(file.loading, false);
   assert.equal(file.error, "");
+  assert.equal(mockSftpState.statCalls, 1);
+  assert.equal(mockSftpState.readCalls, 1);
 });
 
 test("openPreview 通过内容嗅探识别无扩展名文本并保持预览", async () => {

@@ -81,11 +81,12 @@ export function useSftpOpenFiles({
     };
   }
 
-  async function loadTextContent(path, session) {
-    const [content, stat] = await Promise.all([
-      readRemoteSftpFile(session.connectionId, session.sessionId, path),
-      statRemoteSftpFile(session.connectionId, session.sessionId, path),
-    ]);
+  async function loadTextContent(path, session, knownStat) {
+    const contentPromise = readRemoteSftpFile(session.connectionId, session.sessionId, path);
+    const statPromise = knownStat
+      ? Promise.resolve(knownStat)
+      : statRemoteSftpFile(session.connectionId, session.sessionId, path);
+    const [content, stat] = await Promise.all([contentPromise, statPromise]);
     return { content, stat };
   }
 
@@ -106,7 +107,7 @@ export function useSftpOpenFiles({
       // editable 仅驱动"转编辑"入口，不再自动切换进编辑器。
       const sniffed = resolveSniffedPreview(tab.name, meta.size, stat?.mime);
       if (sniffed.editable) {
-        const { content, stat: textStat } = await loadTextContent(tab.path, session);
+        const { content, stat: textStat } = await loadTextContent(tab.path, session, stat);
         if (!isCurrent(tab, session)) return;
         patchTab(tab, {
           ...statPatch(textStat, meta),
