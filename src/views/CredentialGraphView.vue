@@ -165,15 +165,13 @@ onUnmounted(() => {
   destroyGraph();
 });
 
-async function loadGraphState() {
+async function loadGraphState(snapshot = null) {
   loading.value = true;
   graphError.value = "";
   try {
-    const [savedCredentials, savedUsages, workspace] = await Promise.all([
-      loadCredentials(),
-      loadCredentialUsages(),
-      loadWorkspaceBootstrap(),
-    ]);
+    const [savedCredentials, savedUsages, workspace] = snapshot
+      ? [snapshot.credentials, snapshot.usages, { connections: snapshot.connections }]
+      : await Promise.all([loadCredentials(), loadCredentialUsages(), loadWorkspaceBootstrap()]);
     credentials.value = Array.isArray(savedCredentials) ? savedCredentials : [];
     credentialUsagesList.value = Array.isArray(savedUsages) ? savedUsages : [];
     const loadedConnections = Array.isArray(workspace?.connections) ? workspace.connections : [];
@@ -560,9 +558,16 @@ function scheduleRenderGraph({ fit = false } = {}) {
   });
 }
 
-async function refreshGraph() {
+async function refreshGraph(snapshot) {
   disableRelationDrawMode();
-  await loadGraphState();
+  const state =
+    snapshot &&
+    Array.isArray(snapshot.credentials) &&
+    Array.isArray(snapshot.usages) &&
+    Array.isArray(snapshot.connections)
+      ? snapshot
+      : null;
+  await loadGraphState(state);
   // 数据变更必然触发 topology watcher，统一走 rAF 调度去重，只渲染一次
   scheduleRenderGraph({ fit: true });
 }

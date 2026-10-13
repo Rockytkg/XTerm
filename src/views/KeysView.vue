@@ -190,7 +190,11 @@ async function persistCredentialSave(request) {
       )
     : [...credentials.value, saved];
   await refreshCredentialUsages();
-  await graphView.value?.refreshGraph?.();
+  await graphView.value?.refreshGraph?.({
+    credentials: credentials.value,
+    usages: credentialUsages.value,
+    connections: connections.value,
+  });
   closeEditor();
   showToast({ type: "success", title: t("notifications.credentialSaved") });
 }
@@ -247,7 +251,11 @@ async function confirmCleanupUnused() {
       credentials.value = credentials.value.filter((cred) => !deleted.has(cred.id));
     }
     await refreshCredentialUsages();
-    await graphView.value?.refreshGraph?.();
+    await graphView.value?.refreshGraph?.({
+      credentials: credentials.value,
+      usages: credentialUsages.value,
+      connections: connections.value,
+    });
     cleanupConfirmOpen.value = false;
     showToast({
       type: "success",
@@ -356,7 +364,11 @@ const {
   async onDeleted(pending) {
     credentials.value = credentials.value.filter((credential) => credential.id !== pending.id);
     await refreshCredentialUsages();
-    await graphView.value?.refreshGraph?.();
+    await graphView.value?.refreshGraph?.({
+      credentials: credentials.value,
+      usages: credentialUsages.value,
+      connections: connections.value,
+    });
     if (editingId.value === pending.id) closeEditor();
   },
   onFailed(error) {
