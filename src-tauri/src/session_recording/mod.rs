@@ -1,3 +1,4 @@
+use sanitise_file_name::{sanitize_with_options, Options as SanitizeFileNameOptions};
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
@@ -35,13 +36,21 @@ pub(crate) fn dialog_file_name(value: &str, fallback: &str) -> String {
     } else {
         trimmed
     };
-    file_name
-        .chars()
-        .map(|ch| match ch {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-            _ => ch,
-        })
-        .collect()
+    // 与 terminal internal util 的 normalize_terminal_transfer_name 同一套选项：
+    // sanitise-file-name 还覆盖 Windows 保留名、控制字符、尾随点/空格与长度上限，
+    // 手写的九字符替换列表覆盖不到这些；替换字符同为 '_'，常规名称结果一致。
+    let options = SanitizeFileNameOptions {
+        normalise_whitespace: false,
+        trim_more_punctuation: false,
+        six_measures_of_barley: "",
+        ..SanitizeFileNameOptions::DEFAULT
+    };
+    let name = sanitize_with_options(file_name, &options);
+    if name.is_empty() {
+        fallback.to_string()
+    } else {
+        name
+    }
 }
 
 #[derive(Debug, Deserialize)]
