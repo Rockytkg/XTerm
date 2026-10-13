@@ -132,7 +132,6 @@ impl ConnectionProfile {
         }
     }
 
-    #[allow(dead_code)]
     fn serial_details(&self) -> Option<&ConnectionProfileSerialDetails> {
         match &self.details {
             ConnectionProfileDetails::Serial(details) => Some(details),
@@ -359,9 +358,9 @@ pub(crate) fn connection_create(
         .field("protocol", &profile.protocol)
         .field("name", &profile.name)
         .info();
-    normalize_connection_profile(state.inner(), &mut profile)?;
     profile.id = profile.id.trim().to_string();
     let mut store = state.store();
+    normalize_connection_profile(&store, &mut profile)?;
     if profile.id.is_empty() || store.connection_by_id(&profile.id)?.is_some() {
         profile.id = ids::new_id();
     }
@@ -386,20 +385,17 @@ pub(crate) fn connection_update(
         .info();
     profile.id = id;
     let requested_protocol = normalize_connection_protocol(&profile.protocol)?;
-    let existing = {
-        let store = state.store();
-        store
-            .connection_by_id(&profile.id)?
-            .ok_or_else(|| format!("connection '{}' not found", profile.id))?
-    };
+    let store = state.store();
+    let existing = store
+        .connection_by_id(&profile.id)?
+        .ok_or_else(|| format!("connection '{}' not found", profile.id))?;
     let current_protocol = normalize_connection_protocol(&existing.protocol)?;
     if requested_protocol != current_protocol {
         return Err("connection protocol cannot be changed".to_string());
     }
     profile.protocol = requested_protocol;
-    normalize_connection_profile(state.inner(), &mut profile)?;
+    normalize_connection_profile(&store, &mut profile)?;
     let stored = StoredConnection::from(&profile);
-    let store = state.store();
     let found = store.update_connection(&profile.id, &stored)?;
     if !found {
         return Err(format!("connection '{}' not found", profile.id));
@@ -492,7 +488,7 @@ fn connection_profile_by_id(
     stored
         .map(|stored| {
             let mut profile = connection_profile_from_stored(connection_id.to_string(), stored);
-            normalize_connection_profile_in_store(&store, &mut profile)?;
+            normalize_connection_profile(&store, &mut profile)?;
             Ok(profile)
         })
         .transpose()
@@ -530,7 +526,7 @@ fn update_connection_credential_in_store(
             details.saved_credential_id = credential_id.map(str::to_string);
         }
     }
-    normalize_connection_profile_in_store(store, &mut profile)?;
+    normalize_connection_profile(store, &mut profile)?;
     let stored = StoredConnection::from(&profile);
     if !store.update_connection(&profile.id, &stored)? {
         return Err(format!("connection '{}' not found", profile.id));
@@ -538,7 +534,7 @@ fn update_connection_credential_in_store(
     Ok(())
 }
 
-fn normalize_connection_profile_in_store(
+fn normalize_connection_profile(
     store: &Store,
     connection: &mut ConnectionProfile,
 ) -> Result<(), String> {
@@ -577,24 +573,6 @@ fn connection_credential_metadata(
         }
         _ => Ok(None),
     }
-}
-
-fn normalize_connection_profile(
-    state: &AppState,
-    connection: &mut ConnectionProfile,
-) -> Result<(), String> {
-    let protocol = normalize_connection_protocol_kind(&connection.protocol)?;
-    connection.protocol = protocol.as_str().to_string();
-    clear_protocol_scoped_fields(connection);
-    let credential = connection_credential_metadata(&state.store(), connection)?;
-    apply_connection_defaults(
-        connection,
-        credential.as_ref().map(|value| value.cred_type()),
-    );
-    if protocol == ProtocolKind::Ssh && connection.user.trim().is_empty() {
-        return Err("SSH username is required".to_string());
-    }
-    Ok(())
 }
 
 fn normalize_connection_protocol(protocol: &str) -> Result<String, String> {
