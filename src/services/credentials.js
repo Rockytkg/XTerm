@@ -8,22 +8,35 @@ const runCredentialRequest = createServiceRunner({
   module: "credentials",
 });
 
-export async function loadCredentials() {
-  const value = await runCredentialRequest("credentials_list", undefined, {
+let credentialsListRequest = null;
+let credentialUsagesRequest = null;
+
+export function loadCredentials() {
+  if (credentialsListRequest) return credentialsListRequest;
+  credentialsListRequest = runCredentialRequest("credentials_list", undefined, {
     action: "credentials.list",
     level: "debug",
     successLevel: "debug",
-  });
-  return Array.isArray(value) ? value : [];
+  })
+    .then((value) => (Array.isArray(value) ? value : []))
+    .finally(() => {
+      credentialsListRequest = null;
+    });
+  return credentialsListRequest;
 }
 
-export async function loadCredentialUsages() {
-  const value = await runCredentialRequest("credentials_usages", undefined, {
+export function loadCredentialUsages() {
+  if (credentialUsagesRequest) return credentialUsagesRequest;
+  credentialUsagesRequest = runCredentialRequest("credentials_usages", undefined, {
     action: "credentials.usages",
     level: "debug",
     successLevel: "debug",
-  });
-  return Array.isArray(value) ? value : [];
+  })
+    .then((value) => (Array.isArray(value) ? value : []))
+    .finally(() => {
+      credentialUsagesRequest = null;
+    });
+  return credentialUsagesRequest;
 }
 
 export function createCredential(credential) {

@@ -8,11 +8,17 @@ const runWorkspaceRequest = createServiceRunner({
   module: "workspace",
 });
 
+let workspaceBootstrapRequest = null;
+
 export function loadWorkspaceBootstrap() {
-  return runWorkspaceRequest("workspace_bootstrap", undefined, {
+  if (workspaceBootstrapRequest) return workspaceBootstrapRequest;
+  workspaceBootstrapRequest = runWorkspaceRequest("workspace_bootstrap", undefined, {
     action: "workspace.bootstrap",
     level: "info",
+  }).finally(() => {
+    workspaceBootstrapRequest = null;
   });
+  return workspaceBootstrapRequest;
 }
 
 export function getConnection(id) {
