@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import { createLogger } from "../utils/logger";
 import { createRuntimeId } from "../utils/runtimeIds";
 import { getSetting, setPreference } from "../services/preferences";
+import { createJsonSettingPersistence } from "../services/jsonSettingPersistence";
 import { fetchScriptText } from "../services/scripting/scriptFileLoader";
 import { DEFAULT_SCRIPT_BODY } from "../services/scripting/scriptTemplate";
 import {
@@ -18,7 +19,6 @@ const scriptsLogger = createLogger("frontend.scripting.store");
 const SCRIPTS_SETTING_KEY = "userScripts";
 const AUTHOR_PROFILE_SETTING_KEY = "scriptAuthorProfile";
 const UPDATE_INTERVAL_SETTING_KEY = "scriptUpdateIntervalHours";
-const PERSIST_DEBOUNCE_MS = 300;
 const DEFAULT_UPDATE_INTERVAL_HOURS = 24;
 
 // 元数据以脚本头（==XTermScript== 块）为准：这里只负责把代码里的头解析出来，
@@ -45,43 +45,22 @@ function normalizeScript(raw) {
 }
 
 export const useScriptsStore = defineStore("scripts", () => {
-  const scripts = ref([]);
-  const loaded = ref(false);
+  const scriptsPersistence = createJsonSettingPersistence({
+    key: SCRIPTS_SETTING_KEY,
+    normalize: normalizeScript,
+    onLoadError: (error) => scriptsLogger.warn("failed to load user scripts:", error),
+    onPersistError: (error) => scriptsLogger.warn("failed to persist user scripts:", error),
+    afterLoad: () => Promise.all([loadAuthorProfile(), loadUpdateInterval()]),
+    // 仅首次加载后静默检查一轮，不阻塞界面；此后改间隔只重排定时器。
+    onLoaded: () => scheduleUpdateChecks({ immediate: true }),
+  });
+  const scripts = scriptsPersistence.items;
+  const loaded = scriptsPersistence.loaded;
   const authorProfile = ref({ author: "", homepage: "" });
   const updateIntervalHours = ref(DEFAULT_UPDATE_INTERVAL_HOURS);
   const updateChecking = ref(false);
-  let persistTimer = null;
-  let persistChain = Promise.resolve();
   let updateTimer = null;
-  let loadPromise = null;
   let updateCheckPromise = null;
-
-  function loadScripts() {
-    if (loaded.value) return Promise.resolve();
-    if (loadPromise) return loadPromise;
-    loadPromise = loadScriptsOnce().finally(() => {
-      loadPromise = null;
-    });
-    return loadPromise;
-  }
-
-  async function loadScriptsOnce() {
-    try {
-      const raw = await getSetting(SCRIPTS_SETTING_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        scripts.value = Array.isArray(parsed) ? parsed.map(normalizeScript).filter(Boolean) : [];
-      }
-    } catch (error) {
-      // 读取失败（首次运行无此 key、JSON 损坏）按空列表处理，不阻塞界面。
-      scriptsLogger.warn("failed to load user scripts:", error);
-      scripts.value = [];
-    }
-    await Promise.all([loadAuthorProfile(), loadUpdateInterval()]);
-    loaded.value = true;
-    // 仅首次加载后静默检查一轮，不阻塞界面；此后改间隔只重排定时器。
-    scheduleUpdateChecks({ immediate: true });
-  }
 
   async function loadAuthorProfile() {
     try {
@@ -142,40 +121,12 @@ export const useScriptsStore = defineStore("scripts", () => {
     if (immediate) void checkAllUpdates();
   }
 
-  function persistNow() {
-    if (persistTimer) {
-      clearTimeout(persistTimer);
-      persistTimer = null;
-    }
-    const value = JSON.stringify(scripts.value);
-    const request = persistChain
-      .catch(() => {})
-      .then(() => setPreference(SCRIPTS_SETTING_KEY, value));
-    persistChain = request;
-    return request;
-  }
-
-  function schedulePersist() {
-    if (persistTimer) clearTimeout(persistTimer);
-    persistTimer = setTimeout(() => {
-      persistTimer = null;
-      void persistNow().catch((error) => {
-        scriptsLogger.warn("failed to persist user scripts:", error);
-      });
-    }, PERSIST_DEBOUNCE_MS);
-  }
-
   onScopeDispose(() => {
     if (updateTimer) {
       clearInterval(updateTimer);
       updateTimer = null;
     }
-    // debounce 窗口内还有未落盘的变更时，退出前 flush 一次，避免修改丢失。
-    if (persistTimer) {
-      void persistNow().catch((error) => {
-        scriptsLogger.warn("failed to persist user scripts:", error);
-      });
-    }
+    scriptsPersistence.flushPendingPersist();
   });
 
   function replaceScript(id, updater) {
@@ -189,7 +140,7 @@ export const useScriptsStore = defineStore("scripts", () => {
     });
     if (!next) return null;
     scripts.value = scripts.value.map((script, i) => (i === index ? next : script));
-    schedulePersist();
+    scriptsPersistence.schedulePersist();
     return next;
   }
 
@@ -198,7 +149,7 @@ export const useScriptsStore = defineStore("scripts", () => {
     if (index < 0) return null;
     const next = { ...scripts.value[index], ...patch };
     scripts.value = scripts.value.map((script, i) => (i === index ? next : script));
-    schedulePersist();
+    scriptsPersistence.schedulePersist();
     return next;
   }
 
@@ -210,7 +161,7 @@ export const useScriptsStore = defineStore("scripts", () => {
       createdAt: Date.now(),
     });
     scripts.value = [script, ...scripts.value];
-    schedulePersist();
+    scriptsPersistence.schedulePersist();
     return script;
   }
 
@@ -224,7 +175,7 @@ export const useScriptsStore = defineStore("scripts", () => {
       createdAt: Date.now(),
     });
     scripts.value = [script, ...scripts.value];
-    schedulePersist();
+    scriptsPersistence.schedulePersist();
     return script;
   }
 
@@ -234,7 +185,7 @@ export const useScriptsStore = defineStore("scripts", () => {
 
   function removeScript(id) {
     scripts.value = scripts.value.filter((script) => script.id !== id);
-    schedulePersist();
+    scriptsPersistence.schedulePersist();
   }
 
   function getScript(id) {
@@ -306,9 +257,9 @@ export const useScriptsStore = defineStore("scripts", () => {
     createScript,
     getScript,
     importScript,
-    loadScripts,
+    loadScripts: scriptsPersistence.load,
     loaded,
-    persistNow,
+    persistNow: scriptsPersistence.persistNow,
     removeScript,
     saveAuthorProfile,
     scripts,
