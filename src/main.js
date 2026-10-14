@@ -33,6 +33,11 @@ if (isWebKitGtkUserAgent(navigator.userAgent)) {
 const FONT_LOAD_TIMEOUT_MS = 3000;
 const STYLE_READY_TIMEOUT_MS = 2500;
 const STYLE_PROBE_INTERVAL_MS = 32;
+// 首屏门控总超时。initializePreferences（偏好 IPC）与 router.isReady（首屏路由
+// 懒加载 chunk）任一方悬挂都会让窗口永远停在 visible:false，用户只能看到
+// “点了没反应”。正常路径远低于 1s，8s 已覆盖慢盘冷启动等极端情况；超时后放弃
+// 门控、直接显窗并弹 fatal overlay，比无限等待更可恢复。
+const STARTUP_GATE_TIMEOUT_MS = 8000;
 
 function nextAnimationFrame() {
   return new Promise((resolve) => requestAnimationFrame(resolve));
@@ -124,11 +129,9 @@ async function showMainWindow() {
   }
 }
 
-async function mountMainWindow() {
-  // 启动即同步后端持久化的日志级别，避免生产模式前端门控与后端漂移；
-  // 失败不阻塞启动（保持默认级别）。
-  getLogLevel().catch(noop);
-
+// 首屏门控的关键路径：偏好水合 + 应用挂载 + 首屏路由就绪（含懒加载 chunk）。
+// 单独成函数以便在 mountMainWindow 里整体套上 STARTUP_GATE_TIMEOUT_MS 兜底。
+async function runStartupGate() {
   try {
     await initializePreferences();
   } catch (error) {
@@ -140,6 +143,35 @@ async function mountMainWindow() {
   app.mount("#app");
 
   await router.isReady();
+}
+
+async function mountMainWindow() {
+  // 启动即同步后端持久化的日志级别，避免生产模式前端门控与后端漂移；
+  // 失败不阻塞启动（保持默认级别）。
+  getLogLevel().catch(noop);
+
+  // 门控链路自身没有上限：Promise.race 套总超时，超时或失败都只记录日志、
+  // 继续走显窗流程，并弹 fatal overlay 给用户“重新加载”出口。字体/样式等待
+  // 已有各自上限，无需包进来。
+  let startupGateTimer;
+  let startupGateTimedOut = false;
+  try {
+    await Promise.race([
+      runStartupGate(),
+      new Promise((_, reject) => {
+        startupGateTimer = window.setTimeout(() => {
+          startupGateTimedOut = true;
+          reject(new Error(`startup gate exceeded ${STARTUP_GATE_TIMEOUT_MS}ms`));
+        }, STARTUP_GATE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    logger.error(startupGateTimedOut ? "startup.gate.timeout" : "startup.gate.failed", error);
+    showFatalErrorOverlay(describeFatalError(error));
+  } finally {
+    window.clearTimeout(startupGateTimer);
+  }
+
   await nextTick();
   await waitForDocumentFonts();
   await waitForGlobalStyles();
