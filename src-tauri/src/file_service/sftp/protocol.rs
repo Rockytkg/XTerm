@@ -14,6 +14,7 @@ use tokio::{
     net::TcpListener,
     sync::{watch, Mutex},
     task::JoinSet,
+    time::Instant,
 };
 
 use crate::{
@@ -21,8 +22,8 @@ use crate::{
     file_service::{
         manager::SharedPassword,
         models::{
-            await_runtime_task, canonical_shared_dir, emit_file_transfer, parse_bind_address,
-            validate_service_config, FileServiceConfig, TransferRegistry,
+            await_runtime_task, canonical_shared_dir, emit_file_service_config, emit_file_transfer,
+            parse_bind_address, validate_service_config, FileServiceConfig, TransferRegistry,
         },
         password::passwords_equal,
     },
@@ -32,6 +33,17 @@ use crate::{
 
 const SFTP_MAX_READ: u32 = 256 * 1024;
 const SFTP_TASK_DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
+/// read/write requests arrive once per client chunk (typically 32 KiB);
+/// emitting a progress event per request would flood the IPC channel on large
+/// transfers.  Progress events go out at most once per interval per transfer
+/// — the registry still counts every byte, and close/Drop always emit the
+/// terminal event, so no accounting or final state is lost.
+const SFTP_PROGRESS_INTERVAL: Duration = Duration::from_millis(80);
+/// A transient accept error (EMFILE/ENFILE under load) only costs a 100 ms
+/// backoff, but a listener failing this many times in a row is dead — its
+/// socket is gone and accept can never succeed again.  The loop then gives up
+/// so the service is reported as stopped instead of retrying forever.
+const SFTP_MAX_ACCEPT_FAILURES: u32 = 50;
 
 pub(crate) struct SftpRuntimeHandle {
     shutdown_tx: watch::Sender<bool>,
@@ -100,8 +112,15 @@ pub(crate) async fn start_runtime(
         app: app.clone(),
         shared,
     };
+    let task_app = app.clone();
+    let stopped_config = config.clone();
     let accept_task = tauri::async_runtime::spawn(async move {
-        accept_loop(listener, Arc::new(server_config), context, shutdown_rx).await;
+        // A failed accept loop means the listener is gone; re-emit the config
+        // (emit_file_service_config forces running=false) so the UI reflects
+        // that the service is no longer running.
+        if accept_loop(listener, Arc::new(server_config), context, shutdown_rx).await {
+            emit_file_service_config(&task_app, stopped_config);
+        }
     });
 
     logging::event("sftp.runtime", "sftp.start.success")
@@ -143,13 +162,17 @@ struct SftpServerContext {
     shared: Arc<TransferRegistry>,
 }
 
+/// Returns true when the loop ended because the listener kept failing
+/// (as opposed to a requested shutdown).
 async fn accept_loop(
     listener: TcpListener,
     config: Arc<server::Config>,
     context: SftpServerContext,
     mut shutdown_rx: watch::Receiver<bool>,
-) {
+) -> bool {
     let mut connections = JoinSet::new();
+    let mut failed = false;
+    let mut consecutive_failures = 0u32;
     loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
@@ -162,10 +185,19 @@ async fn accept_loop(
                         logging::event("sftp.runtime", "sftp.accept.failed")
                             .field("error", error.to_string())
                             .warn();
+                        consecutive_failures += 1;
+                        if consecutive_failures >= SFTP_MAX_ACCEPT_FAILURES {
+                            // The listener has failed continuously across the
+                            // whole backoff window; it cannot recover, so stop
+                            // instead of spinning at the retry interval forever.
+                            failed = true;
+                            break;
+                        }
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         continue;
                     }
                 };
+                consecutive_failures = 0;
                 let handler = SshSession::new(
                     context.root.clone(),
                     context.username.clone(),
@@ -195,6 +227,7 @@ async fn accept_loop(
     }
     connections.abort_all();
     while connections.join_next().await.is_some() {}
+    failed
 }
 
 #[derive(Clone)]
@@ -313,6 +346,20 @@ struct FileHandle {
     path: PathBuf,
     transfer_id: String,
     writable: bool,
+    last_progress_emit: Instant,
+}
+
+impl FileHandle {
+    /// Progress events are throttled to one per interval per transfer; byte
+    /// accounting happens in the registry regardless, and the terminal event
+    /// (close/Drop) bypasses this gate entirely.
+    fn progress_emit_due(&mut self) -> bool {
+        if self.last_progress_emit.elapsed() < SFTP_PROGRESS_INTERVAL {
+            return false;
+        }
+        self.last_progress_emit = Instant::now();
+        true
+    }
 }
 
 struct SftpSession {
@@ -459,6 +506,9 @@ impl Handler for SftpSession {
                 path,
                 transfer_id,
                 writable,
+                // The start event above doubles as the first progress event;
+                // counting the interval from here throttles the first chunks.
+                last_progress_emit: Instant::now(),
             },
         );
         Ok(Handle { id: _id, handle })
@@ -471,7 +521,7 @@ impl Handler for SftpSession {
         offset: u64,
         len: u32,
     ) -> Result<Data, Self::Error> {
-        let file_handle = self.handles.get(&handle).ok_or(StatusCode::Failure)?;
+        let file_handle = self.handles.get_mut(&handle).ok_or(StatusCode::Failure)?;
         let mut file = fs::File::open(&file_handle.path)
             .await
             .map_err(|_| StatusCode::NoSuchFile)?;
@@ -491,7 +541,9 @@ impl Handler for SftpSession {
             .shared
             .record_progress(&file_handle.transfer_id, size as u64)
         {
-            emit_file_transfer(&self.app, event);
+            if file_handle.progress_emit_due() {
+                emit_file_transfer(&self.app, event);
+            }
         }
         Ok(Data { id, data })
     }
@@ -503,7 +555,7 @@ impl Handler for SftpSession {
         offset: u64,
         data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
-        let file_handle = self.handles.get(&handle).ok_or(StatusCode::Failure)?;
+        let file_handle = self.handles.get_mut(&handle).ok_or(StatusCode::Failure)?;
         if !file_handle.writable {
             return Err(StatusCode::PermissionDenied);
         }
@@ -524,7 +576,9 @@ impl Handler for SftpSession {
             .shared
             .record_progress(&file_handle.transfer_id, data.len() as u64)
         {
-            emit_file_transfer(&self.app, event);
+            if file_handle.progress_emit_due() {
+                emit_file_transfer(&self.app, event);
+            }
         }
         Ok(Self::status(id, StatusCode::Ok, "Ok"))
     }
@@ -679,3 +733,29 @@ async fn restrict_key_permissions(path: &std::path::Path) {
 
 #[cfg(not(unix))]
 async fn restrict_key_permissions(_path: &std::path::Path) {}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use tokio::time::Instant;
+
+    use super::{FileHandle, SFTP_PROGRESS_INTERVAL};
+
+    #[test]
+    fn progress_events_are_throttled_per_transfer() {
+        let mut handle = FileHandle {
+            path: PathBuf::new(),
+            transfer_id: String::new(),
+            writable: false,
+            last_progress_emit: Instant::now(),
+        };
+        // The start event is emitted by `open`, so the first chunk inside the
+        // interval must not emit again.
+        assert!(!handle.progress_emit_due());
+        handle.last_progress_emit = Instant::now() - SFTP_PROGRESS_INTERVAL;
+        assert!(handle.progress_emit_due());
+        // Firing re-arms the gate: the next chunk is throttled again.
+        assert!(!handle.progress_emit_due());
+    }
+}
