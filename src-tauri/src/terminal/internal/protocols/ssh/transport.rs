@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use std::time::Duration;
 
 use super::{
     core::{SessionWorkerEvent, TransportCommand, TransportCommandOutcome, WRITE_STALL_TIMEOUT},
@@ -102,11 +103,23 @@ pub(super) fn spawn_ssh_transport_actor(
 }
 
 async fn disconnect_ssh_session(session: &SharedSshSession) -> Result<(), russh::Error> {
-    session
-        .lock()
-        .await
-        .disconnect(russh::Disconnect::ByApplication, "", "")
-        .await
+    // 死网络下 disconnect 可能无限挂起；关停必须有界，否则 actor 任务
+    // 滞留到 TCP 超时才消失。
+    match tokio::time::timeout(Duration::from_secs(5), async {
+        session
+            .lock()
+            .await
+            .disconnect(russh::Disconnect::ByApplication, "", "")
+            .await
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            log::warn!(target: "ssh.transport", "SSH session disconnect timed out; giving up");
+            Ok(())
+        }
+    }
 }
 
 async fn handle_ssh_transport_command(
@@ -144,7 +157,8 @@ async fn handle_ssh_transport_command(
             Ok(TransportCommandOutcome::Continue)
         }
         TransportCommand::Close => {
-            let _ = write_half.close().await;
+            // 与 disconnect_ssh_session 同理：死网络下 close 可能挂住 actor。
+            let _ = tokio::time::timeout(Duration::from_secs(5), write_half.close()).await;
             Ok(TransportCommandOutcome::Close)
         }
     }
