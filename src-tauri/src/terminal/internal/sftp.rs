@@ -491,10 +491,31 @@ fn spawn_registered_sftp_transfer(
     record: SftpTransferRecord,
 ) -> Result<(), String> {
     let control = sftp_transfer_store().lock().start(record.clone())?;
+    let supervisor_transfer_id = record.transfer_id.clone();
     let app_for_task = app.clone();
-    tokio::spawn(async move {
+    let worker = tokio::spawn(async move {
         let state = app_for_task.state::<AppState>();
         run_sftp_transfer_task(app_for_task.clone(), state.inner(), record, control).await;
+    });
+    tokio::spawn(async move {
+        if let Err(error) = worker.await {
+            let record = sftp_transfer_store()
+                .lock()
+                .remove(&supervisor_transfer_id)
+                .ok();
+            let (transferred, total) = record
+                .map(|record| (record.transferred, record.total))
+                .unwrap_or((0, 0));
+            log::warn!(target: "terminal.sftp", "SFTP transfer task '{supervisor_transfer_id}' ended with a task error: {error}");
+            emit_sftp_transfer_progress(
+                &app,
+                &supervisor_transfer_id,
+                transferred,
+                total,
+                true,
+                Some(format!("transfer task failed unexpectedly: {error}")),
+            );
+        }
     });
     Ok(())
 }
