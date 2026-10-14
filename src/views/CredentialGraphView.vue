@@ -75,9 +75,8 @@ const DRAFT_EDGE_ID = "__relationship-draft-edge";
 const SELECTION_MENU_HOLD_MS = 520;
 const SELECTION_MENU_MOVE_TOLERANCE = 10;
 
-const graphConnections = computed(() => connections.value);
 const graphConnectionIds = computed(
-  () => new Set(graphConnections.value.map((connection) => connection.id)),
+  () => new Set(connections.value.map((connection) => connection.id)),
 );
 const topology = computed(() => buildCredentialTopology());
 const topologyNodeMap = computed(
@@ -168,7 +167,9 @@ async function loadGraphState(snapshot = null) {
     credentials.value = context.credentials;
     credentialUsagesList.value = context.usages;
     const loadedConnections = context.connections;
-    connections.value = loadedConnections.filter((connection) => isCredentialConnection(connection));
+    connections.value = loadedConnections.filter((connection) =>
+      isCredentialConnection(connection),
+    );
   } catch (error) {
     logger.error("graph.load.failed", error);
     graphError.value = String(error);
@@ -842,7 +843,7 @@ function buildCredentialTopology() {
   const spacing = { connection: 122, credential: 112 };
   const usedCredentialIds = new Set();
 
-  for (const connection of graphConnections.value) {
+  for (const connection of connections.value) {
     nodes.push(
       createNode({
         id: connectionNodeId(connection.id),

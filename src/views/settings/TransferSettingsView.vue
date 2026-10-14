@@ -7,6 +7,7 @@ import UiSwitch from "../../components/UiSwitch.vue";
 import { useToasts } from "../../composables/useToasts";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { createLogger } from "../../utils/logger";
+import { normalizeNumberPreference } from "../../utils/numberPreference";
 
 const { t } = useI18n();
 const { showToast } = useToasts();
@@ -33,11 +34,6 @@ watch(
   },
   { immediate: true },
 );
-
-function normalizeNumberPreference(key, fallback, min, max) {
-  const value = Math.round(Number(preferences.value[key]));
-  preferences.value[key] = Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
-}
 
 function revertFileServiceCredentialDraft() {
   fileServiceCredentialDraft.username = fileServiceConfig.value.username || "";
@@ -155,7 +151,16 @@ async function saveFileServicePassword() {
           step="262144"
           class="ui-input ui-input-inline"
           :disabled="!preferences.terminalTrzsz"
-          @change="normalizeNumberPreference('transferMaxChunkSize', 10485760, 262144, 67108864)"
+          @change="
+            normalizeNumberPreference(
+              preferences,
+              'transferMaxChunkSize',
+              10485760,
+              262144,
+              67108864,
+              true,
+            )
+          "
         >
       </div>
       <div class="settings-toggle">
@@ -171,7 +176,16 @@ async function saveFileServicePassword() {
           step="500"
           class="ui-input ui-input-inline"
           :disabled="!preferences.terminalTrzsz"
-          @change="normalizeNumberPreference('transferDragInitTimeout', 3000, 1000, 30000)"
+          @change="
+            normalizeNumberPreference(
+              preferences,
+              'transferDragInitTimeout',
+              3000,
+              1000,
+              30000,
+              true,
+            )
+          "
         >
       </div>
       <div class="settings-toggle">

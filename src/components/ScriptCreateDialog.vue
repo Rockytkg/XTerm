@@ -24,7 +24,6 @@ const scriptsStore = useScriptsStore();
 
 const form = reactive({ name: "", author: "", homepage: "", description: "" });
 const fieldErrors = ref({});
-const nameInput = ref(null);
 
 watch(
   () => props.open,
@@ -114,7 +113,6 @@ function submit() {
               <span class="scripts-required-mark">*</span>
             </span>
             <input
-              ref="nameInput"
               v-model="form.name"
               class="ui-input"
               :placeholder="t('scripts.fields.namePlaceholder')"

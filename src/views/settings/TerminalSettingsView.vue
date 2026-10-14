@@ -12,6 +12,28 @@ import { normalizeNumberPreference } from "../../utils/numberPreference";
 import { TERMINAL_TYPE_OPTIONS } from "../../utils/terminalSessionOptions";
 import { TERMINAL_THEME_NAMES } from "../../utils/terminalColors";
 
+// 开关项描述表提升为常量：v-for 遍历内联数组字面量会在每次渲染重建整个数组。
+const terminalToggleItems = [
+  ["terminalAltClickMovesCursor", "altClickMovesCursor", "altClickMovesCursorHint"],
+  ["terminalRightClickSelectsWord", "rightClickSelectsWord", "rightClickSelectsWordHint"],
+  ["terminalScrollOnUserInput", "scrollOnUserInput", "scrollOnUserInputHint"],
+  ["terminalScrollOnEraseInDisplay", "scrollOnEraseInDisplay", "scrollOnEraseInDisplayHint"],
+  [
+    "terminalDrawBoldTextInBrightColors",
+    "drawBoldTextInBrightColors",
+    "drawBoldTextInBrightColorsHint",
+  ],
+  ["terminalCustomGlyphs", "customGlyphs", "customGlyphsHint"],
+  ["terminalRescaleOverlappingGlyphs", "rescaleOverlappingGlyphs", "rescaleOverlappingGlyphsHint"],
+  ["terminalMacOptionIsMeta", "macOptionIsMeta", "macOptionIsMetaHint"],
+  [
+    "terminalMacOptionClickForcesSelection",
+    "macOptionClickForcesSelection",
+    "macOptionClickForcesSelectionHint",
+  ],
+  ["terminalWebgl", "webgl", "webglHint"],
+];
+
 const { t } = useI18n();
 const { preferences } = storeToRefs(useWorkspaceStore());
 const { systemFonts } = useSystemFonts(() => preferences.value.terminalFontFamily);
@@ -209,7 +231,9 @@ function normalizeTerminalScrollback() {
           max="20"
           step="0.5"
           class="ui-input ui-input-inline"
-          @change="normalizeNumberPreference(preferences, 'terminalFastScrollSensitivity', 5, 1, 20)"
+          @change="
+            normalizeNumberPreference(preferences, 'terminalFastScrollSensitivity', 5, 1, 20)
+          "
         >
       </div>
       <div class="settings-toggle">
@@ -224,7 +248,9 @@ function normalizeTerminalScrollback() {
           max="1000"
           step="50"
           class="ui-input ui-input-inline"
-          @change="normalizeNumberPreference(preferences, 'terminalSmoothScrollDuration', 0, 0, 1000, true)"
+          @change="
+            normalizeNumberPreference(preferences, 'terminalSmoothScrollDuration', 0, 0, 1000, true)
+          "
         >
       </div>
       <div class="settings-toggle">
@@ -243,34 +269,7 @@ function normalizeTerminalScrollback() {
         >
       </div>
       <div
-        v-for="item in [
-          ['terminalAltClickMovesCursor', 'altClickMovesCursor', 'altClickMovesCursorHint'],
-          ['terminalRightClickSelectsWord', 'rightClickSelectsWord', 'rightClickSelectsWordHint'],
-          ['terminalScrollOnUserInput', 'scrollOnUserInput', 'scrollOnUserInputHint'],
-          [
-            'terminalScrollOnEraseInDisplay',
-            'scrollOnEraseInDisplay',
-            'scrollOnEraseInDisplayHint',
-          ],
-          [
-            'terminalDrawBoldTextInBrightColors',
-            'drawBoldTextInBrightColors',
-            'drawBoldTextInBrightColorsHint',
-          ],
-          ['terminalCustomGlyphs', 'customGlyphs', 'customGlyphsHint'],
-          [
-            'terminalRescaleOverlappingGlyphs',
-            'rescaleOverlappingGlyphs',
-            'rescaleOverlappingGlyphsHint',
-          ],
-          ['terminalMacOptionIsMeta', 'macOptionIsMeta', 'macOptionIsMetaHint'],
-          [
-            'terminalMacOptionClickForcesSelection',
-            'macOptionClickForcesSelection',
-            'macOptionClickForcesSelectionHint',
-          ],
-          ['terminalWebgl', 'webgl', 'webglHint'],
-        ]"
+        v-for="item in terminalToggleItems"
         :key="item[0]"
         class="settings-toggle"
       >
