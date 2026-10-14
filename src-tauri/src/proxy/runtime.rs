@@ -796,6 +796,8 @@ where
 {
     // Keep the tunnel buffer on the task stack; every CONNECT tunnel runs this
     // loop, so avoiding a heap allocation here matters under connection churn.
+    // 不用 tokio::io::copy_bidirectional：它只在结束时返回双向总字节数，而这里
+    // 每块都要 record_upload/record_download 喂给 1s 统计循环的实时速率。
     let mut buffer = [0_u8; TUNNEL_BUFFER_SIZE];
     loop {
         let bytes_read = reader.read(&mut buffer).await?;
