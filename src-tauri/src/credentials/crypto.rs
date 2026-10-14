@@ -158,3 +158,27 @@ fn hex_value(byte: u8) -> Result<u8, String> {
         _ => Err("hex value contains invalid characters".to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_hex, encode_hex};
+
+    #[test]
+    fn hex_round_trip_preserves_bytes() {
+        let bytes: Vec<u8> = (0u8..=255).collect();
+        assert_eq!(decode_hex(&encode_hex(&bytes)).unwrap(), bytes);
+    }
+
+    #[test]
+    fn hex_encoding_uses_lowercase_pairs() {
+        assert_eq!(encode_hex(&[0x00, 0xff, 0xab]), "00ffab");
+        assert_eq!(decode_hex("00FFab").unwrap(), vec![0x00, 0xff, 0xab]);
+    }
+
+    #[test]
+    fn hex_decode_rejects_malformed_input() {
+        assert!(decode_hex("abc").is_err(), "odd length");
+        assert!(decode_hex("zz").is_err(), "invalid characters");
+        assert!(decode_hex("").unwrap().is_empty());
+    }
+}
