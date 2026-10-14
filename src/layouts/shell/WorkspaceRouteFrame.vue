@@ -7,6 +7,7 @@ import { useI18n } from "vue-i18n";
 import WorkspaceSidebar from "../../components/WorkspaceSidebar.vue";
 import WorkspaceTabbar from "../../components/WorkspaceTabbar.vue";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { readMotionDurationMs } from "../../utils/motion";
 
 const props = defineProps({
   handleWorkspaceSplitLayout: { type: Function, default: () => { } },
@@ -40,7 +41,9 @@ const isWorkspace = computed(() => route.name === "workspace");
 const isShellWorkspace = computed(() => isWorkspace.value && activeTab.value === "shell");
 const showRightSidebar = computed(() => isShellWorkspace.value && props.rightSidebarOpen);
 const rightSidebarPanel = ref(null);
-const SIDEBAR_SLIDE_MS = 150;
+// 关闭等待时长与 gutter 的 CSS 过渡时长同源（--motion-duration-slow，当前
+// 180ms）：等淡出过渡走完再 collapse；token 调整时 JS 无需跟随改动。
+const SIDEBAR_SLIDE_MS = readMotionDurationMs("--motion-duration-slow", 150);
 const sidebarExpanded = ref(showRightSidebar.value);
 const sidebarCollapsible = ref(!showRightSidebar.value);
 const sidebarVisible = ref(showRightSidebar.value);
