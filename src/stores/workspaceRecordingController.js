@@ -1,4 +1,4 @@
-import { ref } from "vue";
+import { onScopeDispose, ref } from "vue";
 import { i18n } from "../i18n";
 import { invokeLoggedIpc } from "../services/ipc/core";
 import { registerRecordingBridge } from "../services/scripting/bridges";
@@ -200,12 +200,15 @@ export function createWorkspaceRecordingController() {
   }
 
   // 注册给脚本引擎：脚本经 recordingBridge 按会话 id 启停记录，
-  // 路径仍由原生保存对话框决定。
-  registerRecordingBridge({
+  // 路径仍由原生保存对话框决定。返回值是注销函数：store 作用域销毁
+  // （HMR/测试重建）时必须注销，否则旧 controller 残留至下一次注册才覆盖。
+  // 本函数在 store setup 中同步调用，onScopeDispose 绑定到 store 的作用域。
+  const disposeRecordingBridge = registerRecordingBridge({
     start: startSessionRecording,
     stop: stopSessionRecording,
     isActive: isRecording,
   });
+  onScopeDispose(disposeRecordingBridge);
 
   return {
     recordTerminalChunk,
