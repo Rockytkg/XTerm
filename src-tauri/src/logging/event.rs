@@ -53,6 +53,13 @@ impl LogEvent {
     }
 
     fn emit(self, level: Level) {
+        // 级别未启用时跳过整行 format! 与字段分配的消费：log_enabled! 的判定
+        // 与 log! 宏自身的调用点门控完全一致（level <= max_level()；本应用的
+        // fern 管线中 Webview 目标的 enabled 恒为 true，per-crate 钳制只发生在
+        // 文件目标 dispatch 内部、不受影响），因此被跳过的记录本来也不会写出。
+        if !log::log_enabled!(target: self.scope, level) {
+            return;
+        }
         let mut line = format!("event=\"{}\"", escape_log_value(&self.action));
         for (key, value) in self.fields {
             line.push(' ');

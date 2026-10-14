@@ -46,6 +46,15 @@ enum SuccessLogLevel {
     Trace,
 }
 
+impl SuccessLogLevel {
+    fn level(self) -> log::Level {
+        match self {
+            Self::Info => log::Level::Info,
+            Self::Trace => log::Level::Trace,
+        }
+    }
+}
+
 struct ChannelCommand<'a> {
     session_id: &'a str,
     channel_id: Option<u64>,
@@ -120,16 +129,29 @@ impl<'a> SessionCommandBus<'a> {
         request: ChannelCommand<'_>,
         log_details: impl FnOnce(crate::logging::LogEvent) -> crate::logging::LogEvent,
     ) -> Result<(), TerminalApiError> {
-        let log = logging::event("terminal.session_service", request.event_name)
-            .field("session_id", request.session_id)
-            .maybe_field("channel_id", request.channel_id);
-        if !self.channel_matches(request.session_id, request.channel_id, request.requirement) {
-            log_details(log).field("cause", "inactive_channel").debug();
+        let channel_matches =
+            self.channel_matches(request.session_id, request.channel_id, request.requirement);
+        // write/resize 每按键/每帧都会经过这里：级别未启用时不构建 LogEvent 本身，
+        // 只留下 send。emit 内部还有同一谓词的短路，日志产出语义不变。
+        let level = if channel_matches {
+            request.success_level.level()
+        } else {
+            log::Level::Debug
+        };
+        if log::log_enabled!(target: "terminal.session_service", level) {
+            let log = logging::event("terminal.session_service", request.event_name)
+                .field("session_id", request.session_id)
+                .maybe_field("channel_id", request.channel_id);
+            if !channel_matches {
+                log_details(log).field("cause", "inactive_channel").debug();
+                return Ok(());
+            }
+            match request.success_level {
+                SuccessLogLevel::Info => log_details(log).info(),
+                SuccessLogLevel::Trace => log_details(log).trace(),
+            }
+        } else if !channel_matches {
             return Ok(());
-        }
-        match request.success_level {
-            SuccessLogLevel::Info => log_details(log).info(),
-            SuccessLogLevel::Trace => log_details(log).trace(),
         }
         self.send(request.session_id, request.command)
     }
