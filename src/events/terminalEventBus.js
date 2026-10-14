@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { createEventBus } from "../utils/createEventBus";
+import { createEventBridge } from "../utils/eventBridge";
 import { createLogger } from "../utils/logger";
 
 const logger = createLogger("frontend.terminal.events");
@@ -12,90 +12,27 @@ export const TERMINAL_EVENTS = Object.freeze({
   SFTP_TRANSFER_PROGRESS: "sftp.transfer_progress",
 });
 
-const terminalEventBus = createEventBus({ logger });
-
-let bridgeStartPromise = null;
-let bridgeStopFns = [];
-/** Number of consumers (observation subscriptions) the bridge feeds. */
-let bridgeConsumers = 0;
-
-async function startTerminalEventBridge() {
-  if (bridgeStartPromise) return bridgeStartPromise;
-  logger.info("bridge.start", {
-    consumerCount: bridgeConsumers,
-  });
-  bridgeStartPromise = listen("terminal-event", (event) => {
-    const name = event?.payload?.name;
-    if (!name) return;
-    terminalEventBus.emit(name, event.payload.payload);
-  })
-    .then((unlisten) => {
-      bridgeStopFns.push(unlisten);
-      logger.info("bridge.started", {
-        consumerCount: bridgeConsumers,
-      });
-    })
-    .catch((error) => {
-      bridgeStartPromise = null;
-      while (bridgeStopFns.length > 0) {
-        const unlisten = bridgeStopFns.pop();
-        try {
-          unlisten?.();
-        } catch (stopError) {
-          logger.error("terminalEventBridge cleanup failed:", stopError);
-        }
-      }
-      throw error;
-    });
-  return bridgeStartPromise;
-}
-
-function stopTerminalEventBridge() {
-  if (bridgeConsumers > 0) return;
-  logger.info("bridge.stop");
-  while (bridgeStopFns.length > 0) {
-    const unlisten = bridgeStopFns.pop();
-    try {
-      unlisten?.();
-    } catch (error) {
-      logger.error("terminalEventBridge unsubscribe failed:", error);
-    }
-  }
-  bridgeStartPromise = null;
-}
-
-/** Retain the native bridge for one observation subscription. */
-async function retainBridge() {
-  bridgeConsumers += 1;
-  try {
-    await startTerminalEventBridge();
-  } catch (error) {
-    bridgeConsumers = Math.max(0, bridgeConsumers - 1);
-    throw error;
-  }
-  return () => {
-    bridgeConsumers = Math.max(0, bridgeConsumers - 1);
-    if (bridgeConsumers === 0) {
-      stopTerminalEventBridge();
-    }
-  };
-}
+// 原生桥的生命周期（注册先行防观察间隙、start in-flight 去重、末订阅释放时
+// 停桥）由共享的 createEventBridge 承担；这里只保留按事件名过滤的薄封装与
+// 生命周期日志。
+const observeTerminalEnvelope = createEventBridge({
+  eventName: "terminal-event",
+  logName: "terminalEventBridge",
+  logger,
+  subscribe: listen,
+  onStart: (consumerCount) => logger.info("bridge.start", { consumerCount }),
+  onStarted: (consumerCount) => logger.info("bridge.started", { consumerCount }),
+  onStop: () => logger.info("bridge.stop"),
+});
 
 export async function observeTerminalEvent(type, handler) {
-  // Use a per-subscription wrapper so registering the same handler twice does
-  // not let one disposer remove the other subscription from the Set.
-  const unlisten = terminalEventBus.on(type, (payload) => handler(payload));
-  try {
-    const release = await retainBridge();
-    let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      unlisten();
-      release();
-    };
-  } catch (error) {
-    unlisten();
-    throw error;
-  }
+  // 监听器异常就地隔离并沿用原事件总线的日志文案，不向 dispatch 外抛。
+  return observeTerminalEnvelope((envelope) => {
+    if (envelope?.name !== type) return;
+    try {
+      handler(envelope.payload);
+    } catch (error) {
+      logger.error("eventBus listener failed:", type, error);
+    }
+  });
 }

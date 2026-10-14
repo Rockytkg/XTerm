@@ -1,4 +1,12 @@
-export function createEventBridge({ eventName, logName, logger, subscribe }) {
+export function createEventBridge({
+  eventName,
+  logName,
+  logger,
+  subscribe,
+  onStart,
+  onStarted,
+  onStop,
+}) {
   const subscriptions = new Set();
   let startPromise = null;
   let stopBridge = null;
@@ -15,9 +23,11 @@ export function createEventBridge({ eventName, logName, logger, subscribe }) {
 
   function start() {
     if (startPromise) return startPromise;
+    onStart?.(subscriptions.size);
     startPromise = Promise.resolve(subscribe(eventName, (event) => dispatch(event?.payload)))
       .then((unlisten) => {
         stopBridge = typeof unlisten === "function" ? unlisten : null;
+        onStarted?.(subscriptions.size);
       })
       .catch((error) => {
         startPromise = null;
@@ -28,6 +38,7 @@ export function createEventBridge({ eventName, logName, logger, subscribe }) {
 
   function stop() {
     if (subscriptions.size > 0 || !startPromise) return;
+    onStop?.();
     try {
       stopBridge?.();
     } catch (error) {
