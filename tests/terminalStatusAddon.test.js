@@ -132,6 +132,19 @@ test("an unchanged reactive failure replay is idempotent", () => {
   assert.equal(writes.length, 1);
 });
 
+test("a connected banner released by device output stays idempotent", () => {
+  // 后台挂起只丢弃未落屏的输出队列，屏幕与横幅都保留；此后由状态重放
+  // （如串口波特率重检测）触发的同内容 write 必须仍是空操作，否则横幅
+  // 会被重复追加到当前光标处。
+  const { addon, writes } = createStatusAddon(0);
+
+  addon.write("connected");
+  addon.release();
+  addon.write("connected");
+
+  assert.equal(writes.length, 1);
+});
+
 test("a localized connection error is followed by the raw backend detail on a separate line", () => {
   for (const protocol of ["ssh", "telnet", "serial"]) {
     const { addon, writes } = createStatusAddon(0, protocol);

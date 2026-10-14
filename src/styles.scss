@@ -519,7 +519,8 @@
   @supports (view-transition-name: none) {
     :root.theme-transition-running .shell-root,
     :root.theme-transition-running .app-main-panel,
-    :root.theme-transition-running .app-right-sidebar-shell {
+    :root.theme-transition-running .app-right-sidebar-shell,
+    :root.theme-transition-running .toast-viewport {
       view-transition-name: none;
     }
 
@@ -599,6 +600,19 @@
 
     ::view-transition-new(app-right-sidebar) {
       animation-name: sidebar-slide-in;
+    }
+
+    /* toast 快照新旧内容一致：禁用默认交叉淡化，过渡期间保持静止可见，
+       避免淡入淡出造成的闪烁与双重影像。 */
+    ::view-transition-group(toast-viewport),
+    ::view-transition-old(toast-viewport),
+    ::view-transition-new(toast-viewport) {
+      animation: none;
+    }
+
+    ::view-transition-old(toast-viewport),
+    ::view-transition-new(toast-viewport) {
+      mix-blend-mode: normal;
     }
   }
 

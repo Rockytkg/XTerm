@@ -14,6 +14,11 @@
     list-style: none;
     outline: none;
     transform: translateX(-50%);
+
+    /* 独立快照层：默认会被并入 root 快照，过渡期间被不透明的 app-shell
+       快照遮住，表现为通知消失、结束后重现。命名后绘制在 app-shell 之上
+       （AppToasts 在文档序上位于 AppShell 之后）。 */
+    view-transition-name: toast-viewport;
   }
 
   .toast-root {

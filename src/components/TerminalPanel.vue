@@ -426,7 +426,10 @@ terminalSessionRuntime = useTerminalSessionRuntime({
     terminalPayloadQueue
       .catch((error) => logger.error("terminal.payload.handle.failed", error))
       .then(() => terminalOutputAddon.waitForFlush()),
-  dropOutput: () => connectionPresenter.reset(),
+  // 挂起/切会话只丢弃未落屏的输出（恢复后由后端 offset 增量补发），屏幕内容
+  // 被保留；状态横幅的 fingerprint 必须同步保留，否则下一次同状态重放
+  // （如串口波特率重检测触发的 connected 重放）会把横幅重复写到光标处。
+  dropOutput: () => terminalOutputAddon.drop(),
   getContext: () => ({
     sessionId: props.sessionId || "",
     connectionId: props.activeConnection?.connectionId || props.activeConnection?.id || "",
