@@ -1,5 +1,4 @@
 import { computed } from "vue";
-import { useTerminalRuntimeDeck } from "../../composables/useTerminalRuntimeDeck";
 import { connectionCan, runtimeCan } from "../../utils/connectionCapabilities";
 
 export function useWorkspaceDecks({
@@ -55,42 +54,30 @@ export function useWorkspaceDecks({
     terminalHighlightSchemes: preferences.value.terminalHighlightSchemes,
   }));
 
-  const terminalDeck = useTerminalRuntimeDeck({
-    openSessions,
-    activeConnectionId,
-    workspaceActive: shellWorkspaceActive,
-  });
-  const terminalSessions = computed(() =>
-    openSessions.value.filter((session) =>
-      terminalDeck.mountedSessionIds.value.includes(session.id),
-    ),
-  );
+  // 挂载集合即 openSessions 本身（会话 id 恒为真值），按 id 列表再过滤一遍
+  // 只是恒等筛选；sftpOpenSessions 内部已含 sftpWorkspaceActive 门禁。
+  const terminalSessions = openSessions;
 
-  const activeSftpConnectionId = computed(() =>
-    sftpWorkspaceActive.value && canUseSftp.value ? activeConnectionId.value : "",
-  );
   const sftpOpenSessions = computed(() =>
     sftpWorkspaceActive.value
       ? openSessions.value.filter((session) => runtimeCan(sessionRuntime?.(session.id), "sftp"))
       : [],
   );
-  const sftpDeck = useTerminalRuntimeDeck({
-    openSessions: sftpOpenSessions,
-    activeConnectionId: activeSftpConnectionId,
-    workspaceActive: sftpWorkspaceActive,
-  });
-  const sftpSessions = computed(() => {
-    if (!sftpWorkspaceActive.value) return [];
-    const mountedIds = new Set(sftpDeck.mountedSessionIds.value);
-    return sftpOpenSessions.value.filter((session) => mountedIds.has(session.id));
-  });
+  const sftpSessions = sftpOpenSessions;
+
+  function runtimeModeFor(connectionId) {
+    if (!connectionId) return "inactive";
+    return shellWorkspaceActive.value && activeConnectionId.value === connectionId
+      ? "active"
+      : "inactive";
+  }
 
   return {
     activeConnectionId,
     canUseSftp,
     sftpSessions,
     terminalSessions,
-    runtimeModeFor: terminalDeck.runtimeModeFor,
+    runtimeModeFor,
     terminalOptions,
   };
 }

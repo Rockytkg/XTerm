@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch } from "vue";
+import { computed } from "vue";
 import { storeToRefs } from "pinia";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import SftpWorkspacePane from "./workspace/SftpWorkspacePane.vue";
@@ -48,11 +48,8 @@ const {
   sessionRuntime,
 });
 
-watch(canUseSftp, (enabled) => {
-  if (!enabled && activeTab.value === "sftp") {
-    workspace.selectTab("shell");
-  }
-});
+// “无 SFTP 能力则切回 shell”由常驻的 AppShell 壳层控制器
+// （useWorkspaceShellController 的 capabilities watch）统一负责，这里不再重复。
 
 /**
  * Handles terminal resize events from TerminalWorkspacePane.
