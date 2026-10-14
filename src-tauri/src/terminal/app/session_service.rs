@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::{
     logging,
     state::AppState,
@@ -6,6 +8,10 @@ use crate::{
         internal::{SessionCommand, TerminalSession},
     },
 };
+
+/// Activate/Deactivate 的 oneshot 回复等待上限：worker 循环内无阻塞 await，
+/// 正常为微秒级；超时意味着 worker 卡死，让调用方失败收尾而不是永久排队。
+const SESSION_COMMAND_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct SessionApplicationService;
@@ -194,8 +200,12 @@ impl SessionApplicationService {
         .inspect_err(|_| {
             let _ = state.deactivate_session_channel(session_id, Some(channel_id));
         })?;
-        reply_rx
+        tokio::time::timeout(SESSION_COMMAND_REPLY_TIMEOUT, reply_rx)
             .await
+            .map_err(|_| {
+                let _ = state.deactivate_session_channel(session_id, Some(channel_id));
+                TerminalApiError::from("backend session activation timed out".to_string())
+            })?
             .map_err(|_| {
                 TerminalApiError::from("backend session activation reply dropped".to_string())
             })?
@@ -241,8 +251,11 @@ impl SessionApplicationService {
                 reply: reply_tx,
             },
         )?;
-        reply_rx
+        tokio::time::timeout(SESSION_COMMAND_REPLY_TIMEOUT, reply_rx)
             .await
+            .map_err(|_| {
+                TerminalApiError::from("backend session deactivation timed out".to_string())
+            })?
             .map_err(|_| {
                 TerminalApiError::from("backend session deactivation reply dropped".to_string())
             })?
