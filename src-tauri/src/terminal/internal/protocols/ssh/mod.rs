@@ -1,7 +1,10 @@
 use super::ssh_host_keys::*;
 use std::{
     collections::HashMap,
-    sync::{Arc, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, OnceLock,
+    },
     time::Duration,
 };
 
@@ -30,6 +33,11 @@ use crate::{
 
 static PENDING_SSH_HOST_KEY_CONNECTIONS: OnceLock<Mutex<HashMap<String, SshHostKeyPending>>> =
     OnceLock::new();
+static PENDING_HOST_KEY_TOKEN: AtomicU64 = AtomicU64::new(0);
+
+/// 挂起的 host key 确认无人应答时，已完成握手的连接不能无限期挂起：
+/// 超时后由清理任务断开并从表中移除。
+const PENDING_HOST_KEY_TIMEOUT: Duration = Duration::from_secs(120);
 
 struct ResolvedJumpHop {
     host: String,
@@ -39,6 +47,9 @@ struct ResolvedJumpHop {
 }
 
 struct SshHostKeyPending {
+    /// 身份令牌：超时清理任务凭它只移除"同一个"pending，避免误删
+    /// 应答后被取代的新条目。
+    token: u64,
     session: russh::client::Handle<RusshClient>,
     chain_sessions: Vec<SharedSshSession>,
     host: String,
@@ -357,10 +368,31 @@ fn resolve_jump_auth(
 }
 
 fn store_pending_ssh_connection(connection_id: &str, pending: SshHostKeyPending) {
+    let token = pending.token;
     let mut pending_connections = pending_ssh_connections().lock();
     if let Some(previous) = pending_connections.insert(connection_id.to_string(), pending) {
         disconnect_pending_ssh_connection(previous, "host key prompt superseded");
     }
+    drop(pending_connections);
+    // 用户可能把确认对话框晾在一边：超时后仅当条目仍是同一 pending
+    // （未被应答/取代/取消）才断开并移除。
+    let connection_id = connection_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(PENDING_HOST_KEY_TIMEOUT).await;
+        let expired = {
+            let mut pending_connections = pending_ssh_connections().lock();
+            match pending_connections.get(&connection_id) {
+                Some(current) if current.token == token => {
+                    pending_connections.remove(&connection_id)
+                }
+                _ => None,
+            }
+        };
+        if let Some(expired) = expired {
+            log::info!(target: "ssh.connect", "ssh host key prompt for {connection_id} expired unanswered");
+            disconnect_pending_ssh_connection(expired, "host key prompt timed out");
+        }
+    });
 }
 
 fn take_pending_ssh_connection(connection_id: &str) -> Option<SshHostKeyPending> {
@@ -451,6 +483,7 @@ async fn connect_ssh_async(params: SshConnectParams) -> ConnectionResult<SshConn
         if !trust_host_key && !accept_host_key_once {
             return Ok(SshConnectOutcome::HostKeyPrompt {
                 pending: SshHostKeyPending {
+                    token: PENDING_HOST_KEY_TOKEN.fetch_add(1, Ordering::Relaxed),
                     session,
                     chain_sessions: Vec::new(),
                     host: host.clone(),
@@ -657,6 +690,7 @@ async fn connect_via_jump_chain(
     if !key_trusted && !trust_host_key && !accept_host_key_once {
         return Ok(SshConnectOutcome::HostKeyPrompt {
             pending: SshHostKeyPending {
+                token: PENDING_HOST_KEY_TOKEN.fetch_add(1, Ordering::Relaxed),
                 session,
                 chain_sessions,
                 host: host.clone(),
