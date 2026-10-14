@@ -289,15 +289,9 @@ const stopUiThemeWatch = watch(
   },
 );
 
-// `terminalHighlightSchemes` is the only deeply-nested preference — watch it
-// individually with `deep: true` to catch per-rule edits.
-const stopHighlightSchemesWatch = watch(
-  () => preferences.terminalHighlightSchemes,
-  () => {
-    if (preferencesLoaded) schedulePreferenceSave(preferences);
-  },
-  { deep: true },
-);
+// `terminalHighlightSchemes` 的所有写入路径（useHighlightSchemes 的
+// updateSchemes/setter/importSchemes）都整体替换顶层数组引用，浅层
+// spread watch 必然捕获；不再需要 deep watch 逐规则遍历整棵树。
 
 export function useAppPreferences() {
   initializePreferences().catch(noop);
@@ -380,7 +374,6 @@ if (import.meta.hot) {
     stopAnimationWatch();
     stopUiFontSizeWatch();
     stopUiThemeWatch();
-    stopHighlightSchemesWatch();
     stopSystemThemeListener?.();
     window.clearTimeout(preferencesSaveTimer);
     preferencesSaveTimer = 0;
