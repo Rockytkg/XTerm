@@ -59,12 +59,13 @@ export function useTauriWindowController() {
     } catch (error) {
       logger.error("window.maximize.toggle.failed", error);
     } finally {
-      if (disposed) return;
-      clearTimeout(maximizeRefreshTimer);
-      maximizeRefreshTimer = setTimeout(() => {
-        if (disposed) return;
-        void refreshWindowMaximized();
-      }, 180);
+      if (!disposed) {
+        clearTimeout(maximizeRefreshTimer);
+        maximizeRefreshTimer = setTimeout(() => {
+          if (disposed) return;
+          void refreshWindowMaximized();
+        }, 180);
+      }
     }
   }
 
