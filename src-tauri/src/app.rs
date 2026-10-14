@@ -610,21 +610,56 @@ fn configure_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         })
 }
 
+/// 单个关停环节的超时：防火墙规则删除的提权路径会同步等待 UAC/pkexec
+/// 用户应答（子进程不退出则 spawn_blocking 不返回），环节独立超时保证
+/// 一个卡住的环节不拖住整个退出。
+const SHUTDOWN_STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+/// 全部清理的总预算：兜底清理任务自身 panic 或意外互等的极端情况。
+const SHUTDOWN_TOTAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 fn begin_application_shutdown<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     tauri::async_runtime::spawn(async move {
-        shutdown_application_resources(&app).await;
+        let cleanup_app = app.clone();
+        let cleanup = tauri::async_runtime::spawn(async move {
+            shutdown_application_resources(&cleanup_app).await;
+        });
+        match tokio::time::timeout(SHUTDOWN_TOTAL_TIMEOUT, cleanup).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                log::warn!(target: "app.lifecycle", "resource shutdown task failed: {error}; exiting anyway");
+            }
+            Err(_) => {
+                log::warn!(target: "app.lifecycle", "resource shutdown exceeded budget; exiting anyway");
+            }
+        }
+        // The close request was deferred while resources shut down. Calling
+        // `window.close()` here can re-enter Tao's Windows runner after it has
+        // transitioned to Destroyed, which panics with "cannot move state from
+        // Destroyed". Exit the application once cleanup is complete instead.
+        app.exit(0);
     });
 }
 
 async fn shutdown_application_resources<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    crate::terminal::shutdown_all_sessions(app);
-    crate::proxy::shutdown_proxy(app).await;
-    crate::file_service::shutdown_runtime(app).await;
-    // The close request was deferred while resources shut down. Calling
-    // `window.close()` here can re-enter Tao's Windows runner after it has
-    // transitioned to Destroyed, which panics with "cannot move state from
-    // Destroyed". Exit the application once cleanup is complete instead.
-    app.exit(0);
+    // 会话排空与代理/文件服务关停并行推进；drain 句柄在退出前 await，
+    // 优雅关闭（含 SSH DISCONNECT 与跳板链断开）不再被 app.exit 截断。
+    let sessions_drain = crate::terminal::shutdown_all_sessions(app);
+    if let Err(error) =
+        tokio::time::timeout(SHUTDOWN_STEP_TIMEOUT, crate::proxy::shutdown_proxy(app)).await
+    {
+        log::warn!(target: "app.lifecycle", "proxy shutdown timed out during exit: {error}");
+    }
+    if let Err(error) = tokio::time::timeout(
+        SHUTDOWN_STEP_TIMEOUT,
+        crate::file_service::shutdown_runtime(app),
+    )
+    .await
+    {
+        log::warn!(target: "app.lifecycle", "file service shutdown timed out during exit: {error}");
+    }
+    if let Err(error) = sessions_drain.await {
+        log::warn!(target: "app.lifecycle", "session drain task failed during exit: {error}");
+    }
 }
 
 #[cfg(not(windows))]

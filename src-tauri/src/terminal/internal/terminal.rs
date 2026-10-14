@@ -769,7 +769,12 @@ pub(super) fn cleanup_session_state<R: tauri::Runtime>(
     Ok(())
 }
 
-pub(crate) fn shutdown_all_sessions<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+/// 通知所有会话关闭并返回排空任务的句柄：调用方必须在进程退出前 await，
+/// 否则 2s 优雅排空（含卡死 worker 的 abort 与 cleanup_session_state）
+/// 会被退出截断。
+pub(crate) fn shutdown_all_sessions<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> tauri::async_runtime::JoinHandle<()> {
     let sessions: Vec<(String, TerminalSession)> = app
         .state::<AppState>()
         .sessions()
@@ -804,6 +809,20 @@ pub(crate) fn shutdown_all_sessions<R: tauri::Runtime>(app: &tauri::AppHandle<R>
                     .map(|(session_id, _)| session_id.as_str())
                     .collect();
                 log::warn!(target: "terminal.runtime", "timed out waiting for backend sessions to stop: {pending:?}");
+                // The worker owns the transport command sender. If it is
+                // stuck, merely removing the session leaves the transport
+                // actor (and resources such as a serial fd) running forever.
+                // Aborting the worker drops that sender, so each actor sees
+                // a closed command channel and releases its own resources.
+                for (session_id, session) in &sessions {
+                    if !session.worker.is_finished() {
+                        log::warn!(
+                            target: "terminal.runtime",
+                            "aborting stuck backend session worker '{session_id}'"
+                        );
+                        session.worker.abort();
+                    }
+                }
                 break;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -816,7 +835,7 @@ pub(crate) fn shutdown_all_sessions<R: tauri::Runtime>(app: &tauri::AppHandle<R>
                 );
             }
         }
-    });
+    })
 }
 
 #[cfg(test)]
