@@ -55,8 +55,6 @@ export function useSftpMotion({
   queueListRef,
   filteredRemoteFiles,
   loading,
-  dragActive,
-  moveDragActive,
   transfers,
 }) {
   let previousRowKeys = new Set();
@@ -130,13 +128,6 @@ export function useSftpMotion({
     animateEntering(entering, TRANSFER_ENTER);
   }
 
-  // 拖放高亮改由 class + CSS transition 驱动（见 styles/sftp.scss 的
-  // .sftp-browser-shell::after）；data-motion="off" 时全局规则把过渡归零。
-  function animateDragState(active) {
-    const shell = tableBodyRef.value?.closest?.(".sftp-browser-shell");
-    shell?.classList.toggle("sftp-drop-active", active);
-  }
-
   watch(
     [filteredRemoteFiles, loading],
     () => {
@@ -157,10 +148,6 @@ export function useSftpMotion({
     },
     { flush: "post" },
   );
-
-  watch([dragActive, moveDragActive], ([dropActive, moveActive]) => {
-    animateDragState(Boolean(dropActive || moveActive));
-  });
 
   onBeforeUnmount(() => {
     for (const animation of activeAnimations) animation.cancel();

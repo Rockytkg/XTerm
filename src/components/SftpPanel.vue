@@ -83,10 +83,6 @@ async function copyText(text) {
   } catch (error) {
     logger.warn("sftp.clipboard.copy_failed", error);
   }
-  closeContextMenu();
-}
-
-function closeContextMenu() {
   dismissContextMenu();
 }
 
@@ -150,7 +146,7 @@ const {
 } = useSftpBrowser({
   props,
   t,
-  closeContextMenu,
+  dismissContextMenu,
   requestRenameConflictAction,
 });
 
@@ -370,14 +366,14 @@ function closeDeleteDialogOnDismiss(value) {
 
 function selectAllFiles() {
   selectedNames.value = new Set(filteredRemoteFiles.value.map((entry) => entry.name));
-  closeContextMenu();
+  dismissContextMenu();
 }
 
 function clearSelectionOnBlankClick(event) {
   if (inlineEdit.value.active) return;
   if (event.target?.closest?.(".sftp-row")) return;
   selectedNames.value = new Set();
-  closeContextMenu();
+  dismissContextMenu();
 }
 
 function sftpShortcutScopeEnabled(event) {
@@ -393,7 +389,7 @@ sftpShortcuts.register({
   preventDefault: false,
   consume: false,
   run: () => {
-    closeContextMenu();
+    dismissContextMenu();
     if (inlineEdit.value.active) cancelInlineEdit();
     if (deleteDialog.value.open) closeDeleteDialog();
   },
@@ -459,7 +455,7 @@ const { moveDragActive, moveDropTargetPath, onMoveMouseDown, suppressMoveClick, 
     loading,
     errorMessage,
     refreshRemote,
-    closeContextMenu,
+    dismissContextMenu,
     requestRenameConflictAction,
     t,
   });
@@ -512,8 +508,6 @@ useSftpMotion({
   queueListRef,
   filteredRemoteFiles,
   loading,
-  dragActive,
-  moveDragActive,
   transfers,
 });
 
@@ -533,7 +527,7 @@ watch(
 );
 
 function downloadEntry(entry = selectedEntry.value) {
-  return downloadEntryViaTransfers(entry, closeContextMenu);
+  return downloadEntryViaTransfers(entry, dismissContextMenu);
 }
 
 function downloadOpenFile(file) {
@@ -574,12 +568,12 @@ function openEntryOrPreview(entry) {
 }
 
 function openPreviewFromContext(entries) {
-  closeContextMenu();
+  dismissContextMenu();
   return openPreview(entries);
 }
 
 function openEditorFromContext(entry) {
-  closeContextMenu();
+  dismissContextMenu();
   return openEditor(entry);
 }
 
@@ -591,7 +585,7 @@ async function saveEditorAndClose() {
 function openParentDirectory() {
   if (!parentDirectoryEntry.value) return;
   selectedNames.value = new Set();
-  closeContextMenu();
+  dismissContextMenu();
   refreshRemote(parentDirectoryEntry.value.path);
 }
 
