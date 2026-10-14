@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::UNIX_EPOCH,
 };
@@ -218,7 +218,11 @@ type SharedFileSession = Arc<Mutex<TrzszFileSession>>;
 
 pub(crate) struct TrzszDownloadSession {
     session: SharedFileSession,
+    /// 最终落盘路径（begin 时按最终名做唯一名决策，finish 非中止时才出现）。
     path: PathBuf,
+    /// 下载全程实际写入的 `<最终名>.part`，断线/会话关闭留下的部分文件
+    /// 因此不会冒充完整文件。
+    part_path: PathBuf,
     name: String,
 }
 
@@ -446,24 +450,40 @@ pub(crate) async fn trzsz_begin_download(
         ));
     }
     let file_name = normalize_terminal_transfer_name(&request.file_name, "download");
+    // 冲突判定在最终名上做（沿用唯一名决策，永不覆盖既有文件）；
+    // 实际写入 .part，finish 非中止时才重命名为最终名。
     let path = unique_terminal_transfer_download_path(&parent.path, &file_name);
-    let file = std::fs::File::create(&path)
-        .map_err(|e| format!("failed to create download file '{}': {e}", path.display()))?;
-    let (file_entry, metadata) = register_entry_with_metadata_async(state.inner(), path).await?;
+    let part_path = download_part_path(&path);
+    let file = std::fs::File::create(&part_path).map_err(|e| {
+        format!(
+            "failed to create download file '{}': {e}",
+            part_path.display()
+        )
+    })?;
+    // 最终路径此刻不存在，元数据取自刚创建的 .part；注册条目仍指向最终路径，
+    // 使下发名称与成功 finish 后的落盘文件一致。
+    let metadata = tokio::fs::metadata(&part_path).await.map_err(|e| {
+        format!(
+            "failed to read entry metadata '{}': {e}",
+            part_path.display()
+        )
+    })?;
     let transfer_id = crate::ids::new_id();
-    let descriptor = file_entry.descriptor(metadata);
-
-    {
+    let descriptor = {
         let mut runtime = lock_runtime(state.inner());
+        let file_entry = runtime.register_entry(TrzszEntry::new(path, TrzszEntryKind::File));
+        let descriptor = file_entry.descriptor(metadata);
         runtime.downloads.insert(
             transfer_id.clone(),
             TrzszDownloadSession {
                 session: Arc::new(Mutex::new(TrzszFileSession::new(file))),
                 path: file_entry.path.clone(),
+                part_path,
                 name: descriptor.name.clone(),
             },
         );
-    }
+        descriptor
+    };
 
     logging::event(TRZSZ_SCOPE, "download.begin")
         .field("transfer_id", &transfer_id)
@@ -522,29 +542,31 @@ pub(crate) async fn trzsz_finish_download(
     let Some(download) = download else {
         return Ok(());
     };
-    let path = download.path.clone();
+    let part_path = download.part_path.clone();
 
     let bytes_written = tokio::task::spawn_blocking(move || {
         let mut session = download
             .session
             .lock()
             .map_err(|_| "trzsz download session is poisoned".to_string())?;
-        session
-            .file
-            .flush()
-            .map_err(|e| format!("failed to flush download file '{}': {e}", path.display()))?;
+        session.file.flush().map_err(|e| {
+            format!(
+                "failed to flush download file '{}': {e}",
+                part_path.display()
+            )
+        })?;
         Ok::<u64, String>(session.offset)
     })
     .await
     .map_err(|e| format!("trzsz download finish task failed: {e}"))??;
 
     if request.aborted {
-        // 中止语义只来自前端 deleteFile（如 MD5 校验失败），必须把已落盘的损坏文件一并删除，
-        // 否则用户磁盘上会留下与完整文件无异的坏文件；删除失败仅记录，不影响会话清理
-        if let Err(error) = tokio::fs::remove_file(&download.path).await {
+        // 中止语义只来自前端 deleteFile（如 MD5 校验失败），必须把已落盘的损坏
+        // .part 一并删除（最终名从头到尾不出现）；删除失败仅记录，不影响会话清理
+        if let Err(error) = discard_download_part(&download.part_path) {
             logging::event(TRZSZ_SCOPE, "download.abort_remove_failed")
                 .field("transfer_id", &request.transfer_id)
-                .field("path", download.path.display().to_string())
+                .field("path", download.part_path.display().to_string())
                 .field("error", error.to_string())
                 .warn();
         }
@@ -553,6 +575,7 @@ pub(crate) async fn trzsz_finish_download(
             .field("name", &download.name)
             .warn();
     } else {
+        finalize_download_part(&download.part_path, &download.path)?;
         logging::event(TRZSZ_SCOPE, "download.finished")
             .field("transfer_id", &request.transfer_id)
             .field("name", &download.name)
@@ -560,6 +583,47 @@ pub(crate) async fn trzsz_finish_download(
             .info();
     }
     Ok(())
+}
+
+/// 下载全程写入的实际路径：`<最终名>.part`。断线/会话关闭导致 finish 缺失时，
+/// 残留的部分文件一眼可辨，不会冒充完整文件；同名重传时 begin 的唯一名决策在
+/// 最终名上做，陈旧的 .part 会被新传输直接截断复用。
+fn download_part_path(final_path: &Path) -> PathBuf {
+    let file_name = final_path
+        .file_name()
+        .map(|name| format!("{}.part", name.to_string_lossy()))
+        .unwrap_or_else(|| "download.part".to_string());
+    final_path.with_file_name(file_name)
+}
+
+/// 把 `.part` 落定为最终名。begin 的唯一名决策基于当时的目录状态，下载期间最终名
+/// 可能被其它进程占用，而 rename 在 Windows 上不覆盖既有文件（Unix 则会静默覆盖）
+/// ——两边都不允许覆盖：被占用时重新取唯一名，保持 begin 的"永不覆盖既有文件"语义
+/// （参考 session_recording rotate_recording 对 rename 覆盖行为的处理）。
+fn finalize_download_part(part_path: &Path, final_path: &Path) -> Result<PathBuf, String> {
+    let target = if final_path.exists() {
+        match (
+            final_path.parent(),
+            final_path.file_name().and_then(|name| name.to_str()),
+        ) {
+            (Some(parent), Some(name)) => unique_terminal_transfer_download_path(parent, name),
+            _ => final_path.to_path_buf(),
+        }
+    } else {
+        final_path.to_path_buf()
+    };
+    std::fs::rename(part_path, &target).map_err(|e| {
+        format!(
+            "failed to finalize download file '{}': {e}",
+            target.display()
+        )
+    })?;
+    Ok(target)
+}
+
+/// 中止下载：删除 `.part`，最终名从头到尾不出现。
+fn discard_download_part(part_path: &Path) -> std::io::Result<()> {
+    std::fs::remove_file(part_path)
 }
 
 #[tauri::command]
@@ -693,5 +757,60 @@ mod tests {
             STANDARD_NO_PAD.encode(md5::compute(b"").0)
         );
         std::fs::remove_file(&path).expect("remove temp file");
+    }
+
+    #[test]
+    fn part_path_appends_suffix_to_full_name() {
+        let path = Path::new("downloads").join("archive.tar.gz");
+        assert_eq!(
+            download_part_path(&path),
+            Path::new("downloads").join("archive.tar.gz.part")
+        );
+    }
+
+    #[test]
+    fn finalize_moves_part_to_final_name() {
+        let dir = crate::logging::test_support::temp_test_dir("trzsz-finalize");
+        let final_path = dir.join("report.txt");
+        let part_path = dir.join("report.txt.part");
+        std::fs::write(&part_path, b"payload").expect("write part file");
+
+        let used = finalize_download_part(&part_path, &final_path).expect("finalize download");
+
+        assert_eq!(used, final_path);
+        assert_eq!(std::fs::read(&final_path).expect("read final"), b"payload");
+        assert!(!part_path.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn finalize_does_not_overwrite_file_that_appeared_mid_download() {
+        let dir = crate::logging::test_support::temp_test_dir("trzsz-finalize-race");
+        let final_path = dir.join("report.txt");
+        let part_path = dir.join("report.txt.part");
+        std::fs::write(&final_path, b"other").expect("write competing final file");
+        std::fs::write(&part_path, b"payload").expect("write part file");
+
+        let used = finalize_download_part(&part_path, &final_path).expect("finalize download");
+
+        assert_eq!(used, dir.join("report (1).txt"));
+        assert_eq!(std::fs::read(&final_path).expect("read final"), b"other");
+        assert_eq!(std::fs::read(&used).expect("read renamed"), b"payload");
+        assert!(!part_path.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn discard_removes_part_and_final_never_appears() {
+        let dir = crate::logging::test_support::temp_test_dir("trzsz-discard");
+        let final_path = dir.join("report.txt");
+        let part_path = dir.join("report.txt.part");
+        std::fs::write(&part_path, b"partial").expect("write part file");
+
+        discard_download_part(&part_path).expect("discard part file");
+
+        assert!(!part_path.exists());
+        assert!(!final_path.exists());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
