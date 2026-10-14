@@ -40,6 +40,7 @@ const rfbError = ref("");
 
 let rfb = null;
 let rfbLoadPromise = null;
+let disposed = false;
 
 const wheelAccumulator = createWheelAccumulator({
   send: (direction, event) => dispatchWheelPulse(event, direction),
@@ -161,7 +162,7 @@ function destroyRfb() {
 
 async function mountRfb() {
   const url = props.vncBridge?.url || "";
-  if (!url || !desktopMount.value || rfb) return;
+  if (disposed || !url || !desktopMount.value || rfb) return;
   let RFB;
   try {
     RFB = await loadRfbClass();
@@ -171,7 +172,8 @@ async function mountRfb() {
     return;
   }
   // 等待模块期间状态可能已经变化（断线/重连），重新校验再建实例。
-  if (rfb || connectionStatus.value !== "connected" || props.vncBridge?.url !== url) return;
+  if (disposed || rfb || connectionStatus.value !== "connected" || props.vncBridge?.url !== url)
+    return;
   if (!desktopMount.value) return;
   clearDesktopMount();
 
@@ -192,26 +194,32 @@ async function mountRfb() {
   applyLiveOptions(instance);
 
   instance.addEventListener("connect", () => {
+    if (disposed || rfb !== instance) return;
     rfbConnected.value = true;
   });
   instance.addEventListener("desktopname", (event) => {
+    if (disposed || rfb !== instance) return;
     desktopName.value = event.detail?.name || "";
   });
   instance.addEventListener("credentialsrequired", (event) => {
+    if (disposed || rfb !== instance) return;
     credentialUsername.value = "";
     passwordInput.value = "";
     credentialsPrompt.value = { types: event.detail?.types || ["password"] };
   });
   instance.addEventListener("securityfailure", (event) => {
+    if (disposed || rfb !== instance) return;
     rfbError.value = event.detail?.reason || t("connectionErrors.vnc_auth_failed");
   });
   instance.addEventListener("clipboard", (event) => {
+    if (disposed || rfb !== instance) return;
     if (props.activeConnection?.vncClipboardSync === false) return;
     const text = event.detail?.text;
     if (!text) return;
     writeText(text).catch((error) => logger.warn("clipboard.write.failed", error));
   });
   instance.addEventListener("disconnect", (event) => {
+    if (disposed || rfb !== instance) return;
     const wasConnected = rfbConnected.value;
     rfb = null;
     rfbConnected.value = false;
@@ -276,6 +284,7 @@ watch(
 );
 
 onMounted(() => {
+  disposed = false;
   // 捕获阶段 + 非 passive：必须先于 noVNC 的 canvas 监听拿到事件才能拦截，
   // 且需要 preventDefault 阻止页面滚动。
   desktopMount.value?.addEventListener("wheel", handleDesktopWheel, {
@@ -285,6 +294,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
   desktopMount.value?.removeEventListener("wheel", handleDesktopWheel, { capture: true });
   wheelAccumulator.reset();
   destroyRfb();
@@ -300,7 +310,9 @@ onBeforeUnmount(() => {
       <span
         class="vnc-toolbar-title"
         :title="desktopName || endpointLabel"
-      >{{ desktopName || endpointLabel }}</span>
+      >{{
+        desktopName || endpointLabel
+      }}</span>
       <div class="vnc-toolbar-actions">
         <button
           type="button"

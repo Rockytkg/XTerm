@@ -1,4 +1,4 @@
-import { onBeforeUnmount, shallowRef, watch } from "vue";
+import { getCurrentInstance, onBeforeUnmount, shallowRef, watch } from "vue";
 import {
   readRemoteSftpFile,
   readRemoteSftpFileBytes,
@@ -326,9 +326,11 @@ export function useSftpOpenFiles({
     patchTab(tab, { content });
   }
 
-  onBeforeUnmount(() => {
-    setDisposed(true);
-  });
+  if (getCurrentInstance()) {
+    onBeforeUnmount(() => {
+      setDisposed(true);
+    });
+  }
 
   // 重连（sessionId 变化）或换连接后，打开的文件属于已失效的旧会话：继续保留会让
   // 保存经 currentSession() 写入新会话的同路径文件（跨会话写），且加载中的 tab 永远

@@ -14,8 +14,8 @@ import {
 } from "reka-ui";
 import { Clock3, KeyRound, LockKeyhole, Save, X } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
-import { choosePrivateKey } from "../services/credentials";
 import ConfirmDialog from "./ConfirmDialog.vue";
+import { usePrivateKeyPicker } from "../composables/usePrivateKeyPicker";
 import { appFieldNames, NO_NATIVE_AUTOCOMPLETE } from "../utils/autocomplete";
 import { CREDENTIAL_TYPE_CHANGE_ACTION } from "../utils/credentialTypeChange";
 import { createLogger } from "../utils/logger";
@@ -38,7 +38,9 @@ const form = reactive({
   credentialPersistence: "temporary",
 });
 const error = ref("");
-const pickerBusy = ref(false);
+const { pickerOpen: pickerBusy, pickPrivateKey: pickPrivateKeyFile } = usePrivateKeyPicker({
+  cooldownMs: 250,
+});
 
 const target = computed(() => {
   const connection = props.prompt.connection || {};
@@ -106,9 +108,8 @@ watch(
 
 async function pickPrivateKey() {
   if (pickerBusy.value || props.busy) return;
-  pickerBusy.value = true;
   try {
-    const key = await choosePrivateKey(t("credentials.fields.choosePrivateKeyTitle"));
+    const key = await pickPrivateKeyFile(t("credentials.fields.choosePrivateKeyTitle"));
     if (key) {
       form.privateKey = key;
       error.value = "";
@@ -116,10 +117,6 @@ async function pickPrivateKey() {
   } catch (pickError) {
     logger.warn("ssh_credential_prompt.private_key.pick_failed", pickError);
     error.value = String(pickError);
-  } finally {
-    window.setTimeout(() => {
-      pickerBusy.value = false;
-    }, 250);
   }
 }
 

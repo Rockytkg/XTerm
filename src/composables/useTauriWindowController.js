@@ -24,10 +24,11 @@ export function useTauriWindowController() {
 
   async function refreshWindowMaximized() {
     const currentWindow = getShellWindow();
-    if (!currentWindow) return;
+    if (!currentWindow || disposed) return;
 
     try {
-      isWindowMaximized.value = await currentWindow.isMaximized();
+      const maximized = await currentWindow.isMaximized();
+      if (!disposed) isWindowMaximized.value = maximized;
     } catch (error) {
       logger.error("window.maximized-state.read.failed", error);
     }
@@ -58,8 +59,10 @@ export function useTauriWindowController() {
     } catch (error) {
       logger.error("window.maximize.toggle.failed", error);
     } finally {
+      if (disposed) return;
       clearTimeout(maximizeRefreshTimer);
       maximizeRefreshTimer = setTimeout(() => {
+        if (disposed) return;
         void refreshWindowMaximized();
       }, 180);
     }
@@ -78,12 +81,15 @@ export function useTauriWindowController() {
     if (!currentWindow) return;
 
     await refreshWindowMaximized();
+    if (disposed) return;
     // OS 途径（Win+方向键、拖拽吸附）的最大化/还原不经过 toggleWindowMaximize，
     // 监听 resize 保持标题栏按钮状态同步；防抖避免拖拽缩放期间密集 IPC。
     try {
       const unlisten = await currentWindow.onResized(() => {
+        if (disposed) return;
         clearTimeout(maximizeRefreshTimer);
         maximizeRefreshTimer = setTimeout(() => {
+          if (disposed) return;
           void refreshWindowMaximized();
         }, 150);
       });

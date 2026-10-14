@@ -150,6 +150,7 @@ export function useSftpTransfers({
     remoteName,
     uploadConflictAction = NAME_CONFLICT_ACTION.CREATE,
   }) {
+    if (disposed || !props.connection?.id || !props.sessionId) return;
     logger.info(
       "transfer.run.started",
       item.direction,
@@ -232,12 +233,15 @@ export function useSftpTransfers({
   }
 
   async function pauseTransfer(id) {
+    if (disposed) return;
     const item = transfers.value.find((transfer) => transfer.id === id);
     if (!item || !ACTIVE_TRANSFER_STATUSES.has(item.status)) return;
     updateTransferItem(id, { status: "pausing", speed: t("sftp.pausing") });
     try {
       await pauseSftpTransfer(id);
+      if (disposed) return;
     } catch (error) {
+      if (disposed) return;
       updateTransferItem(id, {
         status: "failed",
         error: String(error?.message || error),
@@ -247,6 +251,7 @@ export function useSftpTransfers({
   }
 
   async function resumeTransfer(id) {
+    if (disposed) return;
     const item = transfers.value.find((transfer) => transfer.id === id);
     if (!item || item.status !== "paused") return;
     updateTransferItem(id, {
@@ -258,7 +263,9 @@ export function useSftpTransfers({
     });
     try {
       await resumeSftpTransfer(id);
+      if (disposed) return;
     } catch (error) {
+      if (disposed) return;
       updateTransferItem(id, {
         status: "failed",
         error: String(error?.message || error),
@@ -268,6 +275,7 @@ export function useSftpTransfers({
   }
 
   async function cancelTransfer(id) {
+    if (disposed) return;
     const item = transfers.value.find((transfer) => transfer.id === id);
     if (!item || TERMINAL_TRANSFER_STATUSES.has(item.status)) {
       removeTransfer(id);
@@ -275,8 +283,10 @@ export function useSftpTransfers({
     }
     try {
       await cancelSftpTransfer(id);
+      if (disposed) return;
       removeTransferItem(id);
     } catch (error) {
+      if (disposed) return;
       updateTransferItem(id, {
         status: "failed",
         error: String(error?.message || error),
@@ -294,7 +304,7 @@ export function useSftpTransfers({
       kind: entry.kind,
       title: t("sftp.chooseDownloadTitle"),
     });
-    if (!localPath) return;
+    if (disposed || !localPath) return;
 
     await runTransfer({
       item: makeTransferItem({ name: entry.name, direction: "download" }),
@@ -314,6 +324,7 @@ export function useSftpTransfers({
       targetDirectory,
       canCheckTargetDirectory,
     );
+    if (disposed) return;
     const uploads = [];
     for (const localPath of normalized) {
       const name = localFileName(localPath);
@@ -328,6 +339,7 @@ export function useSftpTransfers({
           defaultAction: NAME_CONFLICT_ACTION.CREATE,
           skipAction: NAME_CONFLICT_ACTION.SKIP,
         });
+        if (disposed) return;
         uploadConflictAction = conflict.action;
         if (conflict.skipped) continue;
       }
@@ -354,6 +366,7 @@ export function useSftpTransfers({
         });
       }),
     );
+    if (disposed) return;
     clearDropTarget();
   }
 
@@ -451,6 +464,7 @@ export function useSftpTransfers({
   }
 
   async function removeTransfer(id) {
+    if (disposed) return;
     if (!transfers.value.some((item) => item.id === id)) return;
     try {
       await cancelSftpTransfer(id);
@@ -461,6 +475,7 @@ export function useSftpTransfers({
   }
 
   async function clearCompletedTransfers() {
+    if (disposed) return;
     const removable = transfers.value.filter((item) => !ACTIVE_TRANSFER_STATUSES.has(item.status));
     await Promise.all(
       removable.map((item) =>
@@ -469,6 +484,7 @@ export function useSftpTransfers({
         }),
       ),
     );
+    if (disposed) return;
     const next = transfers.value.filter((item) => ACTIVE_TRANSFER_STATUSES.has(item.status));
     if (next.length === transfers.value.length) return;
     transfers.value = next;
@@ -476,6 +492,7 @@ export function useSftpTransfers({
 
   onMounted(async () => {
     await refreshTransferList();
+    if (disposed) return;
     const unlisten = await observeTerminalEvent(
       TERMINAL_EVENTS.SFTP_TRANSFER_PROGRESS,
       updateTransferProgress,
