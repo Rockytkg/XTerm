@@ -1,3 +1,4 @@
+import { watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { SCRIPT_RUN_STATUS, runScript, stopScript } from "../services/scripting/scriptRunner";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -7,6 +8,32 @@ import { useToasts } from "./useToasts";
 // 最终结果（完成/失败/已停止），避免堆叠多条提示。
 function scriptRunToastId(scriptId, sessionId) {
   return `script-run-${scriptId || "anon"}-${sessionId || "none"}`;
+}
+
+// 等待响应式 run.status 离开 RUNNING：watch 事件驱动取代 10ms 轮询，
+// 300ms 上限语义与原实现一致。在事件处理器上下文创建（无活动实例），
+// 两条出口都手动 stop。
+const SCRIPT_RUN_STOP_TIMEOUT_MS = 300;
+
+function waitForRunSettled(run) {
+  if (run.status !== SCRIPT_RUN_STATUS.RUNNING) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      stopWatch();
+      resolve();
+    }, SCRIPT_RUN_STOP_TIMEOUT_MS);
+    const stopWatch = watch(
+      () => run.status,
+      (status) => {
+        if (status === SCRIPT_RUN_STATUS.RUNNING) return;
+        clearTimeout(timer);
+        stopWatch();
+        resolve();
+      },
+      // finish() 同步写入 status，sync flush 保证同一拍拿到结果。
+      { flush: "sync" },
+    );
+  });
 }
 
 // 把脚本引擎接到工作区会话上：负责解析目标会话与运行结果的通知。
@@ -89,9 +116,7 @@ export function useScriptExecution() {
       });
       return false;
     }
-    for (let attempt = 0; attempt < 30 && run.status === SCRIPT_RUN_STATUS.RUNNING; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+    await waitForRunSettled(run);
     if (run.status === SCRIPT_RUN_STATUS.RUNNING) {
       updateToast(toastId, {
         type: "error",
