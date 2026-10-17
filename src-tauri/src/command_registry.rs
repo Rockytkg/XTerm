@@ -44,6 +44,7 @@ macro_rules! app_invoke_handler {
             crate::terminal::api::commands::terminal_connection_open_cancel,
             crate::terminal::api::commands::terminal_session_close,
             crate::terminal::api::commands::terminal_session_set_encoding_detection,
+            crate::terminal::api::commands::terminal_session_set_backspace_mode,
             crate::terminal::api::commands::terminal_serial_redetect_baud,
             crate::terminal::api::commands::terminal_metrics_start,
             crate::terminal::api::commands::terminal_metrics_stop,

@@ -94,12 +94,18 @@ const KEY_SEQUENCES = {
   f12: `${ESC}[24~`,
 };
 
-function keySequence(key) {
+function keySequence(key, sessionInfo) {
   const normalized = String(key ?? "")
     .trim()
     .toLowerCase();
   const ctrl = /^ctrl[-+]([a-z])$/.exec(normalized);
   if (ctrl) return String.fromCharCode(ctrl[1].charCodeAt(0) - 96);
+  if (normalized === "backspace") {
+    // Keep scripted key presses aligned with the physical key handler. AUTO
+    // starts with DEL; the backend replaces it after Telnet SLC discovery or
+    // serial/Telnet echo probing.
+    return String(sessionInfo?.backspaceSends || "").toUpperCase() === "BS" ? "\x08" : "\x7f";
+  }
   if (Object.hasOwn(KEY_SEQUENCES, normalized)) return KEY_SEQUENCES[normalized];
   throw new TypeError(`press key must be a named key or "ctrl+<letter>", got: ${String(key)}`);
 }
@@ -456,7 +462,7 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     expect: (...args) => trackTask(expect(...args)),
     expectAny: (...args) => trackTask(expectAny(...args)),
     // 命名按键（ctrl+c / enter / 方向键 / f1-f12 等）：等同人工按键发送控制序列。
-    press: (key) => trackTask(send(keySequence(key))),
+    press: (key) => trackTask(send(keySequence(key, context.sessionInfo))),
     waitForAny: (...args) => trackTask(waitForAny(...args)),
     read: (...args) => trackTask(read(...args)),
     getScreen,
@@ -488,6 +494,7 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
       host: String(context.sessionInfo?.host || ""),
       port: context.sessionInfo?.port ?? "",
       username: String(context.sessionInfo?.username || ""),
+      backspaceSends: String(context.sessionInfo?.backspaceSends || ""),
     }),
   };
 }

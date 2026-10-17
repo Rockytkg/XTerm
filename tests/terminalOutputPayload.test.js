@@ -34,11 +34,12 @@ test("raw output trims bytes already covered by the cursor", () => {
   );
 
   assert.equal(decision.kind, "raw");
-  assert.equal(atob(decision.normalized.dataBase64), "CD");
+  // 裁剪后直接携带字节，不再做 decode→encode 往返。
+  assert.deepEqual(decision.normalized.bytes, Uint8Array.from([67, 68]));
   assert.equal(decision.normalized.endOffset, 14);
 });
 
-test("large raw output trimming encodes base64 in bounded chunks", () => {
+test("large raw output trimming decodes base64 exactly once", () => {
   const bytes = new Uint8Array(40_000).fill(65);
   const decision = classifyTerminalOutputPayload(
     {
@@ -53,10 +54,10 @@ test("large raw output trimming encodes base64 in bounded chunks", () => {
   );
 
   assert.equal(decision.kind, "raw");
-  const trimmed = atob(decision.normalized.dataBase64);
+  const trimmed = decision.normalized.bytes;
   assert.equal(trimmed.length, bytes.length - 1);
-  assert.equal(trimmed[0], "A");
-  assert.equal(trimmed.at(-1), "A");
+  assert.equal(trimmed[0], 65);
+  assert.equal(trimmed.at(-1), 65);
 });
 
 test("text replay trimming respects UTF-8 byte offsets without splitting code points", () => {

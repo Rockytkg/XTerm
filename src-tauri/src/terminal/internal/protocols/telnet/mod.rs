@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bytes::{Buf, BytesMut};
+use bytes::BytesMut;
 use tauri::AppHandle;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 
@@ -13,7 +13,6 @@ use crate::{
                 ConnectionError, ConnectionOpenResult, ConnectionResult, ResolvedConnection,
                 SessionTransportRuntime, SessionWorkerEvent, TelnetConfig, TelnetEnvVarKind,
                 TerminalSessionResources, TerminalSize, TransportCommand, CONNECT_TIMEOUT_MS,
-                SESSION_BUFFER_SIZE,
             },
             startup_auth::resolve_startup_password_auth,
             telnet_transport::spawn_telnet_transport_actor,
@@ -28,8 +27,9 @@ use crate::{
 mod engine;
 
 use engine::{
-    EngineEvent, TelnetEngine, BINARY, COMPRESS2, DO, ECHO, ENVIRON, NAWS, NEW_ENVIRON, SGA,
-    STATUS, TTYPE, WILL,
+    EngineEvent, TelnetEngine, BINARY, COMPRESS2, DO, ECHO, ENVIRON, LINEMODE, LINEMODE_MODE,
+    LINEMODE_SLC, MODE_ACK, MODE_EDIT, MODE_LIT_ECHO, MODE_SOFT_TAB, MODE_TRAPSIG, NAWS,
+    NEW_ENVIRON, SGA, SLC_CANTCHANGE, SLC_EC, SLC_VALUE, STATUS, TTYPE, WILL,
 };
 
 const ENV_IS: u8 = 0;
@@ -41,7 +41,7 @@ const ENV_USERVAR: u8 = 3;
 const TTYPE_IS: u8 = 0;
 const TTYPE_SEND: u8 = 1;
 const STATUS_SEND: u8 = 1;
-const LOCAL_STARTUP_OPTIONS: [u8; 5] = [BINARY, SGA, TTYPE, NAWS, NEW_ENVIRON];
+const LOCAL_STARTUP_OPTIONS: [u8; 6] = [BINARY, SGA, TTYPE, NAWS, NEW_ENVIRON, LINEMODE];
 const REMOTE_STARTUP_OPTIONS: [u8; 4] = [BINARY, ECHO, SGA, COMPRESS2];
 
 pub(super) struct TelnetRuntime {
@@ -71,6 +71,7 @@ impl SessionTransportRuntime for TelnetSessionTransport {
 }
 
 struct TelnetReceiveOutcome {
+    data: Vec<u8>,
     writes: BytesMut,
     error: Option<String>,
     transport_ready: bool,
@@ -93,7 +94,6 @@ struct TelnetState {
     env_vars: Vec<(TelnetEnvVarKind, String, String)>,
     cols: u16,
     rows: u16,
-    pending_data: BytesMut,
     pending_writes: BytesMut,
 }
 
@@ -159,6 +159,7 @@ impl TelnetConnectionFactory {
             cols: request.cols.unwrap_or(80).clamp(1, u16::MAX as u32) as u16,
             rows: request.rows.unwrap_or(24).clamp(1, u16::MAX as u32) as u16,
             env_vars: telnet_env_var_list(request.terminal_type.as_deref(), encoding.as_deref()),
+            backspace_sends: request.backspace_sends.clone(),
         };
         let initial_size = TerminalSize {
             cols: config.cols as u32,
@@ -224,17 +225,14 @@ impl TelnetRuntime {
         write_telnet_socket(&mut self.writer, &bytes).await
     }
 
-    /// Reads from the socket, feeds the bytes through the protocol engine and
-    /// drains whatever application data decoded into `buffer`. The socket read
-    /// targets `buffer` directly; decoded surplus (e.g. MCCP2 output larger
-    /// than one read) stays in `pending_data` for the next call.
+    /// Reads from the socket and feeds the bytes through the protocol engine.
+    /// Decoded application data is returned as an owned buffer (moved out of
+    /// the engine's event without an extra copy); `buffer` is only the socket
+    /// read target.
     pub(super) async fn read_into_with_negotiation(
         &mut self,
         buffer: &mut [u8],
-    ) -> Result<(usize, bool), TelnetReadError> {
-        if self.state.pending_data.has_remaining() {
-            return Ok((drain_pending_data(&mut self.state, buffer), false));
-        }
+    ) -> Result<(Vec<u8>, bool), TelnetReadError> {
         if buffer.is_empty() {
             return Err(TelnetReadError::Failed(
                 "telnet read buffer must not be empty".to_string(),
@@ -249,17 +247,30 @@ impl TelnetRuntime {
                 )));
             }
         };
-        let transport_ready = self
-            .process_socket_bytes(&buffer[..size])
+        self.process_socket_bytes(&buffer[..size])
             .await
-            .map_err(TelnetReadError::Failed)?;
-        Ok((drain_pending_data(&mut self.state, buffer), transport_ready))
+            .map_err(TelnetReadError::Failed)
     }
 
     pub(super) async fn write(&mut self, bytes: &[u8]) -> Result<(), String> {
         let events = self.state.engine.send_terminal_input(bytes);
         let writes = collect_protocol_writes(events);
         write_telnet_socket(&mut self.writer, &writes).await
+    }
+
+    pub(super) fn set_backspace_mode(&mut self, mode: Option<&str>) {
+        self.state.engine.configure_backspace_mode(mode);
+    }
+
+    pub(super) fn erase_probe_deadline(&self) -> Option<std::time::Instant> {
+        self.state.engine.erase_probe_deadline()
+    }
+
+    pub(super) async fn flush_erase_probe_retry(&mut self) -> Result<(), String> {
+        if let Some(byte) = self.state.engine.poll_erase_probe() {
+            write_telnet_socket(&mut self.writer, &[byte]).await?;
+        }
+        Ok(())
     }
 
     pub(super) async fn resize(&mut self, cols: u32, rows: u32) -> Result<(), String> {
@@ -277,7 +288,7 @@ impl TelnetRuntime {
         Ok(())
     }
 
-    async fn process_socket_bytes(&mut self, raw: &[u8]) -> Result<bool, String> {
+    async fn process_socket_bytes(&mut self, raw: &[u8]) -> Result<(Vec<u8>, bool), String> {
         let outcome = self.state.receive(raw);
         if !outcome.writes.is_empty() {
             write_telnet_socket(&mut self.writer, &outcome.writes).await?;
@@ -285,12 +296,13 @@ impl TelnetRuntime {
         if let Some(error) = outcome.error {
             return Err(error);
         }
-        Ok(outcome.transport_ready)
+        Ok((outcome.data, outcome.transport_ready))
     }
 }
 
 impl TelnetState {
     fn new(config: TelnetConfig) -> Self {
+        let backspace_sends = config.backspace_sends.clone();
         let mut state = Self {
             engine: TelnetEngine::new(),
             terminal_types: terminal_type_cycle(&config.terminal_type),
@@ -299,9 +311,11 @@ impl TelnetState {
             env_vars: config.env_vars,
             cols: config.cols,
             rows: config.rows,
-            pending_data: BytesMut::with_capacity(SESSION_BUFFER_SIZE),
             pending_writes: BytesMut::with_capacity(64),
         };
+        state
+            .engine
+            .configure_backspace_mode(backspace_sends.as_deref());
         for option in LOCAL_STARTUP_OPTIONS {
             let events = state.engine.negotiate(WILL, option);
             state
@@ -319,6 +333,7 @@ impl TelnetState {
 
     fn receive(&mut self, raw: &[u8]) -> TelnetReceiveOutcome {
         let mut writes = BytesMut::with_capacity(64);
+        let mut received: Option<Vec<u8>> = None;
         let mut error = None;
         let mut transport_ready = false;
         for event in self.engine.receive(raw) {
@@ -332,7 +347,16 @@ impl TelnetState {
                         // starts with application data is already usable even
                         // if it never acknowledges our startup options.
                         transport_ready = true;
-                        self.pending_data.extend_from_slice(&data);
+                        if let Some(retry) = self.engine.observe_output(&data) {
+                            writes.extend_from_slice(&[retry]);
+                        }
+                        // A read usually yields exactly one data segment (IAC is
+                        // rare in payloads), so move the first segment and only
+                        // copy when IAC-separated segments must coalesce.
+                        match &mut received {
+                            None => received = Some(data),
+                            Some(acc) => acc.extend_from_slice(&data),
+                        }
                     }
                 }
                 EngineEvent::Send(data) => writes.extend_from_slice(&data),
@@ -344,6 +368,10 @@ impl TelnetState {
                     command: DO,
                     option: STATUS,
                 } => writes.extend_from_slice(&self.status_events()),
+                EngineEvent::Negotiation {
+                    command: DO,
+                    option: LINEMODE,
+                } => writes.extend_from_slice(&self.linemode_slc_query_events()),
                 EngineEvent::Subnegotiation {
                     option: TTYPE,
                     data,
@@ -368,6 +396,27 @@ impl TelnetState {
                         writes.extend_from_slice(&self.status_events());
                     }
                 }
+                EngineEvent::Subnegotiation {
+                    option: LINEMODE,
+                    data,
+                } => match data.first() {
+                    Some(&LINEMODE_MODE) => {
+                        if let Some(ack) = linemode_mode_ack(&data) {
+                            writes.extend_from_slice(&collect_protocol_writes(
+                                self.engine.subnegotiation(LINEMODE, &ack),
+                            ));
+                        }
+                    }
+                    _ => {
+                        if let Some(erase) = parse_linemode_erase_character(&data) {
+                            self.engine.set_remote_erase_character(erase);
+                            log::debug!(
+                                target: "telnet.runtime",
+                                "server SLC_EC erase character: 0x{erase:02x}"
+                            );
+                        }
+                    }
+                },
                 EngineEvent::Warning(detail) => {
                     log::warn!(target: "telnet.runtime", "protocol warning: {detail}")
                 }
@@ -387,6 +436,7 @@ impl TelnetState {
             }
         }
         TelnetReceiveOutcome {
+            data: received.unwrap_or_default(),
             writes,
             error,
             transport_ready,
@@ -444,6 +494,16 @@ impl TelnetState {
         let payload = self.engine.status_payload();
         collect_protocol_writes(self.engine.subnegotiation(STATUS, &payload))
     }
+
+    fn linemode_slc_query_events(&mut self) -> Vec<u8> {
+        // RFC 1184: SLC function 0 with SLC_VALUE requests the server's
+        // current special-character table. We only consume SLC_EC; local
+        // line editing remains disabled so xterm.js keeps character mode.
+        collect_protocol_writes(
+            self.engine
+                .subnegotiation(LINEMODE, &[LINEMODE_SLC, 0, SLC_VALUE, 0]),
+        )
+    }
 }
 
 fn collect_protocol_writes(events: Vec<EngineEvent>) -> Vec<u8> {
@@ -458,14 +518,6 @@ fn collect_protocol_writes(events: Vec<EngineEvent>) -> Vec<u8> {
         }
     }
     writes
-}
-
-fn drain_pending_data(state: &mut TelnetState, output: &mut [u8]) -> usize {
-    let size = output.len().min(state.pending_data.len());
-    if size > 0 {
-        output[..size].copy_from_slice(&state.pending_data.split_to(size));
-    }
-    size
 }
 
 async fn write_telnet_socket(
@@ -612,6 +664,43 @@ fn push_env_escaped(output: &mut Vec<u8>, value: &[u8]) {
     }
 }
 
+fn parse_linemode_erase_character(payload: &[u8]) -> Option<u8> {
+    // 只解析 SLC 子命令；MODE/FORWARDMASK 等其他子命令不携带字符表。
+    if payload.first() != Some(&LINEMODE_SLC) {
+        return None;
+    }
+    let mut index = 1;
+    while index + 2 < payload.len() {
+        if payload[index] == SLC_EC {
+            // The low two bits are the SLC level; ACK/flush flags occupy the
+            // high bits. CANTCHANGE still carries the current value and is
+            // therefore just as usable as VALUE. Ignore DEFAULT/NOSUPPORT,
+            // which do not identify a character to send.
+            let level = payload[index + 1] & 0x03;
+            if matches!(level, SLC_CANTCHANGE | SLC_VALUE) {
+                return Some(payload[index + 2]);
+            }
+        }
+        index += 3;
+    }
+    None
+}
+
+/// RFC 1184 MODE 应答：本端不做本地行编辑，对服务器的 MODE 建议回 ACK 并清掉
+/// EDIT（SOFT_TAB/LIT_ECHO 是 EDIT 的修饰位、TRAPSIG 只在本地编辑时有意义，一
+/// 并清掉），让服务器继续做行编辑与回显。不答或答错都会把行编辑职责留在两端
+/// 之间悬空；对方发来的 ACK 不再回应，避免来回确认。
+fn linemode_mode_ack(payload: &[u8]) -> Option<[u8; 2]> {
+    let mode = *payload.get(1)?;
+    if mode & MODE_ACK != 0 {
+        return None;
+    }
+    Some([
+        LINEMODE_MODE,
+        (mode & !(MODE_EDIT | MODE_TRAPSIG | MODE_SOFT_TAB | MODE_LIT_ECHO)) | MODE_ACK,
+    ])
+}
+
 pub(super) fn normalize_terminal_type(value: Option<&str>) -> String {
     match value.unwrap_or("xterm-256color").trim() {
         "xterm" => "xterm",
@@ -627,7 +716,9 @@ pub(super) fn normalize_terminal_type(value: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::engine::{DONT, STATUS_IS};
+    use super::engine::{
+        DONT, IAC, LINEMODE, LINEMODE_MODE, LINEMODE_SLC, MODE_ACK, SLC_EC, SLC_VALUE, STATUS_IS,
+    };
     use super::*;
 
     fn test_config() -> TelnetConfig {
@@ -636,6 +727,7 @@ mod tests {
             cols: 80,
             rows: 24,
             env_vars: telnet_env_var_list(Some("xterm-256color"), Some("UTF-8")),
+            backspace_sends: Some("AUTO".to_string()),
         }
     }
 
@@ -662,6 +754,82 @@ mod tests {
         assert!(writes
             .windows(3)
             .any(|candidate| candidate == [255, DO, COMPRESS2]));
+        assert!(writes
+            .windows(3)
+            .any(|candidate| candidate == [255, WILL, LINEMODE]));
+    }
+
+    #[test]
+    fn linemode_will_triggers_slc_query_and_erase_value_is_applied() {
+        let mut state = TelnetState::new(test_config());
+        let outcome = state.receive(&[IAC, DO, LINEMODE]);
+        assert!(outcome
+            .writes
+            .windows(8)
+            .any(|frame| { frame == [IAC, 250, LINEMODE, LINEMODE_SLC, 0, SLC_VALUE, 0, IAC] }));
+
+        let outcome = state.receive(&[
+            IAC,
+            250,
+            LINEMODE,
+            LINEMODE_SLC,
+            SLC_EC,
+            SLC_VALUE,
+            8,
+            IAC,
+            240,
+        ]);
+        assert!(outcome.error.is_none());
+        assert_eq!(
+            super::collect_protocol_writes(state.engine.send_terminal_input(b"\x7f")),
+            b"\x08"
+        );
+    }
+
+    #[test]
+    fn linemode_mode_is_acknowledged_without_local_editing() {
+        let mut state = TelnetState::new(test_config());
+        // 服务器建议 EDIT|TRAPSIG：本端 ACK 且全部清掉（不做本地行编辑）。
+        let outcome = state.receive(&[IAC, 250, LINEMODE, LINEMODE_MODE, 0x03, IAC, 240]);
+        assert_eq!(
+            outcome.writes.as_ref(),
+            [IAC, 250, LINEMODE, LINEMODE_MODE, MODE_ACK, IAC, 240]
+        );
+        // 对方发来的 ACK 不再回应，避免来回确认。
+        let outcome = state.receive(&[IAC, 250, LINEMODE, LINEMODE_MODE, MODE_ACK, IAC, 240]);
+        assert!(outcome.writes.is_empty());
+    }
+
+    #[test]
+    fn linemode_mode_payload_is_not_mistaken_for_an_slc_table() {
+        let mut state = TelnetState::new(test_config());
+        // MODE 子命令的字节布局恰好满足三元组扫描时不得产出擦除字符。
+        let outcome = state.receive(&[
+            IAC,
+            250,
+            LINEMODE,
+            LINEMODE_MODE,
+            SLC_EC,
+            SLC_VALUE,
+            IAC,
+            240,
+        ]);
+        assert!(outcome.error.is_none());
+        assert_eq!(
+            super::collect_protocol_writes(state.engine.send_terminal_input(b"\x7f")),
+            b"\x7f"
+        );
+    }
+
+    #[test]
+    fn linemode_ignores_non_value_erase_entries() {
+        let mut state = TelnetState::new(test_config());
+        let outcome = state.receive(&[IAC, 250, LINEMODE, LINEMODE_SLC, SLC_EC, 3, 0, IAC, 240]);
+        assert!(outcome.error.is_none());
+        assert_eq!(
+            super::collect_protocol_writes(state.engine.send_terminal_input(b"\x7f")),
+            b"\x7f"
+        );
     }
 
     #[test]
@@ -781,7 +949,7 @@ mod tests {
         let outcome = state.receive(b"login: ");
 
         assert!(outcome.transport_ready);
-        assert_eq!(state.pending_data.as_ref(), b"login: ");
+        assert_eq!(outcome.data, b"login: ");
     }
 
     #[tokio::test]
@@ -806,5 +974,87 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(startup[..size].windows(2).any(|bytes| bytes[0] == 255));
+    }
+
+    /// 还原设备侧真实场景：服务器回显可打印字符、对 DEL 完全沉默、对 BS 回显
+    /// BS SP BS。AUTO 模式必须先原样发出 DEL，探测窗沉默后透明补发 BS，并在
+    /// 看到擦除回显后把后续 DEL 按键改写为 BS。
+    #[tokio::test]
+    async fn auto_backspace_learns_bs_from_echo_probing() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (client, accepted) =
+            tokio::join!(tokio::net::TcpStream::connect(address), listener.accept());
+        let mut server = accepted.unwrap().0;
+        let mut runtime = TelnetRuntime::new(client.unwrap(), test_config());
+        runtime.flush_startup().await.unwrap();
+
+        let (seen_tx, mut seen_rx) = tokio::sync::mpsc::unbounded_channel();
+        let server_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 256];
+            let mut iac_skip = 0_usize;
+            loop {
+                let size = server.read(&mut buffer).await.unwrap();
+                if size == 0 {
+                    return;
+                }
+                for &byte in &buffer[..size] {
+                    if iac_skip > 0 {
+                        iac_skip -= 1;
+                        continue;
+                    }
+                    if byte == 255 {
+                        iac_skip = 2;
+                        continue;
+                    }
+                    seen_tx.send(byte).unwrap();
+                    match byte {
+                        0x7f => {}
+                        0x08 => server.write_all(b"\x08 \x08").await.unwrap(),
+                        byte if byte.is_ascii_graphic() => {
+                            server.write_all(&[byte]).await.unwrap();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        });
+
+        let mut buffer = [0_u8; 256];
+
+        async fn read_some(runtime: &mut TelnetRuntime, buffer: &mut [u8]) {
+            match tokio::time::timeout(
+                Duration::from_millis(2_000),
+                runtime.read_into_with_negotiation(buffer),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) => panic!("read failed"),
+                Err(_) => panic!("read timed out"),
+            }
+        }
+
+        // 打字建立回显活性。
+        runtime.write(b"a").await.unwrap();
+        read_some(&mut runtime, &mut buffer).await;
+        assert_eq!(seen_rx.recv().await, Some(b'a'));
+
+        // 第一次退格：DEL 原样发出，设备沉默。
+        runtime.write(b"\x7f").await.unwrap();
+        assert_eq!(seen_rx.recv().await, Some(0x7f));
+        let deadline = runtime.erase_probe_deadline().expect("probe must be armed");
+        tokio::time::sleep_until(deadline.into()).await;
+        // 探测窗到期：回显活跃下的沉默 → 透明补发 BS，设备回显擦除序列。
+        runtime.flush_erase_probe_retry().await.unwrap();
+        assert_eq!(seen_rx.recv().await, Some(0x08));
+        read_some(&mut runtime, &mut buffer).await;
+
+        // 学习完成：后续 DEL 按键改写为 BS。
+        runtime.write(b"\x7f").await.unwrap();
+        assert_eq!(seen_rx.recv().await, Some(0x08));
+        server_task.abort();
     }
 }

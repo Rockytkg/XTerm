@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 use std::io::Write as _;
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, write::EncoderStringWriter};
-use memchr::memchr;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
@@ -10,7 +9,7 @@ use crate::{
     terminal::{
         api::dto::{TerminalEventEnvelope, TerminalSessionChannelPayload},
         internal::{
-            codec::flush_decoded_backend_bytes_with_raw,
+            codec::{contains_trzsz_trigger, flush_decoded_backend_bytes_with_raw, RawBytesMode},
             core::{
                 CodecState, TerminalWorkingDirectoryEvent, OUTPUT_FLUSH_MAX_BYTES,
                 REPLAY_CACHE_MAX_BYTES,
@@ -22,7 +21,6 @@ use crate::{
 };
 
 const REPLAY_BATCH_MAX_BYTES: usize = 64 * 1024;
-const TRZSZ_TRIGGER_BYTES: &[u8] = b"::TRZSZ:TRANSFER:";
 /// 尾块合并的尺寸上限：低波特率下输出以每秒数百个几字节小块到达，逐块入缓存
 /// 会把分配/记账开销放大数十倍；同编码的纯文本小块直接追加进尾块。超过上限
 /// 另起新块，保持裁剪与回放批次的粒度有界。
@@ -118,11 +116,23 @@ impl SessionDeliveryState {
         }
     }
 
+    /// Mirrors the preserve condition in `push_cached_output` so the codec only
+    /// copies raw bytes that the cache would actually keep: armed raw channel,
+    /// or a chunk carrying the trzsz trigger (which arms the channel).
+    pub(super) fn raw_bytes_mode(&self) -> RawBytesMode {
+        if !self.raw_bytes_supported {
+            RawBytesMode::Disabled
+        } else if self.raw_output_channel_id.is_some() {
+            RawBytesMode::Armed
+        } else {
+            RawBytesMode::Detect
+        }
+    }
+
     fn push_cached_output(&mut self, data: String, encoding: String, raw_bytes: Option<Vec<u8>>) {
         let raw_bytes = raw_bytes.unwrap_or_default();
         let preserve_raw_bytes = self.raw_bytes_supported
-            && (self.raw_output_channel_id.is_some()
-                || raw_bytes_contain_trzsz_trigger(&raw_bytes));
+            && (self.raw_output_channel_id.is_some() || contains_trzsz_trigger(&raw_bytes));
         if self.raw_output_channel_id.is_none() && preserve_raw_bytes {
             self.raw_output_channel_id = self.active_channel_id;
             self.raw_output_enabled = true;
@@ -177,7 +187,7 @@ pub(super) fn flush_terminal_output(
     codec: &mut CodecState,
     delivery: &mut SessionDeliveryState,
 ) {
-    let tail = flush_decoded_backend_bytes_with_raw(codec, delivery.raw_bytes_supported);
+    let tail = flush_decoded_backend_bytes_with_raw(codec, delivery.raw_bytes_mode());
     if !tail.data.is_empty() {
         emit_terminal_data(
             app,
@@ -287,24 +297,6 @@ fn cache_terminal_data(
         emit_working_directory(app, session_id, directory);
     }
     delivery.push_cached_output(data, encoding, raw_bytes);
-}
-
-fn raw_bytes_contain_trzsz_trigger(raw_bytes: &[u8]) -> bool {
-    if raw_bytes.len() < TRZSZ_TRIGGER_BYTES.len() {
-        return false;
-    }
-    let mut offset = 0_usize;
-    while let Some(index) = memchr(b':', &raw_bytes[offset..]) {
-        let start = offset + index;
-        if raw_bytes.len() - start < TRZSZ_TRIGGER_BYTES.len() {
-            return false;
-        }
-        if raw_bytes[start..].starts_with(TRZSZ_TRIGGER_BYTES) {
-            return true;
-        }
-        offset = start + 1;
-    }
-    false
 }
 
 /// 回放缓存的字节硬上限。裁剪保留最新尾部，让重新挂载的前端看到最近的若干屏；

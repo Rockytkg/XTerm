@@ -1,5 +1,3 @@
-use bytes::Bytes;
-
 use super::{
     core::{
         SessionWorkerEvent, TransportCommand, TransportCommandOutcome, SESSION_BUFFER_SIZE,
@@ -24,6 +22,7 @@ pub(super) fn spawn_telnet_transport_actor(
         let mut transport_ready = false;
         log::debug!(target: "telnet.transport", "backend Telnet actor for '{session_id}' started");
         loop {
+            let erase_deadline = runtime.erase_probe_deadline();
             tokio::select! {
                 biased;
                 command = rx.recv() => {
@@ -43,9 +42,17 @@ pub(super) fn spawn_telnet_transport_actor(
                         }
                     }
                 }
+                // 退格探测窗到期：回显沉默时透明补发另一候选字节。无探测时该
+                // 分支永久 pending，不参与选择。
+                () = wait_for_erase_probe(erase_deadline) => {
+                    if let Err(error) = runtime.flush_erase_probe_retry().await {
+                        send_transport_failed(&event_tx, error);
+                        return;
+                    }
+                }
                 result = runtime.read_into_with_negotiation(&mut buffer) => {
                     match result {
-                        Ok((size, became_ready)) => {
+                        Ok((data, became_ready)) => {
                             if became_ready && !transport_ready {
                                 transport_ready = true;
                                 if !send_transport_ready(&event_tx) {
@@ -55,14 +62,10 @@ pub(super) fn spawn_telnet_transport_actor(
                             }
                             // A pure negotiation read yields no payload; skip
                             // the empty Data event.
-                            if size == 0 {
+                            if data.is_empty() {
                                 continue;
                             }
-                            if send_transport_data(
-                                &event_tx,
-                                Bytes::copy_from_slice(&buffer[..size]),
-                                None,
-                            ) {
+                            if send_transport_data(&event_tx, data, None) {
                                 continue;
                             }
                             let _ = runtime.close().await;
@@ -82,6 +85,13 @@ pub(super) fn spawn_telnet_transport_actor(
 const REMOTE_CLOSED_DETAIL: &str = "Telnet connection closed by remote host";
 const NEGOTIATION_FAILED_DETAIL: &str =
     "Telnet negotiation failed: remote host closed the connection before the session became ready";
+
+async fn wait_for_erase_probe(deadline: Option<std::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+        None => std::future::pending().await,
+    }
+}
 
 fn send_telnet_transport_failure(
     event_tx: &tokio::sync::mpsc::UnboundedSender<SessionWorkerEvent>,
@@ -110,6 +120,10 @@ async fn handle_telnet_transport_command(
             tokio::time::timeout(WRITE_STALL_TIMEOUT, runtime.write(&bytes))
                 .await
                 .map_err(|_| "telnet write timed out".to_string())??;
+            Ok(TransportCommandOutcome::Continue)
+        }
+        TransportCommand::SetBackspaceMode(mode) => {
+            runtime.set_backspace_mode(mode.as_deref());
             Ok(TransportCommandOutcome::Continue)
         }
         TransportCommand::InvokeCapability(command) => {

@@ -957,7 +957,9 @@ function handleTerminalData(payload) {
   const { normalized } = decision;
 
   const rawBytes =
-    decision.kind === "raw" ? decodeTerminalOutputBytes(normalized.dataBase64) : null;
+    decision.kind === "raw"
+      ? (normalized.bytes ?? decodeTerminalOutputBytes(normalized.dataBase64))
+      : null;
   if (trzszAddon?.processServerOutput(normalized, rawBytes)) {
     rememberTerminalOffset(normalized.endOffset);
     return;

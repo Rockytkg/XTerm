@@ -2,6 +2,7 @@ mod codec;
 pub(crate) mod commands;
 pub(crate) mod core;
 mod delivery;
+mod erase_detector;
 #[path = "protocols/loopback_bridge.rs"]
 pub(crate) mod loopback_bridge;
 mod osc;

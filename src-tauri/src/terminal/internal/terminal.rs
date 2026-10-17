@@ -341,6 +341,12 @@ async fn handle_session_command(
             }
             true
         }
+        SessionCommand::SetBackspaceMode { mode } => forward_transport_command(
+            &session_loop.app,
+            &session_loop.session_id,
+            &session_loop.transport_tx,
+            TransportCommand::SetBackspaceMode(mode),
+        ),
         SessionCommand::SetRawOutput {
             channel_id,
             enabled,
@@ -487,7 +493,7 @@ fn handle_worker_event(
             let payload = decode_backend_bytes_with_raw(
                 &bytes,
                 session_loop.codec,
-                session_loop.delivery.raw_bytes_supported,
+                session_loop.delivery.raw_bytes_mode(),
             );
             let startup_auth_payload =
                 prepare_startup_auth_write(&mut session_loop.startup_auth, &payload.data);

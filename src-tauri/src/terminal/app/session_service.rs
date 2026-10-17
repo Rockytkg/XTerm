@@ -418,6 +418,15 @@ impl SessionApplicationService {
         )
     }
 
+    pub(crate) fn set_backspace_mode(
+        &self,
+        state: &AppState,
+        session_id: &str,
+        mode: Option<String>,
+    ) -> Result<(), TerminalApiError> {
+        SessionCommandBus::new(state).send(session_id, SessionCommand::SetBackspaceMode { mode })
+    }
+
     pub(crate) fn set_metrics_enabled(
         &self,
         state: &AppState,

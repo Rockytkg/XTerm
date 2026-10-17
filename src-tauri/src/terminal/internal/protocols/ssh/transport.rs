@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use std::time::Duration;
 
 use super::{
@@ -53,11 +52,9 @@ pub(super) fn spawn_ssh_transport_actor(
                 message = read_half.wait() => {
                     match message {
                         Some(russh::ChannelMsg::Data { data }) | Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                            if !send_transport_data(
-                                &event_tx,
-                                Bytes::copy_from_slice(&data),
-                                None,
-                            ) {
+                            // `data` is already a `bytes::Bytes`; pass it through instead of
+                            // paying a per-chunk heap copy.
+                            if !send_transport_data(&event_tx, data, None) {
                                 let _ = write_half.close().await;
                                 let _ = disconnect_ssh_session(&transport.session).await;
                                 return;
@@ -139,6 +136,7 @@ async fn handle_ssh_transport_command(
             .map_err(|_| "SSH channel write timed out".to_string())??;
             Ok(TransportCommandOutcome::Continue)
         }
+        TransportCommand::SetBackspaceMode(_) => Ok(TransportCommandOutcome::Continue),
         TransportCommand::InvokeCapability(command) => {
             resolve_unsupported_transport_capability(command)
         }

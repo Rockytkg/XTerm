@@ -286,6 +286,7 @@ impl ConnectionApplicationService {
             accept_host_key_once: request.accept_host_key_once,
             terminal_type: None,
             encoding: None,
+            backspace_sends: None,
             realtime_encoding_detection: None,
             cols: request.cols,
             rows: request.rows,

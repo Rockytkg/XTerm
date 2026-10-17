@@ -301,6 +301,22 @@ test("press maps named keys and ctrl combinations to control sequences", async (
   assert.deepEqual(sent, ["\x03", "\r", "\x1b", "\x1b[A", "\x1b[15~", "\x1a"]);
 });
 
+test("press backspace follows the session backspace mode", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "e9b",
+      name: "press-backspace",
+      code: `await xterm.press("backspace");`,
+    },
+    testContext({ sessionInfo: { backspaceSends: "BS" } }),
+  );
+  const sent = [...bridge.sent];
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.deepEqual(sent, ["\x08"]);
+});
+
 test("press rejects unknown key names without sending anything", async () => {
   setup();
   const run = await runScript(

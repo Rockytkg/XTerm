@@ -1,4 +1,4 @@
-import { BACKSPACE_SENDS } from "../terminalSessionOptions";
+import { BACKSPACE_SENDS } from "../terminalSessionOptions.js";
 import { bytesToBase64, stringToBytes } from "./addons/trzsz/bytes.js";
 
 export function binaryStringToBase64(value) {

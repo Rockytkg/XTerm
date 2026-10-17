@@ -11,6 +11,57 @@ use crate::terminal::internal::core::{
 /// truncated tail character (stream chunking artifact, not real content).
 const UTF8_PREFIX_CONFIDENCE: f32 = 0.86;
 
+const TRZSZ_TRIGGER_BYTES: &[u8] = b"::TRZSZ:TRANSFER:";
+
+/// How a decode pass should populate `ConnectionReadResult.raw_bytes`. The
+/// caller derives the mode from the delivery state so raw bytes are only
+/// copied when the replay cache would actually keep them; anything else would
+/// be copied here and discarded by `push_cached_output` in the same pass.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum RawBytesMode {
+    /// Transport cannot deliver raw bytes: never copy.
+    Disabled,
+    /// Raw channel is armed: preserve every delivered byte.
+    Armed,
+    /// Raw channel idle: preserve the chunk only when it carries the trzsz
+    /// trigger, so the transfer protocol can still auto-arm.
+    Detect,
+}
+
+impl RawBytesMode {
+    fn select(self, bytes: &[u8]) -> Vec<u8> {
+        match self {
+            RawBytesMode::Disabled => Vec::new(),
+            RawBytesMode::Armed => bytes.to_vec(),
+            RawBytesMode::Detect => {
+                if contains_trzsz_trigger(bytes) {
+                    bytes.to_vec()
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn contains_trzsz_trigger(raw_bytes: &[u8]) -> bool {
+    if raw_bytes.len() < TRZSZ_TRIGGER_BYTES.len() {
+        return false;
+    }
+    let mut offset = 0_usize;
+    while let Some(index) = memchr(b':', &raw_bytes[offset..]) {
+        let start = offset + index;
+        if raw_bytes.len() - start < TRZSZ_TRIGGER_BYTES.len() {
+            return false;
+        }
+        if raw_bytes[start..].starts_with(TRZSZ_TRIGGER_BYTES) {
+            return true;
+        }
+        offset = start + 1;
+    }
+    false
+}
+
 impl CodecState {
     pub(super) fn new(backend_encoding: Option<String>, realtime_detection_enabled: bool) -> Self {
         let backend_encoding_handle = backend_encoding
@@ -59,13 +110,13 @@ impl CodecState {
 
 #[cfg(test)]
 fn decode_backend_bytes(bytes: &[u8], codec: &mut CodecState) -> ConnectionReadResult {
-    decode_backend_bytes_with_raw(bytes, codec, true)
+    decode_backend_bytes_with_raw(bytes, codec, RawBytesMode::Armed)
 }
 
 pub(super) fn decode_backend_bytes_with_raw(
     bytes: &[u8],
     codec: &mut CodecState,
-    include_raw_bytes: bool,
+    raw_mode: RawBytesMode,
 ) -> ConnectionReadResult {
     if bytes.is_empty() {
         return empty_decode_result(codec);
@@ -80,55 +131,51 @@ pub(super) fn decode_backend_bytes_with_raw(
                     active_encoding(codec).unwrap_or((UTF_8, default_confidence(codec, UTF_8)));
                 return ConnectionReadResult {
                     data: text.to_owned(),
-                    raw_bytes: if include_raw_bytes {
-                        bytes.to_vec()
-                    } else {
-                        Vec::new()
-                    },
+                    raw_bytes: raw_mode.select(bytes),
                     encoding: encoding_label(encoding),
                     confidence,
                 };
             }
-            if let Some(result) = valid_utf8_unsettled_result(codec, bytes, text, include_raw_bytes)
-            {
+            if let Some(result) = valid_utf8_unsettled_result(codec, bytes, text, raw_mode) {
                 return result;
             }
         }
         // 缓冲为空时直接借用新块解码，只有未消费的尾部才会进入缓冲。
-        return decode_chunk(codec, bytes, false, include_raw_bytes);
+        return decode_chunk(codec, bytes, false, raw_mode);
     }
 
     codec.raw_buffer.extend_from_slice(bytes);
     let combined = take_undecoded_bytes(codec);
-    decode_chunk(codec, &combined, false, include_raw_bytes)
+    decode_chunk(codec, &combined, false, raw_mode)
 }
 
-pub(super) fn flush_decoded_backend_bytes(codec: &mut CodecState) -> ConnectionReadResult {
-    flush_decoded_backend_bytes_with_raw(codec, true)
+#[cfg(test)]
+fn flush_decoded_backend_bytes(codec: &mut CodecState) -> ConnectionReadResult {
+    flush_decoded_backend_bytes_with_raw(codec, RawBytesMode::Armed)
 }
 
 pub(super) fn flush_decoded_backend_bytes_with_raw(
     codec: &mut CodecState,
-    include_raw_bytes: bool,
+    raw_mode: RawBytesMode,
 ) -> ConnectionReadResult {
     if codec.raw_buffer.is_empty() && codec.pending_tail.is_empty() {
         return empty_decode_result(codec);
     }
 
     let combined = take_undecoded_bytes(codec);
-    decode_chunk(codec, &combined, true, include_raw_bytes)
+    decode_chunk(codec, &combined, true, raw_mode)
 }
 
 fn decode_chunk(
     codec: &mut CodecState,
     chunk: &[u8],
     force: bool,
-    include_raw_bytes: bool,
+    raw_mode: RawBytesMode,
 ) -> ConnectionReadResult {
     debug_assert!(!chunk.is_empty());
 
     // UTF-8 预检每块只跑一次，结果同时驱动直发与"撕裂尾部等待"判定。
-    match precheck_utf8(codec, chunk, force, include_raw_bytes) {
+    match precheck_utf8(codec, chunk, force, raw_mode) {
         PrecheckUtf8::Delivered(result) => return result,
         PrecheckUtf8::Held => {
             stash_undecoded_bytes(codec, chunk);
@@ -156,18 +203,19 @@ fn decode_chunk(
     }
 
     if let Some(result) =
-        decode_utf8_candidate_for_auto_detected_legacy(codec, chunk, force, include_raw_bytes)
+        decode_utf8_candidate_for_auto_detected_legacy(codec, chunk, force, raw_mode)
     {
         return result;
     }
 
-    let (mut encoding, mut confidence) = select_encoding_for_decode(chunk, codec, force);
-    let mut decoded = decode_complete_chunk(chunk, encoding, force);
+    let ((mut encoding, mut confidence), mut predecoded) =
+        select_encoding_for_decode(chunk, codec, force);
+    let mut decoded = decode_complete_chunk(chunk, encoding, force, predecoded.take());
 
     if matches!(decoded, Some((_, _, _, true))) && should_recover_from_decode_errors(codec) {
         clear_detected_encoding(codec);
-        (encoding, confidence) = select_encoding_for_decode(chunk, codec, true);
-        decoded = decode_complete_chunk(chunk, encoding, force);
+        ((encoding, confidence), predecoded) = select_encoding_for_decode(chunk, codec, true);
+        decoded = decode_complete_chunk(chunk, encoding, force, predecoded.take());
     }
 
     let Some((data, complete_len, had_non_ascii, had_errors)) = decoded else {
@@ -192,11 +240,7 @@ fn decode_chunk(
 
     ConnectionReadResult {
         data,
-        raw_bytes: if include_raw_bytes {
-            chunk[..complete_len].to_vec()
-        } else {
-            Vec::new()
-        },
+        raw_bytes: raw_mode.select(&chunk[..complete_len]),
         encoding: encoding_label(encoding),
         confidence: if had_errors {
             confidence * 0.65
@@ -206,13 +250,27 @@ fn decode_chunk(
     }
 }
 
+/// The winning detection candidate's decode, kept so the delivery pass can
+/// reuse it instead of transcoding the same bytes a second time.
+struct ScoredDecode {
+    text: String,
+    had_errors: bool,
+    /// Length of the byte sample this text was decoded from.
+    sample_len: usize,
+}
+
 /// Decodes the longest complete-character prefix of `undecoded`. Returns
 /// `(text, consumed_len, had_non_ascii, had_errors)`, or `None` when the
 /// buffer ends (or starts) mid-character and nothing can be emitted yet.
+///
+/// `predecoded` is reused only when it covers exactly `undecoded` (same sample
+/// length and no torn tail trimmed off); `encoding.decode` is deterministic,
+/// so the reused text is byte-identical to a fresh decode of the same slice.
 fn decode_complete_chunk(
     undecoded: &[u8],
     encoding: &'static Encoding,
     force: bool,
+    predecoded: Option<ScoredDecode>,
 ) -> Option<(String, usize, bool, bool)> {
     let complete_len = if force {
         undecoded.len()
@@ -224,6 +282,11 @@ fn decode_complete_chunk(
     }
     let chunk = &undecoded[..complete_len];
     let had_non_ascii = !chunk.is_ascii();
+    if let Some(pre) = predecoded {
+        if complete_len == undecoded.len() && pre.sample_len == undecoded.len() {
+            return Some((pre.text, complete_len, had_non_ascii, pre.had_errors));
+        }
+    }
     let (text, _, had_errors) = encoding.decode(chunk);
     Some((text.into_owned(), complete_len, had_non_ascii, had_errors))
 }
@@ -323,7 +386,7 @@ fn precheck_utf8(
     codec: &mut CodecState,
     bytes: &[u8],
     force: bool,
-    include_raw_bytes: bool,
+    raw_mode: RawBytesMode,
 ) -> PrecheckUtf8 {
     if force
         || codec.backend_encoding.is_some()
@@ -339,7 +402,7 @@ fn precheck_utf8(
             if text.is_ascii() {
                 return PrecheckUtf8::Ascii;
             }
-            match valid_utf8_unsettled_result(codec, bytes, text, include_raw_bytes) {
+            match valid_utf8_unsettled_result(codec, bytes, text, raw_mode) {
                 Some(result) => PrecheckUtf8::Delivered(result),
                 None => PrecheckUtf8::Skipped,
             }
@@ -366,11 +429,7 @@ fn precheck_utf8(
 
             PrecheckUtf8::Delivered(ConnectionReadResult {
                 data: prefix.to_string(),
-                raw_bytes: if include_raw_bytes {
-                    bytes[..complete_len].to_vec()
-                } else {
-                    Vec::new()
-                },
+                raw_bytes: raw_mode.select(&bytes[..complete_len]),
                 encoding: encoding_label(UTF_8),
                 confidence: UTF8_PREFIX_CONFIDENCE,
             })
@@ -386,7 +445,7 @@ fn valid_utf8_unsettled_result(
     codec: &mut CodecState,
     bytes: &[u8],
     text: &str,
-    include_raw_bytes: bool,
+    raw_mode: RawBytesMode,
 ) -> Option<ConnectionReadResult> {
     if codec.backend_encoding.is_some()
         || codec.detected_encoding.is_some()
@@ -409,11 +468,7 @@ fn valid_utf8_unsettled_result(
 
     Some(ConnectionReadResult {
         data: text.to_owned(),
-        raw_bytes: if include_raw_bytes {
-            bytes.to_vec()
-        } else {
-            Vec::new()
-        },
+        raw_bytes: raw_mode.select(bytes),
         encoding: encoding_label(UTF_8),
         confidence,
     })
@@ -423,7 +478,7 @@ fn decode_utf8_candidate_for_auto_detected_legacy(
     codec: &mut CodecState,
     bytes: &[u8],
     force: bool,
-    include_raw_bytes: bool,
+    raw_mode: RawBytesMode,
 ) -> Option<ConnectionReadResult> {
     if force
         || codec.backend_encoding.is_some()
@@ -451,11 +506,7 @@ fn decode_utf8_candidate_for_auto_detected_legacy(
         codec.consecutive_errors = 0;
         return Some(ConnectionReadResult {
             data: text.to_string(),
-            raw_bytes: if include_raw_bytes {
-                bytes.to_vec()
-            } else {
-                Vec::new()
-            },
+            raw_bytes: raw_mode.select(bytes),
             encoding: encoding_label(UTF_8),
             confidence,
         });
@@ -470,11 +521,7 @@ fn decode_utf8_candidate_for_auto_detected_legacy(
 
     Some(ConnectionReadResult {
         data: prefix.to_string(),
-        raw_bytes: if include_raw_bytes {
-            bytes[..complete_len].to_vec()
-        } else {
-            Vec::new()
-        },
+        raw_bytes: raw_mode.select(&bytes[..complete_len]),
         encoding: encoding_label(UTF_8),
         confidence: UTF8_PREFIX_CONFIDENCE,
     })
@@ -578,28 +625,31 @@ fn select_encoding_for_decode(
     bytes: &[u8],
     codec: &mut CodecState,
     force: bool,
-) -> (&'static Encoding, f32) {
+) -> ((&'static Encoding, f32), Option<ScoredDecode>) {
     if let Some((encoding, confidence)) = active_encoding(codec) {
-        return (encoding, confidence);
+        return ((encoding, confidence), None);
     }
 
     if bytes.is_ascii() {
-        return (UTF_8, 0.98);
+        return ((UTF_8, 0.98), None);
     }
 
     if !codec.realtime_detection_enabled {
-        return (UTF_8, default_confidence(codec, UTF_8));
+        return ((UTF_8, default_confidence(codec, UTF_8)), None);
     }
 
     let should_refresh = codec.detected_confidence < DETECTION_LOCK_CONFIDENCE
         || codec.consecutive_errors >= DETECTION_ERROR_UNLOCK_THRESHOLD;
     if !should_refresh {
-        return active_encoding(codec).unwrap_or((UTF_8, default_confidence(codec, UTF_8)));
+        return (
+            active_encoding(codec).unwrap_or((UTF_8, default_confidence(codec, UTF_8))),
+            None,
+        );
     }
 
-    let (encoding, confidence) = select_detected_encoding(bytes);
+    let (encoding, confidence, decode) = select_detected_encoding_with_decode(bytes);
     maybe_commit_detected_encoding(codec, bytes.len(), encoding, confidence, force);
-    (encoding, confidence)
+    ((encoding, confidence), decode)
 }
 
 fn maybe_commit_detected_encoding(
@@ -624,23 +674,46 @@ fn maybe_commit_detected_encoding(
     }
 }
 
+#[cfg(test)]
 pub(super) fn select_detected_encoding(bytes: &[u8]) -> (&'static Encoding, f32) {
+    let (encoding, confidence, _) = select_detected_encoding_with_decode(bytes);
+    (encoding, confidence)
+}
+
+/// Runs candidate scoring and keeps the winning decode so the delivery pass
+/// (`decode_complete_chunk`) can reuse it instead of transcoding the sample a
+/// second time. Only one extra String is alive at a time (the current best);
+/// losing candidates are dropped as they are scored.
+fn select_detected_encoding_with_decode(
+    bytes: &[u8],
+) -> (&'static Encoding, f32, Option<ScoredDecode>) {
     let start = bytes.len().saturating_sub(DETECTION_SAMPLE_MAX_BYTES);
     let sample = &bytes[start..];
     if let Ok(text) = std::str::from_utf8(sample) {
         let confidence = utf8_sample_confidence(sample, text);
-        return (UTF_8, confidence);
+        return (UTF_8, confidence, None);
     }
 
     let candidates = [GB18030, BIG5, SHIFT_JIS, EUC_KR];
-    let mut best = (candidates[0], score_decoded_sample(sample, candidates[0]));
+    let (score, text, had_errors) = decode_and_score(sample, candidates[0]);
+    let mut best = (candidates[0], score);
+    let mut best_decode = Some(ScoredDecode {
+        text,
+        had_errors,
+        sample_len: sample.len(),
+    });
     let mut runner_up = 0.0_f32;
 
     for encoding in candidates.into_iter().skip(1) {
-        let score = score_decoded_sample(sample, encoding);
+        let (score, text, had_errors) = decode_and_score(sample, encoding);
         if score > best.1 {
             runner_up = best.1;
             best = (encoding, score);
+            best_decode = Some(ScoredDecode {
+                text,
+                had_errors,
+                sample_len: sample.len(),
+            });
         } else if score > runner_up {
             runner_up = score;
         }
@@ -650,17 +723,23 @@ pub(super) fn select_detected_encoding(bytes: &[u8]) -> (&'static Encoding, f32)
         let mut detector = EncodingDetector::new(Iso2022JpDetection::Allow);
         detector.feed(sample, true);
         let guessed = detector.guess(None, Utf8Detection::Allow);
-        let guessed_score = score_decoded_sample(sample, guessed) + 0.03;
+        let (score, text, had_errors) = decode_and_score(sample, guessed);
+        let guessed_score = score + 0.03;
         if guessed_score > best.1 {
             runner_up = best.1;
             best = (guessed, guessed_score);
+            best_decode = Some(ScoredDecode {
+                text,
+                had_errors,
+                sample_len: sample.len(),
+            });
         } else if guessed_score > runner_up {
             runner_up = guessed_score;
         }
     }
 
     let confidence = finalize_detection_confidence(sample.len(), best.1, runner_up);
-    (best.0, confidence)
+    (best.0, confidence, best_decode)
 }
 
 fn should_consult_statistical_detector(sample_len: usize, best_score: f32, runner_up: f32) -> bool {
@@ -709,8 +788,21 @@ fn finalize_detection_confidence(sample_len: usize, best_score: f32, runner_up: 
     (best_score + margin_bonus).clamp(0.35, length_cap)
 }
 
-pub(super) fn score_decoded_sample(bytes: &[u8], encoding: &'static Encoding) -> f32 {
+/// Decodes `bytes` with `encoding` and scores the result. The decoded text is
+/// returned alongside the score so the winning candidate's decode can be
+/// reused for delivery instead of being dropped and recomputed.
+fn decode_and_score(bytes: &[u8], encoding: &'static Encoding) -> (f32, String, bool) {
     let (text, _, had_errors) = encoding.decode(bytes);
+    let score = score_decoded_text(bytes, &text, encoding, had_errors);
+    (score, text.into_owned(), had_errors)
+}
+
+fn score_decoded_text(
+    bytes: &[u8],
+    text: &str,
+    encoding: &'static Encoding,
+    had_errors: bool,
+) -> f32 {
     let mut chars = 0_usize;
     let mut printable = 0_usize;
     let mut cjk = 0_usize;
@@ -981,7 +1073,7 @@ pub(super) fn analyze_serial_sample(sample: &[u8], encoding: Option<&str>) -> Se
 
     let mut codec = CodecState::new(encoding.map(ToOwned::to_owned), true);
     codec.raw_buffer.extend_from_slice(sample);
-    let decoded = flush_decoded_backend_bytes(&mut codec);
+    let decoded = flush_decoded_backend_bytes_with_raw(&mut codec, RawBytesMode::Disabled);
 
     let mut chars = 0_usize;
     let mut printable = 0_usize;
@@ -1158,11 +1250,11 @@ fn looks_like_network_device_console(lower: &str) -> bool {
 mod tests {
     use super::{
         analyze_serial_sample, decode_backend_bytes, decode_backend_bytes_with_raw,
-        flush_decoded_backend_bytes, select_detected_encoding,
+        flush_decoded_backend_bytes, select_detected_encoding, RawBytesMode,
     };
     use encoding_rs::Encoding;
 
-    use crate::terminal::internal::core::CodecState;
+    use crate::terminal::internal::core::{CodecState, DETECTION_SAMPLE_MAX_BYTES};
 
     #[test]
     fn gb18030_tail_is_preserved_across_chunks() {
@@ -1264,6 +1356,38 @@ mod tests {
         assert_eq!(decoded, sample);
         assert!(codec.pending_tail.is_empty());
         assert!(codec.raw_buffer.is_empty());
+    }
+
+    #[test]
+    fn detection_winning_decode_is_reused_for_delivery() {
+        // The detection pass scores each candidate with a full decode; the
+        // winning text must be byte-identical to a direct encoding_rs decode,
+        // which is what the delivery path would produce without reuse.
+        let mut codec = CodecState::new(None, true);
+        let sample = "中文命令提示> 中文命令提示# 中文命令提示$ 中文命令提示: 中文命令提示> 中文命令提示# 中文命令提示$ 中文命令提示:";
+        let (encoded, _, _) = Encoding::for_label(b"gbk").expect("gbk").encode(sample);
+
+        let decoded = decode_backend_bytes(encoded.as_ref(), &mut codec);
+
+        let (expected, _, _) = encoding_rs::GBK.decode(encoded.as_ref());
+        assert_eq!(decoded.data, expected.as_ref());
+    }
+
+    #[test]
+    fn oversized_sample_falls_back_to_fresh_decode() {
+        // Chunks larger than the detection window score only the tail window,
+        // so the delivery pass must decode the full chunk itself.
+        let mut codec = CodecState::new(None, true);
+        let sample = "状态正常接口已连接".repeat(600);
+        let (encoded, _, _) = Encoding::for_label(b"gb18030")
+            .expect("gb18030")
+            .encode(&sample);
+        assert!(encoded.len() > DETECTION_SAMPLE_MAX_BYTES);
+
+        let decoded = decode_backend_bytes(encoded.as_ref(), &mut codec);
+
+        let (expected, _, _) = encoding_rs::GB18030.decode(encoded.as_ref());
+        assert_eq!(decoded.data, expected.as_ref());
     }
 
     #[test]
@@ -1453,10 +1577,29 @@ mod tests {
     #[test]
     fn raw_bytes_can_be_omitted_for_protocols_without_raw_output() {
         let mut codec = CodecState::new(None, true);
-        let decoded = decode_backend_bytes_with_raw(b"serial output\r\n", &mut codec, false);
+        let decoded =
+            decode_backend_bytes_with_raw(b"serial output\r\n", &mut codec, RawBytesMode::Disabled);
 
         assert_eq!(decoded.data, "serial output\r\n");
         assert!(decoded.raw_bytes.is_empty());
+    }
+
+    #[test]
+    fn detect_mode_only_keeps_raw_bytes_for_trzsz_trigger_chunks() {
+        let mut codec = CodecState::new(None, true);
+        let plain =
+            decode_backend_bytes_with_raw(b"plain output\r\n", &mut codec, RawBytesMode::Detect);
+        assert_eq!(plain.data, "plain output\r\n");
+        assert!(plain.raw_bytes.is_empty());
+
+        let trigger = b"before ::TRZSZ:TRANSFER:xyz\r\n";
+        let triggered = decode_backend_bytes_with_raw(trigger, &mut codec, RawBytesMode::Detect);
+        assert_eq!(triggered.raw_bytes, trigger);
+
+        let mut armed = CodecState::new(None, true);
+        let kept =
+            decode_backend_bytes_with_raw(b"plain again\r\n", &mut armed, RawBytesMode::Armed);
+        assert_eq!(kept.raw_bytes, b"plain again\r\n");
     }
 
     #[test]

@@ -197,6 +197,7 @@ impl ParsedUri {
             parity: None,
             stop_bits: None,
             encoding: None,
+            backspace_sends: None,
             realtime_encoding_detection: None,
             auth_method: None,
             saved_credential_id: None,

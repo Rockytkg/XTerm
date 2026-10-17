@@ -35,6 +35,12 @@ function defaultTerminalHighlightEnabled(profile, protocol) {
   return requiresHostKeyVerification(protocol) ? false : true;
 }
 
+function defaultBackspaceSends(protocol) {
+  return isTelnetProtocol(protocol) || isSerialProtocol(protocol)
+    ? BACKSPACE_SENDS.AUTO
+    : BACKSPACE_SENDS.DEL;
+}
+
 function commonDraftFromProfile(profile, protocol) {
   const options = profile?.options ?? {};
   return {
@@ -42,7 +48,7 @@ function commonDraftFromProfile(profile, protocol) {
     terminalHighlightEnabled: defaultTerminalHighlightEnabled(profile, protocol),
     terminalType: options.terminalType || DEFAULT_TERMINAL_TYPE,
     encoding: options.encoding || DEFAULT_TERMINAL_ENCODING,
-    backspaceSends: options.backspaceSends || BACKSPACE_SENDS.DEL,
+    backspaceSends: options.backspaceSends || defaultBackspaceSends(protocol),
     terminalMorePromptCleanup: options.terminalMorePromptCleanup === true,
     runtimeMetrics: options.runtimeMetrics !== false,
   };
@@ -194,11 +200,12 @@ export function buildConnectionProfile({
 }) {
   const encodingValue =
     form.encoding === DEFAULT_TERMINAL_ENCODING ? undefined : form.encoding || undefined;
+  const defaultBackspace = defaultBackspaceSends(protocol);
   const options = {
     terminalType: form.terminalType || undefined,
     encoding: encodingValue,
     backspaceSends:
-      form.backspaceSends === BACKSPACE_SENDS.DEL ? undefined : form.backspaceSends || undefined,
+      form.backspaceSends === defaultBackspace ? undefined : form.backspaceSends || undefined,
     terminalHighlightEnabled: form.terminalHighlightEnabled,
     terminalMorePromptCleanup: form.terminalMorePromptCleanup === true ? true : undefined,
     runtimeMetrics: form.runtimeMetrics === false ? false : undefined,

@@ -56,6 +56,7 @@ export function useScriptExecution() {
       host: session?.host || "",
       port: session?.port ?? "",
       username: session?.username || "",
+      backspaceSends: session?.backspaceSends || "",
     };
   }
 

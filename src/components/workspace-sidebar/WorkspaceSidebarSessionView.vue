@@ -4,7 +4,11 @@ import { useI18n } from "vue-i18n";
 import { AppWindow, Cable, Globe2, Monitor, Server } from "@lucide/vue";
 import { useToasts } from "../../composables/useToasts";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { setBackendEncodingDetection, setBackendRuntimeMetricsEnabled } from "../../services/terminalSessions";
+import {
+  setBackendBackspaceMode,
+  setBackendEncodingDetection,
+  setBackendRuntimeMetricsEnabled,
+} from "../../services/terminalSessions";
 import { connectionCan } from "../../utils/connectionCapabilities";
 import { createLogger } from "../../utils/logger";
 import { isRdpProtocol, isSerialProtocol, isSshProtocol, isTelnetProtocol, isVncProtocol } from "../../utils/connectionProtocols";
@@ -15,7 +19,9 @@ import {
   BACKSPACE_SENDS_OPTIONS,
   DEFAULT_TERMINAL_ENCODING,
   DEFAULT_TERMINAL_TYPE,
+  SERIAL_BACKSPACE_SENDS_OPTIONS,
   TERMINAL_TYPE_OPTIONS,
+  TELNET_BACKSPACE_SENDS_OPTIONS,
   createEncodingOptions,
 } from "../../utils/terminalSessionOptions";
 
@@ -67,10 +73,19 @@ const baudRate = computed(
 const terminalType = computed(() => props.activeConnection?.terminalType || DEFAULT_TERMINAL_TYPE);
 const encoding = computed(() => props.activeConnection?.encoding || DEFAULT_TERMINAL_ENCODING);
 const backspaceSends = computed(
-  () => props.activeConnection?.backspaceSends || BACKSPACE_SENDS.DEL,
+  () =>
+    props.activeConnection?.backspaceSends ||
+    (isTelnetProtocol(protocol.value) || isSerialProtocol(protocol.value)
+      ? BACKSPACE_SENDS.AUTO
+      : BACKSPACE_SENDS.DEL),
 );
 
 const encodingOptions = computed(() => createEncodingOptions(t));
+const backspaceSendsOptions = computed(() => {
+  if (isTelnetProtocol(protocol.value)) return TELNET_BACKSPACE_SENDS_OPTIONS;
+  if (isSerialProtocol(protocol.value)) return SERIAL_BACKSPACE_SENDS_OPTIONS;
+  return BACKSPACE_SENDS_OPTIONS;
+});
 const profileConnectionId = computed(
   () => props.activeConnection?.connectionId || props.activeConnection?.id || "",
 );
@@ -133,6 +148,31 @@ function handleEncodingChange(value) {
       }).catch((error) => logger.warn("sidebar-session.encoding-detection.update.failed", error));
     }
   }
+}
+
+async function handleBackspaceChange(value) {
+  if (backendSessionId.value) {
+    try {
+      await setBackendBackspaceMode({
+        sessionId: backendSessionId.value,
+        mode: value || null,
+      });
+    } catch (error) {
+      logger.warn("sidebar-session.backspace-mode.update.failed", error);
+      showToast({
+        type: "error",
+        title: t("notifications.connectionSaveFailed"),
+        message: error?.message || String(error),
+      });
+      return;
+    }
+  }
+  const defaultMode =
+    isTelnetProtocol(protocol.value) || isSerialProtocol(protocol.value)
+      ? BACKSPACE_SENDS.AUTO
+      : BACKSPACE_SENDS.DEL;
+  // 与弹窗序列化一致：协议默认值不落库，profile 只保存显式覆盖。
+  void persistProfileField("backspaceSends", value === defaultMode ? undefined : value);
 }
 
 async function handleRuntimeMetricsChange(enabled) {
@@ -476,8 +516,8 @@ async function handleRuntimeMetricsChange(enabled) {
           </div>
           <UiSelect
             :model-value="backspaceSends"
-            :options="BACKSPACE_SENDS_OPTIONS"
-            @update:model-value="persistProfileField('backspaceSends', $event)"
+            :options="backspaceSendsOptions"
+            @update:model-value="handleBackspaceChange($event)"
           />
         </div>
       </div>

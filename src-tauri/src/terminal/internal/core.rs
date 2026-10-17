@@ -34,6 +34,10 @@ pub(super) const SERIAL_PROBE_SETTLE_MS: u64 = 15;
 pub(super) const SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS: u64 = 90;
 pub(super) const SERIAL_PROBE_MAX_SAMPLE_MS: u64 = 520;
 pub(super) const SERIAL_PROBE_POLL_INTERVAL_MS: u64 = 4;
+/// 退格自适应探测的回显观察窗：串口按 ≥300 baud 的回显时延取 500ms，
+/// Telnet 按常规 RTT 取 400ms。超时沉默才允许进入“拒绝并补发”分支。
+pub(super) const SERIAL_ERASE_PROBE_WINDOW: Duration = Duration::from_millis(500);
+pub(super) const TELNET_ERASE_PROBE_WINDOW: Duration = Duration::from_millis(400);
 /// Response window for the explicit deep-sleep retry phase. It is applied only
 /// after the bounded fast phase has failed, so normal consoles never pay this
 /// cost while every candidate gets a fair chance when the device is sleeping.
@@ -67,6 +71,7 @@ pub struct ConnectionOpenRequest {
     pub(crate) accept_host_key_once: Option<bool>,
     pub(crate) terminal_type: Option<String>,
     pub(crate) encoding: Option<String>,
+    pub(crate) backspace_sends: Option<String>,
     pub(crate) realtime_encoding_detection: Option<bool>,
     pub(crate) cols: Option<u32>,
     pub(crate) rows: Option<u32>,
@@ -742,6 +747,9 @@ pub(crate) enum SessionCommand {
         enabled: bool,
         encoding: Option<String>,
     },
+    SetBackspaceMode {
+        mode: Option<String>,
+    },
     SetRawOutput {
         channel_id: Option<u64>,
         enabled: bool,
@@ -777,6 +785,7 @@ pub(super) enum SessionWorkerEvent {
 
 pub(super) enum TransportCommand {
     Write(Vec<u8>),
+    SetBackspaceMode(Option<String>),
     InvokeCapability(TransportCapabilityCommand),
     Resize(TerminalResize),
     Close,
@@ -836,6 +845,7 @@ pub(super) struct TelnetConfig {
     pub(super) cols: u16,
     pub(super) rows: u16,
     pub(super) env_vars: Vec<(TelnetEnvVarKind, String, String)>,
+    pub(super) backspace_sends: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -882,6 +892,7 @@ pub(crate) struct ResolvedConnection {
     pub(crate) parity: Option<String>,
     pub(crate) stop_bits: Option<u8>,
     pub(crate) encoding: Option<String>,
+    pub(crate) backspace_sends: Option<String>,
     pub(crate) realtime_encoding_detection: Option<bool>,
     pub(crate) auth_method: Option<String>,
     pub(crate) saved_credential_id: Option<String>,
@@ -980,6 +991,11 @@ impl ResolvedConnection {
             },
             stop_bits: if is_serial { profile.stop_bits() } else { None },
             encoding: profile.options.encoding.clone(),
+            backspace_sends: profile
+                .options
+                .backspace_sends
+                .clone()
+                .or(request.backspace_sends),
             realtime_encoding_detection: profile
                 .options
                 .realtime_encoding_detection
@@ -1028,6 +1044,7 @@ impl ResolvedConnection {
         // original values instead of silently discarding them.
         self.terminal_type = request.terminal_type.or(self.terminal_type);
         self.encoding = request.encoding.or(self.encoding);
+        self.backspace_sends = request.backspace_sends.or(self.backspace_sends);
         self.realtime_encoding_detection = request
             .realtime_encoding_detection
             .or(self.realtime_encoding_detection);

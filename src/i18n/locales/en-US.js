@@ -86,7 +86,8 @@ export default {
       encodingHint: "Auto-detect or specify remote character set.",
       encodingAuto: "Auto",
       backspaceSends: "Backspace sends",
-      backspaceSendsHint: "DEL(^?) for modern systems, BS(^H) for legacy devices.",
+      backspaceSendsHint:
+        "Auto prefers the Telnet SLC negotiation and otherwise learns from echo probing (used on serial too); DEL(^?) or BS(^H) can be pinned.",
       morePromptCleanup: "Clean More paging prompt",
       morePromptCleanupHint:
         "For legacy switches that print filler spaces after paging; disabled by default.",

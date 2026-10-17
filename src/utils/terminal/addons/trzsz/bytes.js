@@ -58,14 +58,37 @@ export function payloadBytes(payload) {
   return base64ToBytes(raw);
 }
 
+const asciiPatternCache = new Map();
+
+function asciiPattern(ascii) {
+  let pattern = asciiPatternCache.get(ascii);
+  if (!pattern) {
+    pattern = stringToBytes(ascii);
+    asciiPatternCache.set(ascii, pattern);
+  }
+  return pattern;
+}
+
 export function bytesIncludeAscii(bytes, ascii) {
   if (!bytes?.length || !ascii) return false;
-  const pattern = stringToBytes(ascii);
-  outer: for (let start = 0; start <= bytes.length - pattern.length; start += 1) {
-    for (let offset = 0; offset < pattern.length; offset += 1) {
-      if (bytes[start + offset] !== pattern[offset]) continue outer;
+  const pattern = asciiPattern(ascii);
+  if (bytes.length < pattern.length) return false;
+  // 锚点跳转：TypedArray.indexOf 是原生 memchr 级扫描，只在首个字节命中处
+  // 校验剩余 pattern，避免朴素双重循环的 O(n×m)。
+  const limit = bytes.length - pattern.length;
+  let start = 0;
+  while (start <= limit) {
+    const anchor = bytes.indexOf(pattern[0], start);
+    if (anchor < 0 || anchor > limit) return false;
+    let matched = true;
+    for (let offset = 1; offset < pattern.length; offset += 1) {
+      if (bytes[anchor + offset] !== pattern[offset]) {
+        matched = false;
+        break;
+      }
     }
-    return true;
+    if (matched) return true;
+    start = anchor + 1;
   }
   return false;
 }

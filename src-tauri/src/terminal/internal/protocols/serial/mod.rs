@@ -50,6 +50,7 @@ struct SerialOpenSelection {
 pub(super) struct SerialSessionTransport {
     pub(super) port: tokio_serial::SerialStream,
     pub(super) port_name: String,
+    pub(super) backspace_sends: Option<String>,
     /// 传输 actor 退出并释放串口 fd 后通知;重开端口前必须等到它。
     pub(super) close_ack: tokio::sync::oneshot::Sender<()>,
 }
@@ -69,6 +70,7 @@ impl SessionTransportRuntime for SerialSessionTransport {
             session_id,
             self.port,
             self.port_name,
+            self.backspace_sends,
             rx,
             event_tx,
             self.close_ack,
@@ -158,6 +160,7 @@ impl SerialConnectionFactory {
         let open_context = request.session_open_context();
         let startup_encoding = request.encoding.clone();
         let quick_auto_baud = request.serial_quick_auto_baud.unwrap_or(true);
+        let backspace_sends = request.backspace_sends.clone();
 
         let result = cancelable_open(
             &request,
@@ -223,6 +226,7 @@ impl SerialConnectionFactory {
                 transport: Box::new(SerialSessionTransport {
                     port,
                     port_name: port_name.clone(),
+                    backspace_sends,
                     close_ack: close_ack_tx,
                 }),
                 capabilities: crate::terminal::domain::ConnectionCapabilities::serial(),

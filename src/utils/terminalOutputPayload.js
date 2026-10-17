@@ -2,8 +2,6 @@ import { createLogger } from "./logger.js";
 
 const logger = createLogger("frontend.terminal.output-payload");
 
-const BASE64_CHUNK_SIZE = 0x8000;
-
 function isTerminalOutputChannelAccepted(payload, state = {}) {
   const payloadChannelId = payload?.channelId;
   if (!Number.isSafeInteger(payloadChannelId)) return false;
@@ -79,14 +77,6 @@ function decodeBase64Bytes(dataBase64) {
 
 export function decodeTerminalOutputBytes(dataBase64) {
   return decodeBase64Bytes(dataBase64);
-}
-
-function encodeBase64Bytes(bytes) {
-  let raw = "";
-  for (let index = 0; index < bytes.length; index += BASE64_CHUNK_SIZE) {
-    raw += String.fromCharCode(...bytes.subarray(index, index + BASE64_CHUNK_SIZE));
-  }
-  return btoa(raw);
 }
 
 function createTextDecoder(encoding) {
@@ -179,10 +169,12 @@ function normalizeBytesOutput(rawBase64, range, state, encoding) {
       trimBytes,
     });
   }
+  // 裁剪后直接携带字节：本路径只解码一次，消费方不再做 base64 往返。
   const bytes = decodeBase64Bytes(rawBase64);
   const visibleBytes = bytes.subarray(Math.min(trimBytes, bytes.length));
+  if (visibleBytes.length === 0) return null;
   return {
-    dataBase64: encodeBase64Bytes(visibleBytes),
+    bytes: visibleBytes,
     outputKind: "bytes",
     endOffset: range.endOffset,
   };
@@ -208,7 +200,7 @@ function normalizeTerminalOutputPayload(payload, state = {}) {
 
 export function classifyTerminalOutputPayload(payload, state = {}) {
   const normalized = normalizeTerminalOutputPayload(payload, state);
-  if (!normalized?.data && !normalized?.dataBase64) {
+  if (!normalized?.data && !normalized?.dataBase64 && !normalized?.bytes) {
     return { kind: "ignore", normalized: null };
   }
   if (normalized.outputKind === "bytes") {

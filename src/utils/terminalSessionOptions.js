@@ -4,6 +4,7 @@ export const DEFAULT_TERMINAL_ENCODING = "auto";
 export const BACKSPACE_SENDS = Object.freeze({
   DEL: "DEL",
   BS: "BS",
+  AUTO: "AUTO",
 });
 
 export const TERMINAL_TYPE_OPTIONS = Object.freeze([
@@ -19,6 +20,17 @@ export const TERMINAL_TYPE_OPTIONS = Object.freeze([
 export const BACKSPACE_SENDS_OPTIONS = Object.freeze([
   { label: "DEL (^?)", value: BACKSPACE_SENDS.DEL },
   { label: "BS (^H)", value: BACKSPACE_SENDS.BS },
+]);
+
+export const TELNET_BACKSPACE_SENDS_OPTIONS = Object.freeze([
+  { label: "Auto (Telnet SLC / echo probe)", value: BACKSPACE_SENDS.AUTO },
+  ...BACKSPACE_SENDS_OPTIONS,
+]);
+
+// 串口无协商机制，AUTO 走回显探测学习；与 Telnet 共用同一后端探测器。
+export const SERIAL_BACKSPACE_SENDS_OPTIONS = Object.freeze([
+  { label: "Auto (echo probe)", value: BACKSPACE_SENDS.AUTO },
+  ...BACKSPACE_SENDS_OPTIONS,
 ]);
 
 const ENCODING_OPTION_VALUES = Object.freeze(["UTF-8", "GB18030", "BIG5", "SHIFT_JIS", "EUC-KR"]);
