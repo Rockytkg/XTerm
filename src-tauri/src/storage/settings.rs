@@ -166,24 +166,6 @@ impl Store {
             .commit()
             .map_err(|error| format!("failed to commit settings: {error}"))
     }
-
-    pub fn delete_setting(&self, key: &str) -> Result<(), String> {
-        let write_txn = self
-            .database
-            .begin_write()
-            .map_err(|error| format!("failed to start settings write transaction: {error}"))?;
-        {
-            let mut table = write_txn
-                .open_table(SETTINGS)
-                .map_err(|error| format!("failed to open settings table: {error}"))?;
-            table
-                .remove(key)
-                .map_err(|error| format!("failed to delete setting '{key}': {error}"))?;
-        }
-        write_txn
-            .commit()
-            .map_err(|error| format!("failed to commit setting '{key}' deletion: {error}"))
-    }
 }
 
 pub(super) fn initial_setting_entries() -> Vec<SettingEntry> {

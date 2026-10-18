@@ -18,7 +18,6 @@ pub(crate) trait SettingsRepository {
         }
         Ok(())
     }
-    fn delete_setting(&self, key: &str) -> Result<(), String>;
 }
 
 impl SettingsRepository for Store {
@@ -48,9 +47,5 @@ impl SettingsRepository for Store {
 
     fn set_settings(&self, entries: &[(&str, &str)]) -> Result<(), String> {
         Store::set_settings(self, entries)
-    }
-
-    fn delete_setting(&self, key: &str) -> Result<(), String> {
-        Store::delete_setting(self, key)
     }
 }

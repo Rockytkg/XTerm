@@ -21,7 +21,6 @@ pub(crate) const DEFAULT_FTP_PASSIVE_END: u16 = 50100;
 pub(crate) const FILE_SERVICE_PROTOCOL_KEY: &str = "fileServiceProtocol";
 pub(crate) const FILE_SERVICE_SHARED_DIR_KEY: &str = "fileServiceSharedDir";
 pub(crate) const FILE_SERVICE_USERNAME_KEY: &str = "fileServiceUsername";
-pub(crate) const FILE_SERVICE_PASSWORD_KEY: &str = "fileServicePassword";
 
 /// Listen ports are fixed to the protocol defaults (TFTP 69, FTP 21,
 /// SFTP 22); Linux binds privileged listeners through the elevation helper.
@@ -187,8 +186,7 @@ impl FileServiceSettings {
         let username = setting_value_or(store, FILE_SERVICE_USERNAME_KEY)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "admin".to_string());
-        let password =
-            super::password::resolve_password(store, &super::password::KeyringPasswordVault);
+        let password = super::password::resolve_password(&super::password::KeyringPasswordVault);
         let shared_dir = setting_value_or(store, FILE_SERVICE_SHARED_DIR_KEY)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(default_shared_dir);

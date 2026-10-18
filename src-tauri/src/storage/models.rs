@@ -190,11 +190,8 @@ pub struct RdpConnectionDetails {
     pub resize_session: Option<bool>,
 }
 
-/// Persisted connection record.
-///
-/// New records are written in a nested shape with `options` and `details`.
-/// A custom deserializer still accepts legacy flat records where the same
-/// fields lived at the top level.
+/// Persisted connection record, written and read in a nested shape with
+/// `options` and `details`.
 #[derive(Clone, Debug, Serialize)]
 pub struct StoredConnection {
     pub protocol: String,
@@ -223,96 +220,22 @@ impl<'de> Deserialize<'de> for StoredConnection {
         let host = take_string(obj, "host").unwrap_or_default();
         let user = take_string(obj, "user").unwrap_or_default();
 
-        let (options, details) = if obj.contains_key("details") || obj.contains_key("options") {
-            // The nested shape decodes leniently, like the legacy flat path:
-            // a malformed field or object degrades to defaults so the record
-            // still loads and can be repaired in the UI, instead of failing
-            // the whole connection list.  An unknown protocol stays a hard
-            // error (the list reader skips such records with a warning).
-            let options = obj
-                .remove("options")
-                .and_then(|value| serde_json::from_value(value).ok())
-                .unwrap_or_default();
-            let details = obj
-                .remove("details")
-                .and_then(|value| serde_json::from_value(value).ok())
-                .or_else(|| default_details_for(&protocol))
-                .ok_or_else(|| {
-                    D::Error::custom(format!("unsupported connection protocol '{protocol}'"))
-                })?;
-            (options, details)
-        } else {
-            let options = ConnectionOptions {
-                terminal_type: take_string(obj, "terminal_type")
-                    .or_else(|| take_string(obj, "terminalType")),
-                encoding: take_string(obj, "encoding"),
-                backspace_sends: take_string(obj, "backspace_sends")
-                    .or_else(|| take_string(obj, "backspaceSends")),
-                realtime_encoding_detection: take_bool(obj, "realtime_encoding_detection")
-                    .or_else(|| take_bool(obj, "realtimeEncodingDetection")),
-                terminal_highlight_enabled: take_bool(obj, "terminal_highlight_enabled")
-                    .or_else(|| take_bool(obj, "terminalHighlightEnabled")),
-                terminal_more_prompt_cleanup: take_bool(obj, "terminal_more_prompt_cleanup")
-                    .or_else(|| take_bool(obj, "terminalMorePromptCleanup")),
-                runtime_metrics: take_bool(obj, "runtime_metrics")
-                    .or_else(|| take_bool(obj, "runtimeMetrics")),
-            };
-
-            let details = match protocol.as_str() {
-                "ssh" => ConnectionDetails::Ssh(SshConnectionDetails {
-                    auth_method: take_string(obj, "auth_method")
-                        .or_else(|| take_string(obj, "authMethod")),
-                    saved_credential_id: take_string(obj, "saved_credential_id")
-                        .or_else(|| take_string(obj, "savedCredentialId")),
-                    jump_hosts: take_string(obj, "jump_hosts")
-                        .or_else(|| take_string(obj, "jumpHosts")),
-                }),
-                "telnet" => ConnectionDetails::Telnet(TelnetConnectionDetails {
-                    auth_method: take_string(obj, "auth_method")
-                        .or_else(|| take_string(obj, "authMethod")),
-                    saved_credential_id: take_string(obj, "saved_credential_id")
-                        .or_else(|| take_string(obj, "savedCredentialId")),
-                }),
-                "serial" => ConnectionDetails::Serial(SerialConnectionDetails {
-                    auth_method: take_string(obj, "auth_method")
-                        .or_else(|| take_string(obj, "authMethod")),
-                    saved_credential_id: take_string(obj, "saved_credential_id")
-                        .or_else(|| take_string(obj, "savedCredentialId")),
-                    baud_rate: take_i64(obj, "baud_rate").or_else(|| take_i64(obj, "baudRate")),
-                    serial_quick_auto_baud: take_bool(obj, "serial_quick_auto_baud")
-                        .or_else(|| take_bool(obj, "serialQuickAutoBaud")),
-                    data_bits: take_i64(obj, "data_bits").or_else(|| take_i64(obj, "dataBits")),
-                    flow_control: take_string(obj, "flow_control")
-                        .or_else(|| take_string(obj, "flowControl")),
-                    parity: take_string(obj, "parity"),
-                    stop_bits: take_i64(obj, "stop_bits").or_else(|| take_i64(obj, "stopBits")),
-                }),
-                // RDP 是新协议，历史上不存在扁平记录；这里仍给出显式臂，避免旧导出/手工
-                // 编辑的扁平 RDP 记录落入 `_ => Err` 而整个库无法读取。
-                "rdp" => ConnectionDetails::Rdp(RdpConnectionDetails {
-                    auth_method: take_string(obj, "auth_method")
-                        .or_else(|| take_string(obj, "authMethod")),
-                    saved_credential_id: take_string(obj, "saved_credential_id")
-                        .or_else(|| take_string(obj, "savedCredentialId")),
-                    domain: take_string(obj, "domain").or_else(|| take_string(obj, "rdp_domain")),
-                    scale_mode: take_string(obj, "scale_mode")
-                        .or_else(|| take_string(obj, "scaleMode"))
-                        .or_else(|| take_string(obj, "rdp_scale_mode")),
-                    clipboard_sync: take_bool(obj, "clipboard_sync")
-                        .or_else(|| take_bool(obj, "clipboardSync"))
-                        .or_else(|| take_bool(obj, "rdp_clipboard_sync")),
-                    resize_session: take_bool(obj, "resize_session")
-                        .or_else(|| take_bool(obj, "resizeSession"))
-                        .or_else(|| take_bool(obj, "rdp_resize_session")),
-                }),
-                _ => {
-                    return Err(D::Error::custom(format!(
-                        "unsupported connection protocol '{protocol}'"
-                    )))
-                }
-            };
-            (options, details)
-        };
+        // The nested shape decodes leniently: a malformed field or object
+        // degrades to defaults so the record still loads and can be repaired
+        // in the UI, instead of failing the whole connection list.  An
+        // unknown protocol stays a hard error (the list reader skips such
+        // records with a warning).
+        let options = obj
+            .remove("options")
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        let details = obj
+            .remove("details")
+            .and_then(|value| serde_json::from_value(value).ok())
+            .or_else(|| default_details_for(&protocol))
+            .ok_or_else(|| {
+                D::Error::custom(format!("unsupported connection protocol '{protocol}'"))
+            })?;
 
         Ok(StoredConnection {
             protocol,
@@ -350,26 +273,6 @@ fn take_string(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str) 
     })
 }
 
-fn take_bool(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str) -> Option<bool> {
-    obj.remove(key).and_then(|value| {
-        if value.is_null() {
-            None
-        } else {
-            value.as_bool()
-        }
-    })
-}
-
-fn take_i64(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str) -> Option<i64> {
-    obj.remove(key).and_then(|value| {
-        if value.is_null() {
-            None
-        } else {
-            value.as_i64()
-        }
-    })
-}
-
 #[derive(Clone, Debug)]
 pub struct StoredConnectionRecord {
     pub id: String,
@@ -379,44 +282,6 @@ pub struct StoredConnectionRecord {
 #[cfg(test)]
 mod tests {
     use super::{ConnectionDetails, StoredConnection};
-
-    #[test]
-    fn stored_connection_accepts_legacy_records_without_more_prompt_cleanup() {
-        let raw = r#"{
-            "protocol":"telnet",
-            "port":"23",
-            "name":"legacy",
-            "host":"10.0.0.1",
-            "user":"",
-            "baudRate":null,
-            "authMethod":"password",
-            "savedCredentialId":null,
-            "terminalHighlightEnabled":true,
-            "serialQuickAutoBaud":null,
-            "dataBits":null,
-            "flowControl":null,
-            "parity":null,
-            "stopBits":null,
-            "jumpHosts":null,
-            "terminalType":"vt100",
-            "encoding":null,
-            "backspaceSends":null
-        }"#;
-
-        let connection: StoredConnection =
-            serde_json::from_str(raw).expect("legacy connection should deserialize");
-
-        assert_eq!(connection.options.terminal_more_prompt_cleanup, None);
-        assert_eq!(connection.options.terminal_type, Some("vt100".to_string()));
-        assert_eq!(connection.options.terminal_highlight_enabled, Some(true));
-        match connection.details {
-            ConnectionDetails::Telnet(details) => {
-                assert_eq!(details.auth_method, Some("password".to_string()));
-                assert_eq!(details.saved_credential_id, None);
-            }
-            _ => panic!("expected telnet details"),
-        }
-    }
 
     #[test]
     fn nested_record_with_malformed_details_degrades_to_defaults() {
@@ -453,24 +318,5 @@ mod tests {
         }"#;
 
         assert!(serde_json::from_str::<StoredConnection>(raw).is_err());
-    }
-
-    #[test]
-    fn stored_credential_accepts_legacy_username_field() {
-        let raw = r#"{
-            "position":1,
-            "cred_type":"password",
-            "name":"legacy password",
-            "username":"admin",
-            "password":"secret",
-            "private_key":null,
-            "passphrase":null
-        }"#;
-
-        let credential: super::StoredCredential =
-            serde_json::from_str(raw).expect("legacy credential should deserialize");
-
-        assert_eq!(credential.name, "legacy password");
-        assert_eq!(credential.cred_type, "password");
     }
 }
