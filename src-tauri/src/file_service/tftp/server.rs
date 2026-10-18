@@ -176,6 +176,14 @@ async fn accept_loop(
                     Ok(request) => request,
                     Err(error) => {
                         if let super::error::TransferError::Send(code, message) = error {
+                            // The raw bytes go to the log: interop failures
+                            // with boot-ROM clients are otherwise impossible
+                            // to diagnose without a packet capture.
+                            logging::event("tftp.protocol", "tftp.request.rejected")
+                                .field("peer", peer)
+                                .field("error", &message)
+                                .field("packet", packet_preview(&packet[..size]))
+                                .warn();
                             let _ = send_error(&socket, peer, code, &message).await;
                         }
                         continue;
@@ -248,6 +256,23 @@ fn local_listener_ips(ipv4: bool) -> Vec<IpAddr> {
     ips
 }
 
+/// Hex-dumps the head of a rejected request packet for the rejection log.
+fn packet_preview(packet: &[u8]) -> String {
+    use std::fmt::Write;
+    let shown = packet.len().min(96);
+    let mut preview = String::with_capacity(shown * 3);
+    for (index, byte) in packet[..shown].iter().enumerate() {
+        if index > 0 {
+            preview.push(' ');
+        }
+        let _ = write!(preview, "{byte:02x}");
+    }
+    if packet.len() > shown {
+        preview.push_str(" ..");
+    }
+    preview
+}
+
 #[cfg(test)]
 async fn bind_listeners(bind_addr: SocketAddr) -> Result<Vec<UdpSocket>, String> {
     if !bind_addr.ip().is_unspecified() {
@@ -278,7 +303,10 @@ mod tests {
 
     use tokio::{net::UdpSocket, sync::watch, time::timeout};
 
-    use super::{super::session::SessionContext, accept_loop, bind_listeners, ActiveRequests};
+    use super::{
+        super::packet::TFTP_MAX_BLOCK_SIZE, super::session::SessionContext, accept_loop,
+        bind_listeners, ActiveRequests,
+    };
     use crate::{file_service::models::TransferRegistry, ids};
 
     const IO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -289,6 +317,27 @@ mod tests {
         packet.push(0);
         packet.extend_from_slice(b"octet");
         packet.push(0);
+        packet
+    }
+
+    /// Mirrors the RRQ a U-Boot built with CONFIG_MCAST_TFTP sends (Marvell
+    /// switch boot ROMs): options include an EMPTY `multicast` value, which
+    /// strict RFC 2347 parsers reject with ERROR 4 while tftpd32 accepts.
+    fn uboot_mcast_request_packet(filename: &str) -> Vec<u8> {
+        let mut packet = request_packet(1, filename);
+        for field in [
+            &b"timeout"[..],
+            b"5",
+            b"tsize",
+            b"0",
+            b"blksize",
+            b"1468",
+            b"multicast",
+            b"",
+        ] {
+            packet.extend_from_slice(field);
+            packet.push(0);
+        }
         packet
     }
 
@@ -398,6 +447,47 @@ mod tests {
             client.send_to(&ack, from).await.unwrap();
             expected_block = expected_block.wrapping_add(1);
             if size < 4 + 512 {
+                break;
+            }
+        }
+        assert_eq!(received, download_payload);
+
+        // --- RRQ download with U-Boot-style option negotiation ---
+        // Regression: the empty-valued `multicast` option used to be rejected
+        // with ERROR 4 ("malformed request"), breaking boot-ROM upgrades.
+        //
+        // Wait for the first download's session to retire its request key;
+        // otherwise this RRQ — same peer, opcode and filename — is
+        // deduplicated as a retransmission of the finished transfer.
+        for _ in 0..50 {
+            if active_requests.lock().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        client
+            .send_to(&uboot_mcast_request_packet("seed.bin"), listen_addr)
+            .await
+            .unwrap();
+        let (size, transfer_addr) = recv_packet(&client, &mut buffer).await;
+        assert_eq!(
+            u16::from_be_bytes([buffer[0], buffer[1]]),
+            6,
+            "an RRQ carrying options must be answered by OACK"
+        );
+        assert!(
+            buffer[2..size].windows(7).any(|field| field == b"blksize"),
+            "the OACK must acknowledge the negotiated block size"
+        );
+        client.send_to(&[0, 4, 0, 0], transfer_addr).await.unwrap();
+        let mut received = Vec::new();
+        loop {
+            let (size, from) = recv_packet(&client, &mut buffer).await;
+            assert_eq!(u16::from_be_bytes([buffer[0], buffer[1]]), 3);
+            received.extend_from_slice(&buffer[4..size]);
+            let ack = [0, 4, buffer[2], buffer[3]];
+            client.send_to(&ack, from).await.unwrap();
+            if size < 4 + TFTP_MAX_BLOCK_SIZE {
                 break;
             }
         }

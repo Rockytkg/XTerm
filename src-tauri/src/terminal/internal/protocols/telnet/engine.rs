@@ -1,9 +1,5 @@
-use std::time::Instant;
-
 use flate2::{Decompress, FlushDecompress, Status};
 use memchr::memchr;
-
-use super::super::{core::TELNET_ERASE_PROBE_WINDOW, erase_detector::EraseDetector};
 
 pub(super) const IAC: u8 = 255;
 pub(super) const SB: u8 = 250;
@@ -25,10 +21,6 @@ pub(super) const STATUS: u8 = 5;
 /// RFC 1184 LINEMODE option and its subcommands.
 pub(super) const LINEMODE: u8 = 34;
 pub(super) const LINEMODE_MODE: u8 = 1;
-pub(super) const LINEMODE_SLC: u8 = 3;
-pub(super) const SLC_EC: u8 = 10;
-pub(super) const SLC_CANTCHANGE: u8 = 1;
-pub(super) const SLC_VALUE: u8 = 2;
 /// RFC 1184 MODE flag bits.
 pub(super) const MODE_EDIT: u8 = 1;
 pub(super) const MODE_TRAPSIG: u8 = 2;
@@ -96,7 +88,6 @@ pub(super) struct TelnetEngine {
     options: [OptionState; 256],
     decompressor: Option<Decompress>,
     compressed_input: Vec<u8>,
-    erase_detector: EraseDetector,
 }
 
 impl TelnetEngine {
@@ -108,22 +99,7 @@ impl TelnetEngine {
             options: [OptionState::default(); 256],
             decompressor: None,
             compressed_input: Vec::with_capacity(1024),
-            erase_detector: EraseDetector::new(TELNET_ERASE_PROBE_WINDOW),
         }
-    }
-
-    pub(super) fn configure_backspace_mode(&mut self, mode: Option<&str>) {
-        // Missing/unknown values retain the safe Telnet default: automatic
-        // detection (SLC first, echo probing as the fallback). Explicit DEL and
-        // BS remain fully user controlled.
-        self.erase_detector.set_mode(mode);
-    }
-
-    pub(super) fn set_remote_erase_character(&mut self, value: u8) {
-        // Keep the negotiated value even while the user has selected an
-        // explicit mode; switching the live session back to AUTO can then
-        // take effect immediately without another LINEMODE round trip.
-        self.erase_detector.set_resolved(value);
     }
 
     pub(super) fn receive(&mut self, data: &[u8]) -> Vec<EngineEvent> {
@@ -414,25 +390,9 @@ impl TelnetEngine {
         } else {
             normalize_terminal_input(data)
         };
-        let input = self.erase_detector.map_input(&input, Instant::now());
         let mut events = Vec::new();
-        self.send_text(input.as_slice(), &mut events);
+        self.send_text(&input, &mut events);
         events
-    }
-
-    /// Feeds application data into the erase probe. Returns the byte to send
-    /// immediately when the probe rejected its candidate.
-    pub(super) fn observe_output(&mut self, data: &[u8]) -> Option<u8> {
-        self.erase_detector.observe_output(data, Instant::now())
-    }
-
-    /// Drives the erase probe deadline; returns the transparent retry byte.
-    pub(super) fn poll_erase_probe(&mut self) -> Option<u8> {
-        self.erase_detector.poll(Instant::now())
-    }
-
-    pub(super) fn erase_probe_deadline(&self) -> Option<Instant> {
-        self.erase_detector.next_deadline()
     }
 
     pub(super) fn subnegotiation(&mut self, option: u8, data: &[u8]) -> Vec<EngineEvent> {
@@ -843,60 +803,6 @@ mod tests {
         assert_eq!(sent(&engine.send_terminal_input(b"\r\n")), b"\r\n");
         assert_eq!(sent(&engine.send_terminal_input(b"\n")), b"\r\n");
         assert_eq!(sent(&engine.send_terminal_input(b"\r\0")), b"\r\0");
-    }
-
-    #[test]
-    fn automatic_backspace_uses_server_erase_character() {
-        let mut engine = TelnetEngine::new();
-        engine.configure_backspace_mode(Some("AUTO"));
-        engine.set_remote_erase_character(0x08);
-        assert_eq!(sent(&engine.send_terminal_input(b"\x7f")), b"\x08");
-        // 改写只作用于单字节按键：批量输入（粘贴/脚本）里的 0x7f 不是退格。
-        assert_eq!(sent(&engine.send_terminal_input(b"a\x7f")), b"a\x7f");
-    }
-
-    #[test]
-    fn explicit_backspace_modes_are_not_rewritten() {
-        for mode in ["DEL", "BS"] {
-            let mut engine = TelnetEngine::new();
-            engine.configure_backspace_mode(Some(mode));
-            engine.set_remote_erase_character(0x08);
-            assert_eq!(sent(&engine.send_terminal_input(b"a\x7f")), b"a\x7f");
-            assert_eq!(sent(&engine.send_terminal_input(b"\x7f")), b"\x7f");
-        }
-    }
-
-    #[test]
-    fn automatic_backspace_without_slc_probes_via_echo() {
-        let mut engine = TelnetEngine::new();
-        engine.configure_backspace_mode(Some("AUTO"));
-        // 无 SLC 协商结果时 DEL 原样发出并武装探测。
-        assert_eq!(sent(&engine.send_terminal_input(b"\x7f")), b"\x7f");
-        assert!(engine.erase_probe_deadline().is_some());
-        // 对端以 BS SP BS 回显擦除 → 锁定 DEL 为擦除字节。
-        assert_eq!(engine.observe_output(b"\x08 \x08"), None);
-        assert_eq!(engine.erase_probe_deadline(), None);
-        assert_eq!(sent(&engine.send_terminal_input(b"\x7f")), b"\x7f");
-    }
-
-    #[test]
-    fn slc_result_takes_precedence_over_echo_probing() {
-        let mut engine = TelnetEngine::new();
-        engine.configure_backspace_mode(Some("AUTO"));
-        engine.set_remote_erase_character(0x08);
-        assert_eq!(sent(&engine.send_terminal_input(b"\x7f")), b"\x08");
-        // 权威值锁定后不再武装探测。
-        assert_eq!(engine.erase_probe_deadline(), None);
-    }
-
-    #[test]
-    fn switching_live_mode_reuses_negotiated_erase_character() {
-        let mut engine = TelnetEngine::new();
-        engine.configure_backspace_mode(Some("DEL"));
-        engine.set_remote_erase_character(0x08);
-        assert_eq!(sent(&engine.send_terminal_input(b"\x7f")), b"\x7f");
-        engine.configure_backspace_mode(Some("AUTO"));
-        assert_eq!(sent(&engine.send_terminal_input(b"\x7f")), b"\x08");
     }
 
     #[test]

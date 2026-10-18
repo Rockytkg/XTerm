@@ -7,13 +7,13 @@ import {
 import { shouldSendBackspaceAsBs } from "../src/utils/terminal/inputRouting.js";
 import { BACKSPACE_SENDS } from "../src/utils/terminalSessionOptions.js";
 
-test("serial and telnet default to AUTO backspace, ssh stays DEL", () => {
-  assert.equal(createProtocolDraft("serial").backspaceSends, BACKSPACE_SENDS.AUTO);
-  assert.equal(createProtocolDraft("telnet").backspaceSends, BACKSPACE_SENDS.AUTO);
-  assert.equal(createProtocolDraft("ssh").backspaceSends, BACKSPACE_SENDS.DEL);
+test("all protocols default to BS backspace", () => {
+  assert.equal(createProtocolDraft("serial").backspaceSends, BACKSPACE_SENDS.BS);
+  assert.equal(createProtocolDraft("telnet").backspaceSends, BACKSPACE_SENDS.BS);
+  assert.equal(createProtocolDraft("ssh").backspaceSends, BACKSPACE_SENDS.BS);
 });
 
-test("serial profiles omit the AUTO default and persist explicit modes", () => {
+test("profiles omit the BS default and persist explicit DEL", () => {
   const base = {
     id: "conn-1",
     protocol: "serial",
@@ -30,29 +30,28 @@ test("serial profiles omit the AUTO default and persist explicit modes", () => {
       encoding: "auto",
     },
   };
-  const autoProfile = buildConnectionProfile({
-    ...base,
-    form: { ...base.form, backspaceSends: BACKSPACE_SENDS.AUTO },
-  });
-  assert.equal(autoProfile.options.backspaceSends, undefined);
-
-  const bsProfile = buildConnectionProfile({
+  const defaultProfile = buildConnectionProfile({
     ...base,
     form: { ...base.form, backspaceSends: BACKSPACE_SENDS.BS },
   });
-  assert.equal(bsProfile.options.backspaceSends, BACKSPACE_SENDS.BS);
+  assert.equal(defaultProfile.options.backspaceSends, undefined);
+
+  const delProfile = buildConnectionProfile({
+    ...base,
+    form: { ...base.form, backspaceSends: BACKSPACE_SENDS.DEL },
+  });
+  assert.equal(delProfile.options.backspaceSends, BACKSPACE_SENDS.DEL);
 });
 
-test("explicit BS intercepts the physical key; AUTO/DEL pass through to the backend", () => {
+test("backspace sends BS by default; only explicit DEL passes through", () => {
   const event = { type: "keydown", key: "Backspace" };
+  assert.equal(shouldSendBackspaceAsBs(event, {}, "session-1"), true);
   assert.equal(
     shouldSendBackspaceAsBs(event, { backspaceSends: BACKSPACE_SENDS.BS }, "session-1"),
     true,
   );
-  assert.equal(
-    shouldSendBackspaceAsBs(event, { backspaceSends: BACKSPACE_SENDS.AUTO }, "session-1"),
-    false,
-  );
+  // 历史 profile 里的 AUTO 等未知值落到默认 BS。
+  assert.equal(shouldSendBackspaceAsBs(event, { backspaceSends: "AUTO" }, "session-1"), true);
   assert.equal(
     shouldSendBackspaceAsBs(event, { backspaceSends: BACKSPACE_SENDS.DEL }, "session-1"),
     false,

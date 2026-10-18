@@ -34,10 +34,6 @@ impl TransferError {
     pub(super) fn illegal(message: impl Into<String>) -> Self {
         Self::Send(4, message.into())
     }
-
-    pub(super) fn bad_option(message: impl Into<String>) -> Self {
-        Self::Send(8, message.into())
-    }
 }
 
 impl std::fmt::Display for TransferError {

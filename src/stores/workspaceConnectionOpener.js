@@ -47,7 +47,6 @@ export function createWorkspaceConnectionOpener({
         openRequestId,
         terminalType,
         encoding,
-        backspaceSends: connection?.backspaceSends || undefined,
         realtimeEncodingDetection,
         sshCredential: options.sshCredential,
         vncPassword: options.vncPassword || undefined,

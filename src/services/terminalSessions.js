@@ -30,7 +30,6 @@ export function openBackendConnection(connectionId, options = {}) {
         trustHostKey: request.trustHostKey,
         acceptHostKeyOnce: request.acceptHostKeyOnce,
         terminalType: request.terminalType,
-        backspaceSends: request.backspaceSends,
         cols: request.cols,
         rows: request.rows,
         sshCredential: request.sshCredential
@@ -93,16 +92,6 @@ export function setBackendEncodingDetection(request) {
         enabled: request?.enabled,
         encoding: request?.encoding,
       }),
-    },
-  );
-}
-
-export function setBackendBackspaceMode(request) {
-  return invokeTerminal(
-    "terminal_session_set_backspace_mode",
-    { request },
-    {
-      summarizePayload: () => ({ sessionId: request?.sessionId, mode: request?.mode }),
     },
   );
 }

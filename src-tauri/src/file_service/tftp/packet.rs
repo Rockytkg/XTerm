@@ -10,9 +10,8 @@ pub(super) const TFTP_DEFAULT_BLOCK_SIZE: usize = 512;
 pub(super) const TFTP_MAX_BLOCK_SIZE: usize = 1468;
 pub(super) const TFTP_MAX_WINDOW_SIZE: usize = 64;
 /// Receive buffer: header + largest negotiated block + slack for options.
+/// Also bounds RRQ/WRQ packets, so requests are not size-checked separately.
 pub(super) const MAX_PACKET_SIZE: usize = 4 + TFTP_MAX_BLOCK_SIZE + 1024;
-/// RFC 1350 caps RRQ/WRQ packets at 512 bytes even with options present.
-const MAX_REQUEST_SIZE: usize = 512;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum Opcode {
@@ -66,17 +65,18 @@ pub(super) fn parse_request(packet: &[u8]) -> Result<Request, TransferError> {
             )))
         }
     };
-    if packet.len() > MAX_REQUEST_SIZE || !packet.ends_with(&[0]) {
-        return Err(TransferError::illegal("malformed request"));
-    }
-    let fields = packet[2..packet.len() - 1]
-        .split(|byte| *byte == 0)
-        .collect::<Vec<_>>();
-    if fields.len() < 2 || fields.iter().any(|field| field.is_empty()) {
-        return Err(TransferError::illegal("malformed request"));
-    }
-    let filename = ascii_field(fields[0], "filename")?;
-    let mode = match ascii_field(fields[1], "mode")?
+    // Parsing is deliberately liberal (Postel's law): boot-ROM TFTP clients
+    // routinely emit requests a strict RFC 2347 parser rejects — U-Boot built
+    // with CONFIG_MCAST_TFTP appends a `multicast` option with an EMPTY value
+    // (`multicast\0\0`), other firmware pads the packet with NULs or junk to
+    // a fixed buffer size, or forgets the final NUL.  Strict servers answer
+    // these with ERROR 4 ("malformed request"), which is exactly where
+    // lenient servers like tftpd32 succeed instead.  Parse the leading
+    // NUL-separated fields, allow empty option values, stop at the first
+    // empty option name, and silently ignore any trailing bytes.
+    let mut fields = packet[2..].split(|byte| *byte == 0);
+    let filename = ascii_field(fields.next().unwrap_or_default(), "filename")?;
+    let mode = match ascii_field(fields.next().unwrap_or_default(), "mode")?
         .to_ascii_lowercase()
         .as_str()
     {
@@ -90,21 +90,19 @@ pub(super) fn parse_request(packet: &[u8]) -> Result<Request, TransferError> {
         _ => return Err(TransferError::illegal("unsupported transfer mode")),
     };
     let mut options: Vec<(String, String)> = Vec::new();
-    let mut index = 2;
-    if (fields.len() - 2) % 2 != 0 {
-        return Err(TransferError::illegal("malformed option list"));
-    }
-    while index < fields.len() {
-        let key = ascii_field(fields[index], "option")?;
-        let value = ascii_field(fields[index + 1], "option value")?;
-        if options
-            .iter()
-            .any(|(existing, _)| existing.eq_ignore_ascii_case(&key))
-        {
-            return Err(TransferError::illegal("duplicate option"));
+    while let Some(name) = fields.next() {
+        if name.is_empty() {
+            break; // NUL padding terminates the option list
         }
-        options.push((key.to_ascii_lowercase(), value));
-        index += 2;
+        let Some(value) = fields.next() else { break }; // dangling name: ignore
+        if !name.iter().all(u8::is_ascii) || !value.iter().all(u8::is_ascii) {
+            continue; // junk tail, not an option pair
+        }
+        let key = String::from_utf8_lossy(name).to_ascii_lowercase();
+        if options.iter().any(|(existing, _)| existing == &key) {
+            continue; // duplicate option: first one wins
+        }
+        options.push((key, String::from_utf8_lossy(value).into_owned()));
     }
     Ok(Request {
         opcode,
@@ -114,13 +112,13 @@ pub(super) fn parse_request(packet: &[u8]) -> Result<Request, TransferError> {
     })
 }
 
-/// Validates the requested RFC 2347 options and builds the OACK answer.
-/// Unknown options are ignored (not acknowledged), per RFC 2347 §4.
-pub(super) fn negotiate(
-    request: &Request,
-    transfer_size: u64,
-    read: bool,
-) -> Result<Negotiated, TransferError> {
+/// Builds the OACK answer for the requested RFC 2347 options.  Negotiation
+/// is deliberately lenient (same Postel rationale as `parse_request`): an
+/// option whose value is empty, unparseable or out of range is simply not
+/// acknowledged, so the transfer falls back to RFC 1350 defaults instead of
+/// failing the request outright.  Unknown options are likewise ignored (not
+/// acknowledged), per RFC 2347 §4.
+pub(super) fn negotiate(request: &Request, transfer_size: u64, read: bool) -> Negotiated {
     let mut block_size = TFTP_DEFAULT_BLOCK_SIZE;
     let mut timeout_seconds = 3u64;
     let mut window_size = 1usize;
@@ -128,54 +126,49 @@ pub(super) fn negotiate(
     for (key, value) in &request.options {
         match key.as_str() {
             "blksize" => {
-                let value = value
-                    .parse::<usize>()
-                    .map_err(|_| TransferError::bad_option("invalid blksize option"))?;
-                if !(8..=65464).contains(&value) {
-                    return Err(TransferError::bad_option("invalid blksize option"));
+                if let Ok(value) = value.parse::<usize>() {
+                    if (8..=65464).contains(&value) {
+                        // The server may acknowledge a smaller value than requested.
+                        block_size = value.min(TFTP_MAX_BLOCK_SIZE);
+                        oack.push(("blksize".to_string(), block_size.to_string()));
+                    }
                 }
-                // The server may acknowledge a smaller value than requested.
-                block_size = value.min(TFTP_MAX_BLOCK_SIZE);
-                oack.push(("blksize".to_string(), block_size.to_string()));
             }
             "timeout" => {
-                timeout_seconds = value
-                    .parse::<u64>()
-                    .map_err(|_| TransferError::bad_option("invalid timeout option"))?;
-                if !(1..=255).contains(&timeout_seconds) {
-                    return Err(TransferError::bad_option("invalid timeout option"));
+                if let Ok(value) = value.parse::<u64>() {
+                    if (1..=255).contains(&value) {
+                        timeout_seconds = value;
+                        oack.push(("timeout".to_string(), timeout_seconds.to_string()));
+                    }
                 }
-                oack.push(("timeout".to_string(), timeout_seconds.to_string()));
             }
             "tsize" => {
-                let requested = value
-                    .parse::<u64>()
-                    .map_err(|_| TransferError::bad_option("invalid tsize option"))?;
-                if read && requested != 0 {
-                    return Err(TransferError::bad_option("RRQ tsize must be zero"));
+                // RFC 2349 reports the octets the client will receive.  On
+                // RRQ the requested value (should be 0) is irrelevant; some
+                // clients send it empty or garbage — answer the size anyway.
+                if read {
+                    oack.push(("tsize".to_string(), transfer_size.to_string()));
+                } else if let Ok(value) = value.parse::<u64>() {
+                    oack.push(("tsize".to_string(), value.to_string()));
                 }
-                let value = if read { transfer_size } else { requested };
-                oack.push(("tsize".to_string(), value.to_string()));
             }
             "windowsize" => {
-                let requested = value
-                    .parse::<usize>()
-                    .map_err(|_| TransferError::bad_option("invalid windowsize option"))?;
-                if !(1..=65535).contains(&requested) {
-                    return Err(TransferError::bad_option("invalid windowsize option"));
+                if let Ok(value) = value.parse::<usize>() {
+                    if (1..=65535).contains(&value) {
+                        window_size = value.min(TFTP_MAX_WINDOW_SIZE);
+                        oack.push(("windowsize".to_string(), window_size.to_string()));
+                    }
                 }
-                window_size = requested.min(TFTP_MAX_WINDOW_SIZE);
-                oack.push(("windowsize".to_string(), window_size.to_string()));
             }
             _ => {}
         }
     }
-    Ok(Negotiated {
+    Negotiated {
         block_size,
         window_size,
         timeout: Duration::from_secs(timeout_seconds),
         oack,
-    })
+    }
 }
 
 /// The tsize a client announced in its WRQ, if any (0 means unknown).
@@ -197,12 +190,9 @@ pub(super) fn decode_transfer_packet(packet: &[u8]) -> Result<TransferPacket<'_>
             block: be16(packet, 2),
             payload: &packet[4..],
         }),
-        // A few embedded TFTP clients pad the fixed four-byte ACK to an
-        // aligned UDP payload. Accept only zero padding for interoperability.
-        4 if packet.len() >= 4 && packet[4..].iter().all(|byte| *byte == 0) => {
-            Ok(TransferPacket::Ack(be16(packet, 2)))
-        }
-        4 => Err(TransferError::illegal("malformed ACK packet")),
+        // Boot-ROM clients may pad the fixed four-byte ACK to an aligned UDP
+        // payload; trailing bytes carry no meaning, so they are ignored.
+        4 => Ok(TransferPacket::Ack(be16(packet, 2))),
         5 => {
             if packet.len() < 5 || !packet.ends_with(&[0]) {
                 return Err(TransferError::illegal("malformed ERROR packet"));
@@ -216,14 +206,6 @@ pub(super) fn decode_transfer_packet(packet: &[u8]) -> Result<TransferPacket<'_>
             "unexpected opcode {opcode} during transfer"
         ))),
     }
-}
-
-pub(super) fn data_packet(block: u16, data: &[u8]) -> Vec<u8> {
-    let mut packet = Vec::with_capacity(4 + data.len());
-    packet.extend_from_slice(&[0, 3]);
-    packet.extend_from_slice(&block.to_be_bytes());
-    packet.extend_from_slice(data);
-    packet
 }
 
 pub(super) fn ack_packet(block: u16) -> [u8; 4] {
@@ -271,10 +253,11 @@ pub(super) fn encode_netascii(input: &[u8]) -> Vec<u8> {
     output
 }
 
-/// Converts received netascii back to the local representation.  `pending_cr`
-/// carries a CR split across two DATA blocks between calls.
-pub(super) fn decode_netascii(input: &[u8], pending_cr: &mut bool) -> Vec<u8> {
-    let mut output = Vec::with_capacity(input.len());
+/// Converts received netascii back to the local representation, appending to
+/// `output` (a buffer reused across blocks, so the receive path performs no
+/// per-block allocation).  `pending_cr` carries a CR split across two DATA
+/// blocks between calls.
+pub(super) fn decode_netascii_into(input: &[u8], pending_cr: &mut bool, output: &mut Vec<u8>) {
     for byte in input {
         if *pending_cr {
             match byte {
@@ -292,14 +275,13 @@ pub(super) fn decode_netascii(input: &[u8], pending_cr: &mut bool) -> Vec<u8> {
             output.push(*byte);
         }
     }
-    output
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        data_packet, decode_transfer_packet, encode_netascii, negotiate, parse_request, Opcode,
-        TransferPacket, TFTP_MAX_BLOCK_SIZE,
+        decode_transfer_packet, encode_netascii, negotiate, parse_request, Opcode, TransferPacket,
+        TFTP_MAX_BLOCK_SIZE,
     };
 
     #[test]
@@ -323,7 +305,7 @@ mod tests {
             b'2', b'3', 0,
         ])
         .unwrap();
-        let options = negotiate(&request, 123, false).unwrap();
+        let options = negotiate(&request, 123, false);
         assert_eq!(options.block_size, TFTP_MAX_BLOCK_SIZE);
         assert!(options
             .oack
@@ -338,7 +320,7 @@ mod tests {
             b'2', 0, b'w', b'i', b'n', b'd', b'o', b'w', b's', b'i', b'z', b'e', 0, b'8', 0,
         ])
         .unwrap();
-        let options = negotiate(&request, 0, false).unwrap();
+        let options = negotiate(&request, 0, false);
         assert_eq!(options.window_size, 8);
         assert!(options
             .oack
@@ -349,7 +331,7 @@ mod tests {
 
     #[test]
     fn packet_codec_validates_rfc_packet_headers() {
-        let packet = data_packet(7, b"abc");
+        let packet = [0, 3, 0, 7, b'a', b'b', b'c'];
         match decode_transfer_packet(&packet).unwrap() {
             TransferPacket::Data { block, payload } => {
                 assert_eq!(block, 7);
@@ -361,8 +343,11 @@ mod tests {
             TransferPacket::Ack(block) => assert_eq!(block, 7),
             _ => panic!("expected ACK packet"),
         }
-        // Non-zero trailing garbage on an ACK is rejected.
-        assert!(decode_transfer_packet(&[0, 4, 0, 7, 1]).is_err());
+        // Trailing bytes on an ACK (boot-ROM padding) are ignored.
+        assert!(matches!(
+            decode_transfer_packet(&[0, 4, 0, 7, 1]).unwrap(),
+            TransferPacket::Ack(7)
+        ));
         assert!(matches!(
             decode_transfer_packet(&[0, 4, 0, 7, 0, 0]).unwrap(),
             TransferPacket::Ack(7)
@@ -383,31 +368,130 @@ mod tests {
         assert!(decode_transfer_packet(&[0, 5, 0, 1, b'x']).is_err()); // missing terminator
     }
 
-    #[test]
-    fn rejects_invalid_or_duplicate_options_and_preserves_netascii() {
-        // Valid opcode + filename + mode, but missing final NUL.
-        assert!(parse_request(&[0, 1, b'a', 0, b'o', b'c', b't', b'e', b't']).is_err());
-        assert!(parse_request(&[
-            0, 1, b'a', 0, b'o', b'c', b't', b'e', b't', 0, b't', b's', b'i', b'z', b'e', 0, b'0',
-            0, b't', b's', b'i', b'z', b'e', 0, b'0', 0
-        ])
-        .is_err());
-        let request = parse_request(&[
-            0, 1, b'a', 0, b'o', b'c', b't', b'e', b't', 0, b'b', b'l', b'k', b's', b'i', b'z',
-            b'e', 0, b'7', 0,
-        ])
-        .unwrap();
-        assert!(negotiate(&request, 0, true).is_err());
-        let encoded = encode_netascii(b"a\nb\rc");
-        assert_eq!(encoded, b"a\r\nb\r\0c");
-        let mut pending = false;
-        assert_eq!(super::decode_netascii(&encoded[..4], &mut pending), b"a\nb");
-        assert_eq!(super::decode_netascii(&encoded[4..], &mut pending), b"\rc");
+    /// Builds the RRQ bytes `00 01 <fields...>` with each field NUL-terminated.
+    fn rrq(fields: &[&[u8]]) -> Vec<u8> {
+        let mut packet = vec![0, 1];
+        for field in fields {
+            packet.extend_from_slice(field);
+            packet.push(0);
+        }
+        packet
     }
 
     #[test]
-    fn parse_request_rejects_non_ascii_filename() {
+    fn tolerates_uboot_mcast_empty_option_value() {
+        // Regression: U-Boot built with CONFIG_MCAST_TFTP (Marvell switch
+        // boot ROMs, e.g. the egiga driver) appends a `multicast` option with
+        // an EMPTY value (`multicast\0\0`).  Rejecting the empty field made
+        // the server answer ERROR 4 ("malformed request") — the exact failure
+        // those devices show against strict servers while tftpd32 works.
+        let request = parse_request(&rrq(&[
+            b"nos.img",
+            b"octet",
+            b"timeout",
+            b"5",
+            b"blksize",
+            b"1468",
+            b"multicast",
+            b"",
+        ]))
+        .unwrap();
+        assert_eq!(request.filename, "nos.img");
+        assert_eq!(request.options.len(), 3);
+        let negotiated = negotiate(&request, 14601478, true);
+        assert_eq!(negotiated.block_size, TFTP_MAX_BLOCK_SIZE);
+        assert!(negotiated
+            .oack
+            .iter()
+            .any(|option| option == &("timeout".into(), "5".into())));
+        // The empty-value option is not acknowledged.
+        assert!(!negotiated.oack.iter().any(|(key, _)| key == "multicast"));
+    }
+
+    #[test]
+    fn tolerates_padded_and_unterminated_requests() {
+        // NUL padding to a fixed buffer size.
+        let mut padded = rrq(&[b"nos.img", b"octet", b"blksize", b"1468"]);
+        padded.extend_from_slice(&[0; 200]);
+        let request = parse_request(&padded).unwrap();
+        assert_eq!(request.filename, "nos.img");
+        assert_eq!(request.options.len(), 1);
+
+        // A missing final NUL still parses.
+        let mut unterminated = rrq(&[b"nos.img", b"octet", b"blksize", b"1468"]);
+        unterminated.pop();
+        assert_eq!(parse_request(&unterminated).unwrap().options.len(), 1);
+
+        // Trailing garbage after the last field is ignored.
+        let mut junk = rrq(&[b"nos.img", b"octet"]);
+        junk.extend_from_slice(&[0xff, 0xfe, 0xfd]);
+        assert_eq!(parse_request(&junk).unwrap().filename, "nos.img");
+
+        // Duplicate options keep the first value.
+        let request = parse_request(&rrq(&[
+            b"nos.img", b"octet", b"blksize", b"1024", b"blksize", b"512",
+        ]))
+        .unwrap();
+        assert_eq!(
+            request.options,
+            [("blksize".to_string(), "1024".to_string())]
+        );
+    }
+
+    #[test]
+    fn invalid_option_values_fall_back_to_defaults_instead_of_failing() {
+        let request = parse_request(&rrq(&[
+            b"nos.img",
+            b"octet",
+            b"blksize",
+            b"7", // below the RFC 2348 minimum of 8
+            b"timeout",
+            b"0", // below the RFC 2349 minimum of 1
+            b"windowsize",
+            b"99999999", // above the RFC 7440 maximum of 65535
+            b"tsize",
+            b"not-a-size", // unparseable
+        ]))
+        .unwrap();
+        let negotiated = negotiate(&request, 0, false);
+        assert_eq!(negotiated.block_size, super::TFTP_DEFAULT_BLOCK_SIZE);
+        assert_eq!(negotiated.window_size, 1);
+        assert!(negotiated.oack.is_empty());
+    }
+
+    #[test]
+    fn rrq_tsize_is_answered_even_when_the_value_is_not_zero() {
+        // Strictly "RRQ tsize must be zero" is RFC 2349, but real clients
+        // send other values; answer the actual size instead of failing.
+        let request = parse_request(&rrq(&[b"nos.img", b"octet", b"tsize", b"99"])).unwrap();
+        let negotiated = negotiate(&request, 1234, true);
+        assert!(negotiated
+            .oack
+            .iter()
+            .any(|option| option == &("tsize".into(), "1234".into())));
+    }
+
+    #[test]
+    fn still_rejects_unservable_requests() {
+        assert!(parse_request(&[0, 1]).is_err()); // too short for filename + mode
+        assert!(parse_request(&[0, 1, 0, 0]).is_err()); // empty filename
+        assert!(parse_request(&rrq(&[b"nos.img"])).is_err()); // missing mode
+        assert!(parse_request(&rrq(&[b"nos.img", b"mail"])).is_err()); // obsolete mode
+        assert!(parse_request(&[0, 9, b'a', 0, b'o', b'c', b't', b'e', b't', 0]).is_err());
         // Filename contains 0xff, which is not valid netascii.
         assert!(parse_request(&[0, 1, 0xff, 0, b'o', b'c', b't', b'e', b't', 0]).is_err());
+    }
+
+    #[test]
+    fn preserves_netascii_conversion() {
+        let encoded = encode_netascii(b"a\nb\rc");
+        assert_eq!(encoded, b"a\r\nb\r\0c");
+        let mut pending = false;
+        let mut decoded = Vec::new();
+        super::decode_netascii_into(&encoded[..4], &mut pending, &mut decoded);
+        assert_eq!(decoded, b"a\nb");
+        decoded.clear();
+        super::decode_netascii_into(&encoded[4..], &mut pending, &mut decoded);
+        assert_eq!(decoded, b"\rc");
     }
 }

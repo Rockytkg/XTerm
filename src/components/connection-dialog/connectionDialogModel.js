@@ -35,10 +35,14 @@ function defaultTerminalHighlightEnabled(profile, protocol) {
   return requiresHostKeyVerification(protocol) ? false : true;
 }
 
-function defaultBackspaceSends(protocol) {
-  return isTelnetProtocol(protocol) || isSerialProtocol(protocol)
-    ? BACKSPACE_SENDS.AUTO
-    : BACKSPACE_SENDS.DEL;
+function defaultBackspaceSends() {
+  return BACKSPACE_SENDS.BS;
+}
+
+// 历史 profile 可能存着已移除的 "AUTO" 等值：只有显式 DEL 是有效覆盖，
+// 其余一律归一到默认 BS。
+function normalizeBackspaceSends(value) {
+  return value === BACKSPACE_SENDS.DEL ? BACKSPACE_SENDS.DEL : defaultBackspaceSends();
 }
 
 function commonDraftFromProfile(profile, protocol) {
@@ -48,7 +52,7 @@ function commonDraftFromProfile(profile, protocol) {
     terminalHighlightEnabled: defaultTerminalHighlightEnabled(profile, protocol),
     terminalType: options.terminalType || DEFAULT_TERMINAL_TYPE,
     encoding: options.encoding || DEFAULT_TERMINAL_ENCODING,
-    backspaceSends: options.backspaceSends || defaultBackspaceSends(protocol),
+    backspaceSends: normalizeBackspaceSends(options.backspaceSends),
     terminalMorePromptCleanup: options.terminalMorePromptCleanup === true,
     runtimeMetrics: options.runtimeMetrics !== false,
   };
@@ -200,7 +204,7 @@ export function buildConnectionProfile({
 }) {
   const encodingValue =
     form.encoding === DEFAULT_TERMINAL_ENCODING ? undefined : form.encoding || undefined;
-  const defaultBackspace = defaultBackspaceSends(protocol);
+  const defaultBackspace = defaultBackspaceSends();
   const options = {
     terminalType: form.terminalType || undefined,
     encoding: encodingValue,

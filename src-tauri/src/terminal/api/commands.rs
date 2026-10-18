@@ -33,7 +33,6 @@ pub(crate) async fn terminal_connection_open(
                 accept_host_key_once: request.accept_host_key_once,
                 terminal_type: request.terminal_type,
                 encoding: request.encoding,
-                backspace_sends: request.backspace_sends,
                 realtime_encoding_detection: request.realtime_encoding_detection,
                 cols: request.cols,
                 rows: request.rows,
@@ -118,16 +117,6 @@ pub(crate) fn terminal_session_set_encoding_detection(
             request.enabled,
             request.encoding,
         )
-        .map_err(api_error)
-}
-
-#[tauri::command]
-pub(crate) fn terminal_session_set_backspace_mode(
-    state: tauri::State<'_, AppState>,
-    request: SessionBackspaceModeCommand,
-) -> Result<(), String> {
-    session_service()
-        .set_backspace_mode(state.inner(), &request.session_id, request.mode)
         .map_err(api_error)
 }
 

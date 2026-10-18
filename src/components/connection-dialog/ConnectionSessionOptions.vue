@@ -5,11 +5,9 @@ import { ChevronDown, SlidersHorizontal } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import UiSwitch from "../UiSwitch.vue";
 import UiSelect from "../UiSelect.vue";
-import { isSerialProtocol, isSshProtocol, isTelnetProtocol } from "../../utils/connectionProtocols";
+import { isSerialProtocol, isSshProtocol } from "../../utils/connectionProtocols";
 import {
   BACKSPACE_SENDS_OPTIONS,
-  SERIAL_BACKSPACE_SENDS_OPTIONS,
-  TELNET_BACKSPACE_SENDS_OPTIONS,
   TERMINAL_TYPE_OPTIONS,
   createEncodingOptions,
 } from "../../utils/terminalSessionOptions";
@@ -30,11 +28,7 @@ function updateField(field, value) {
 }
 
 const encodingOptions = computed(() => createEncodingOptions(t));
-const backspaceSendsOptions = computed(() => {
-  if (isTelnetProtocol(props.protocol)) return TELNET_BACKSPACE_SENDS_OPTIONS;
-  if (isSerialProtocol(props.protocol)) return SERIAL_BACKSPACE_SENDS_OPTIONS;
-  return BACKSPACE_SENDS_OPTIONS;
-});
+const backspaceSendsOptions = BACKSPACE_SENDS_OPTIONS;
 </script>
 
 <template>

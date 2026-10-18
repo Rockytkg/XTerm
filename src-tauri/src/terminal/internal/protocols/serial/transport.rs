@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fmt::Write as _, time::Duration, time::Instant};
+use std::{collections::VecDeque, fmt::Write as _, time::Duration};
 
 use bytes::Bytes;
 use tokio::io::AsyncWriteExt;
@@ -6,10 +6,8 @@ use tokio::io::AsyncWriteExt;
 use super::{
     core::{
         ConnectionError, SessionWorkerEvent, TransportCapabilityCommand, TransportCommand,
-        TransportCommandOutcome, SERIAL_ERASE_PROBE_WINDOW, SERIAL_READ_BATCH_MAX_BYTES,
-        SERIAL_WRITE_STALL_TIMEOUT_MS,
+        TransportCommandOutcome, SERIAL_READ_BATCH_MAX_BYTES, SERIAL_WRITE_STALL_TIMEOUT_MS,
     },
-    erase_detector::EraseDetector,
     serial::redetect_serial_baud_on_open_port,
     transport_events::{
         send_transport_closed, send_transport_data, send_transport_failed, send_transport_ready,
@@ -22,22 +20,13 @@ pub(super) fn spawn_serial_transport_actor(
     session_id: String,
     port: tokio_serial::SerialStream,
     port_name: String,
-    backspace_sends: Option<String>,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<TransportCommand>,
     event_tx: tokio::sync::mpsc::UnboundedSender<SessionWorkerEvent>,
     close_ack: tokio::sync::oneshot::Sender<()>,
 ) {
     tauri::async_runtime::spawn(async move {
         let mut port = port;
-        run_serial_transport_actor(
-            session_id,
-            &mut port,
-            &port_name,
-            backspace_sends,
-            &mut rx,
-            &event_tx,
-        )
-        .await;
+        run_serial_transport_actor(session_id, &mut port, &port_name, &mut rx, &event_tx).await;
         // POSIX 下串口以 TIOCEXCL + 独占 flock 打开:必须先 drop 释放 fd,
         // 再确认关闭,否则紧接着重开同一端口会得到 EBUSY(端口被占用)。
         drop(port);
@@ -49,7 +38,6 @@ async fn run_serial_transport_actor(
     session_id: String,
     port: &mut tokio_serial::SerialStream,
     port_name: &str,
-    backspace_sends: Option<String>,
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<TransportCommand>,
     event_tx: &tokio::sync::mpsc::UnboundedSender<SessionWorkerEvent>,
 ) {
@@ -58,16 +46,12 @@ async fn run_serial_transport_actor(
     }
     let mut buffer = vec![0u8; SERIAL_READ_BATCH_MAX_BYTES];
     let mut aborted_read_recovery_available = true;
-    // 串口没有协商机制，退格擦除字节只能按回显探测学习；显式 DEL/BS 关闭探测。
-    let mut erase_detector = EraseDetector::new(SERIAL_ERASE_PROBE_WINDOW);
-    erase_detector.set_mode(backspace_sends.as_deref());
     // A baud probe is serialized with transport commands, but Close must be
     // able to cancel its waits. Commands received while probing are replayed
     // after the probe completes.
     let mut pending_commands = VecDeque::new();
     log::debug!(target: "serial.transport", "backend serial actor for '{session_id}' started on {port_name}");
     loop {
-        let erase_deadline = erase_detector.next_deadline();
         tokio::select! {
             biased;
             command = async {
@@ -85,7 +69,6 @@ async fn run_serial_transport_actor(
                     command,
                     rx,
                     &mut pending_commands,
-                    &mut erase_detector,
                     event_tx,
                 )
                 .await
@@ -101,28 +84,12 @@ async fn run_serial_transport_actor(
                     }
                 }
             }
-            // 退格探测窗到期：回显沉默时透明补发另一候选字节。无探测时该分支
-            // 永久 pending，不参与选择。
-            () = wait_for_erase_probe(erase_deadline) => {
-                if let Some(retry) = erase_detector.poll(Instant::now()) {
-                    if let Err(error) = write_serial_transport(port, &[retry]).await {
-                        send_transport_failed(event_tx, error);
-                        return;
-                    }
-                }
-            }
             result = read_serial_transport(port, &mut buffer, &mut aborted_read_recovery_available) => {
                 match result {
                     Ok(size) if size > 0 => {
                         // 一次成功读取说明重叠 IO 健康,重新武装 aborted 恢复名额。
                         aborted_read_recovery_available = true;
                         log_serial_read_chunk(port_name, &buffer[..size]);
-                        if let Some(retry) = erase_detector.observe_output(&buffer[..size], Instant::now()) {
-                            if let Err(error) = write_serial_transport(port, &[retry]).await {
-                                send_transport_failed(event_tx, error);
-                                return;
-                            }
-                        }
                         // 按实际读取量拷贝：低波特率下每块仅几字节，此前的
                         // split_to + resize 会每块重新清零整个 32KiB 缓冲。
                         let bytes = Bytes::copy_from_slice(&buffer[..size]);
@@ -138,13 +105,6 @@ async fn run_serial_transport_actor(
                 }
             }
         };
-    }
-}
-
-async fn wait_for_erase_probe(deadline: Option<Instant>) {
-    match deadline {
-        Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
-        None => std::future::pending().await,
     }
 }
 
@@ -240,17 +200,11 @@ async fn handle_serial_transport_command(
     command: TransportCommand,
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<TransportCommand>,
     pending_commands: &mut VecDeque<TransportCommand>,
-    erase_detector: &mut EraseDetector,
     event_tx: &tokio::sync::mpsc::UnboundedSender<SessionWorkerEvent>,
 ) -> Result<TransportCommandOutcome, String> {
     match command {
         TransportCommand::Write(bytes) => {
-            let bytes = erase_detector.map_input(&bytes, Instant::now());
-            write_serial_transport(port, bytes.as_slice()).await?;
-            Ok(TransportCommandOutcome::Continue)
-        }
-        TransportCommand::SetBackspaceMode(mode) => {
-            erase_detector.set_mode(mode.as_deref());
+            write_serial_transport(port, &bytes).await?;
             Ok(TransportCommandOutcome::Continue)
         }
         TransportCommand::InvokeCapability(command) => {

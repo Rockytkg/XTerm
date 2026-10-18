@@ -86,8 +86,7 @@ export default {
       encodingHint: "自动检测或指定远端字符集。",
       encodingAuto: "自动",
       backspaceSends: "退格键发送",
-      backspaceSendsHint:
-        "自动模式优先读 Telnet 服务器 SLC 协商值，串口/无协商时按回显探测学习；也可固定发送 DEL(^?) 或 BS(^H)。",
+      backspaceSendsHint: "默认发送 BS(^H)，VT100 与主流行编辑惯例；仅当对端只认 DEL(^?) 时才需要切换。",
       morePromptCleanup: "清理 More 分页提示",
       morePromptCleanupHint: "兼容会在翻页后输出填充空格的老交换机；默认关闭。",
       runtimeMetrics: "运行时指标",

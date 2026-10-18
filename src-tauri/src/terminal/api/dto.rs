@@ -37,8 +37,6 @@ pub(crate) struct ConnectionOpenCommand {
     #[serde(default)]
     pub encoding: Option<String>,
     #[serde(default)]
-    pub backspace_sends: Option<String>,
-    #[serde(default)]
     pub realtime_encoding_detection: Option<bool>,
     #[serde(default)]
     pub cols: Option<u32>,
@@ -135,14 +133,6 @@ pub(crate) struct SessionEncodingDetectionCommand {
     pub enabled: bool,
     #[serde(default)]
     pub encoding: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SessionBackspaceModeCommand {
-    pub session_id: String,
-    #[serde(default)]
-    pub mode: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

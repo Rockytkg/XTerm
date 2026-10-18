@@ -68,7 +68,6 @@ const KEY_SEQUENCES = {
   tab: "\t",
   esc: ESC,
   escape: ESC,
-  backspace: "\x7f",
   space: " ",
   up: `${ESC}[A`,
   down: `${ESC}[B`,
@@ -101,10 +100,8 @@ function keySequence(key, sessionInfo) {
   const ctrl = /^ctrl[-+]([a-z])$/.exec(normalized);
   if (ctrl) return String.fromCharCode(ctrl[1].charCodeAt(0) - 96);
   if (normalized === "backspace") {
-    // Keep scripted key presses aligned with the physical key handler. AUTO
-    // starts with DEL; the backend replaces it after Telnet SLC discovery or
-    // serial/Telnet echo probing.
-    return String(sessionInfo?.backspaceSends || "").toUpperCase() === "BS" ? "\x08" : "\x7f";
+    // 与物理按键处理一致：默认 BS(^H)，仅显式 DEL 的会话发 \x7f。
+    return String(sessionInfo?.backspaceSends || "").toUpperCase() === "DEL" ? "\x7f" : "\x08";
   }
   if (Object.hasOwn(KEY_SEQUENCES, normalized)) return KEY_SEQUENCES[normalized];
   throw new TypeError(`press key must be a named key or "ctrl+<letter>", got: ${String(key)}`);

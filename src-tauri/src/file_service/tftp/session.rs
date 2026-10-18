@@ -26,9 +26,9 @@ use crate::{
 use super::{
     error::{io_transfer_error, TransferError},
     packet::{
-        ack_packet, data_packet, decode_netascii, decode_transfer_packet, encode_netascii,
-        negotiate, oack_packet, request_tsize, Negotiated, Opcode, Request, TransferMode,
-        TransferPacket, MAX_PACKET_SIZE,
+        ack_packet, decode_netascii_into, decode_transfer_packet, encode_netascii, negotiate,
+        oack_packet, request_tsize, Negotiated, Opcode, Request, TransferMode, TransferPacket,
+        MAX_PACKET_SIZE,
     },
 };
 
@@ -283,15 +283,13 @@ async fn serve_read(
     // RFC 2349 reports the octets that the client will receive.  Netascii
     // expands LF and CR while converting the local representation.
     let transfer_size = source.len() as u64;
-    // Validate the options before announcing the transfer so an invalid option
-    // list never produces phantom transfer events.
-    let negotiated = negotiate(&request, transfer_size, true)?;
+    let negotiated = negotiate(&request, transfer_size, true);
     context
         .shared
         .start_transfer(&id, "read", &name, &peer.to_string(), transfer_size);
     emit_transfer_start(context, &id);
     let mut progress = TransferProgress::new(context, id);
-    let result = match send_oack_or_start(socket, peer, &negotiated, shutdown_rx).await {
+    let result = match send_oack(socket, peer, &negotiated, shutdown_rx).await {
         Ok(()) => {
             send_file(
                 socket,
@@ -322,9 +320,8 @@ async fn serve_write(
         name,
         id,
     } = transfer;
-    // Validate all negotiated options before mutating the target path.
     let transfer_size = request_tsize(&request);
-    let negotiated = negotiate(&request, transfer_size, false)?;
+    let negotiated = negotiate(&request, transfer_size, false);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|error| {
             TransferError::access_violation(format!(
@@ -380,48 +377,60 @@ async fn serve_write(
     result
 }
 
-struct DataWindow {
-    packets: Vec<Vec<u8>>,
-    payload_bytes: usize,
+/// One RFC 7440 window of a download: the `source` byte range it covers plus
+/// the range of block numbers.  Metadata only — DATA packets are rebuilt
+/// from `source` into a reused scratch buffer on every (re)transmission, so
+/// the send path performs no per-packet heap allocation.
+#[derive(Clone, Copy)]
+struct Window {
     offset: usize,
-    next_block: u16,
-    last_block: u16,
+    end: usize,
+    first: u16,
+    last: u16,
     is_final: bool,
 }
 
-/// Builds one RFC 7440 window of DATA packets starting at `offset`/`block`.
-/// `next_block` already points past the last queued block (with u16 rollover),
-/// so the caller must NOT increment it again between windows.
-fn build_data_window(
-    source: &[u8],
-    mut offset: usize,
-    mut block: u16,
-    block_size: usize,
-    window_size: usize,
-) -> DataWindow {
-    let mut packets = Vec::new();
-    let mut payload_bytes = 0;
-    let mut last_block = block;
-    let mut is_final = false;
-    for _ in 0..window_size.max(1) {
-        let size = (source.len() - offset).min(block_size);
-        packets.push(data_packet(block, &source[offset..offset + size]));
-        payload_bytes += size;
-        last_block = block;
-        offset += size;
-        if size < block_size {
-            is_final = true;
-            break;
+impl Window {
+    /// Plans the window starting at `offset`/`first`.  A window always holds
+    /// at least one block: at end-of-data that block is the short/empty DATA
+    /// packet that terminates the transfer (RFC 1350), which also covers
+    /// empty files and exact block-size multiples.
+    fn plan(
+        source_len: usize,
+        offset: usize,
+        first: u16,
+        block_size: usize,
+        window_size: usize,
+    ) -> Self {
+        let mut end = offset;
+        let mut count = 0usize;
+        let mut is_final = false;
+        while count < window_size.max(1) {
+            let take = (source_len - end).min(block_size);
+            end += take;
+            count += 1;
+            if take < block_size {
+                is_final = true;
+                break;
+            }
         }
-        block = block.wrapping_add(1);
+        Self {
+            offset,
+            end,
+            first,
+            last: first.wrapping_add(count as u16 - 1),
+            is_final,
+        }
     }
-    DataWindow {
-        packets,
-        payload_bytes,
-        offset,
-        next_block: block,
-        last_block,
-        is_final,
+
+    fn next(self, source_len: usize, block_size: usize, window_size: usize) -> Self {
+        Self::plan(
+            source_len,
+            self.end,
+            self.last.wrapping_add(1),
+            block_size,
+            window_size,
+        )
     }
 }
 
@@ -433,32 +442,44 @@ async fn send_file(
     progress: &mut TransferProgress,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) -> Result<(), TransferError> {
-    let mut offset = 0;
-    let mut block = 1u16;
+    let mut scratch = Vec::with_capacity(4 + negotiated.block_size);
+    let mut retries = 0;
+    let mut window = Window::plan(
+        source.len(),
+        0,
+        1,
+        negotiated.block_size,
+        negotiated.window_size,
+    );
     loop {
-        let window = build_data_window(
-            source,
-            offset,
-            block,
-            negotiated.block_size,
-            negotiated.window_size,
-        );
-        let is_final = window.is_final;
-        send_window_with_ack(
+        send_window(
             socket,
             peer,
-            &window.packets,
-            window.last_block,
-            negotiated.timeout,
-            shutdown_rx,
+            source,
+            window,
+            negotiated.block_size,
+            &mut scratch,
         )
         .await?;
-        progress.add(window.payload_bytes, is_final);
-        if is_final {
-            return Ok(());
+        match wait_for_ack(socket, peer, window.last, negotiated.timeout, shutdown_rx).await? {
+            AckOutcome::Acked => {
+                retries = 0;
+                progress.add(window.end - window.offset, window.is_final);
+                if window.is_final {
+                    return Ok(());
+                }
+                window = window.next(source.len(), negotiated.block_size, negotiated.window_size);
+            }
+            AckOutcome::Resend => {
+                retries += 1;
+                if retries > TFTP_MAX_RETRIES {
+                    return Err(TransferError::Timeout(format!(
+                        "timed out waiting for ACK {}",
+                        window.last
+                    )));
+                }
+            }
         }
-        offset = window.offset;
-        block = window.next_block;
     }
 }
 
@@ -494,6 +515,9 @@ async fn receive_file(
     // correctly received block, used for retransmits per RFC 1350/7440.
     let mut retry_packet = initial;
     let mut packet = [0u8; MAX_PACKET_SIZE];
+    // Netascii blocks decode into this reused buffer; octet blocks are
+    // written straight from the receive buffer with no intermediate copy.
+    let mut netascii = Vec::new();
     let mut retries = 0;
     let mut in_window = 0usize;
     let mut pending_cr = false;
@@ -511,28 +535,36 @@ async fn receive_file(
             continue;
         };
         retries = 0;
-        let (block, data) = match decode_transfer_packet(&packet[..size])? {
-            TransferPacket::Data { block, payload } if payload.len() <= negotiated.block_size => {
+        let (block, data) = match decode_transfer_packet(&packet[..size]) {
+            Ok(TransferPacket::Data { block, payload })
+                if payload.len() <= negotiated.block_size =>
+            {
                 (block, payload)
             }
-            TransferPacket::Data { .. } => {
-                return Err(TransferError::illegal("oversized DATA packet"))
-            }
-            TransferPacket::Error { code, message } => {
+            Ok(TransferPacket::Error { code, message }) => {
                 return Err(TransferError::Peer(format!(
                     "peer sent ERROR {code}: {message}"
                 )))
             }
-            TransferPacket::Ack(_) => return Err(TransferError::illegal("expected DATA packet")),
+            // Stray ACKs, retransmitted WRQs, undecodable or oversized
+            // packets: re-acknowledge the last good state instead of
+            // aborting the transfer — the same answer RFC 7440 gives for
+            // sequence errors, and what keeps sloppy boot-ROM clients alive.
+            _ => {
+                send_packet(socket, peer, &retry_packet).await?;
+                continue;
+            }
         };
         if block == expected {
             let raw_len = data.len();
-            let data = if target.mode == TransferMode::Netascii {
-                decode_netascii(data, &mut pending_cr)
-            } else {
-                data.to_vec()
-            };
-            target.write(&data).await?;
+            match target.mode {
+                TransferMode::Octet => target.write(data).await?,
+                TransferMode::Netascii => {
+                    netascii.clear();
+                    decode_netascii_into(data, &mut pending_cr, &mut netascii);
+                    target.write(&netascii).await?;
+                }
+            }
             retry_packet = ack_packet(block).to_vec();
             in_window += 1;
             let final_data = raw_len < negotiated.block_size;
@@ -559,7 +591,7 @@ async fn receive_file(
 
 /// For RRQ with options the server answers with an OACK and waits for ACK(0)
 /// before sending DATA(1) (RFC 2347 §5); without options it starts directly.
-async fn send_oack_or_start(
+async fn send_oack(
     socket: &UdpSocket,
     peer: SocketAddr,
     negotiated: &Negotiated,
@@ -568,8 +600,22 @@ async fn send_oack_or_start(
     if negotiated.oack.is_empty() {
         return Ok(());
     }
-    let packets = [oack_packet(&negotiated.oack)];
-    send_window_with_ack(socket, peer, &packets, 0, negotiated.timeout, shutdown_rx).await
+    let packet = oack_packet(&negotiated.oack);
+    let mut retries = 0;
+    loop {
+        send_packet(socket, peer, &packet).await?;
+        match wait_for_ack(socket, peer, 0, negotiated.timeout, shutdown_rx).await? {
+            AckOutcome::Acked => return Ok(()),
+            AckOutcome::Resend => {
+                retries += 1;
+                if retries > TFTP_MAX_RETRIES {
+                    return Err(TransferError::Timeout(
+                        "timed out waiting for OACK acknowledgement".to_string(),
+                    ));
+                }
+            }
+        }
+    }
 }
 
 fn initial_write_packet(negotiated: &Negotiated) -> Vec<u8> {
@@ -580,54 +626,64 @@ fn initial_write_packet(negotiated: &Negotiated) -> Vec<u8> {
     }
 }
 
-/// Sends one window (or a single OACK) and waits for the ACK of `block`,
-/// retransmitting the whole window on timeout or stale ACK (RFC 7440).
-async fn send_window_with_ack(
+/// (Re)sends every DATA packet of `window`.  UDP `send_to` needs one
+/// contiguous buffer per datagram, so each packet is assembled in the reused
+/// `scratch` — the single copy the socket API requires, and zero allocation
+/// in the steady state.
+async fn send_window(
     socket: &UdpSocket,
     peer: SocketAddr,
-    packets: &[Vec<u8>],
-    block: u16,
+    source: &[u8],
+    window: Window,
+    block_size: usize,
+    scratch: &mut Vec<u8>,
+) -> Result<(), TransferError> {
+    let mut offset = window.offset;
+    let mut block = window.first;
+    loop {
+        let take = (window.end - offset).min(block_size);
+        scratch.clear();
+        scratch.extend_from_slice(&[0, 3]);
+        scratch.extend_from_slice(&block.to_be_bytes());
+        scratch.extend_from_slice(&source[offset..offset + take]);
+        send_packet(socket, peer, scratch).await?;
+        if block == window.last {
+            return Ok(());
+        }
+        offset += take;
+        block = block.wrapping_add(1);
+    }
+}
+
+/// The result of waiting for the ACK that completes a window (or the OACK).
+enum AckOutcome {
+    /// The expected ACK arrived; advance to the next window.
+    Acked,
+    /// Timeout, a stale ACK, or an unexpected packet: retransmit the window.
+    /// Boot-ROM clients are sloppy (some answer an OACK by resending the RRQ
+    /// to the new TID), so anything unexpected triggers a resend rather than
+    /// aborting the transfer.
+    Resend,
+}
+
+async fn wait_for_ack(
+    socket: &UdpSocket,
+    peer: SocketAddr,
+    expected: u16,
     timeout_duration: Duration,
     shutdown_rx: &mut watch::Receiver<bool>,
-) -> Result<(), TransferError> {
-    let mut retries = 0;
-    let mut received = [0u8; MAX_PACKET_SIZE];
-    loop {
-        for packet in packets {
-            logging::event("tftp.protocol", "tftp.packet.send")
-                .field("bytes", packet.len())
-                .debug();
-            send_packet(socket, peer, packet).await?;
-        }
-        if let Some(size) =
-            recv_packet(socket, peer, &mut received, timeout_duration, shutdown_rx).await?
-        {
-            logging::event("tftp.protocol", "tftp.packet.receive")
-                .maybe_field("local", socket.local_addr().ok())
-                .field("block", block)
-                .field("bytes", size)
-                .debug();
-            match decode_transfer_packet(&received[..size])? {
-                TransferPacket::Ack(ack) if ack == block => return Ok(()),
-                // Stale/duplicate ACK: retransmit the whole window below, but
-                // count the attempt so a misbehaving peer cannot loop forever.
-                TransferPacket::Ack(_) => {}
-                TransferPacket::Error { code, message } => {
-                    return Err(TransferError::Peer(format!(
-                        "peer sent ERROR {code}: {message}"
-                    )))
-                }
-                TransferPacket::Data { .. } => {
-                    return Err(TransferError::illegal("expected ACK packet"))
-                }
-            }
-        }
-        retries += 1;
-        if retries > TFTP_MAX_RETRIES {
-            return Err(TransferError::Timeout(format!(
-                "timed out waiting for ACK {block}"
-            )));
-        }
+) -> Result<AckOutcome, TransferError> {
+    let mut packet = [0u8; MAX_PACKET_SIZE];
+    let Some(size) = recv_packet(socket, peer, &mut packet, timeout_duration, shutdown_rx).await?
+    else {
+        return Ok(AckOutcome::Resend);
+    };
+    match decode_transfer_packet(&packet[..size]) {
+        Ok(TransferPacket::Ack(block)) if block == expected => Ok(AckOutcome::Acked),
+        Ok(TransferPacket::Error { code, message }) => Err(TransferError::Peer(format!(
+            "peer sent ERROR {code}: {message}"
+        ))),
+        _ => Ok(AckOutcome::Resend),
     }
 }
 
@@ -774,38 +830,22 @@ mod tests {
     use tokio::{net::UdpSocket, sync::watch, time::timeout};
 
     use super::{
-        super::packet::data_packet, build_data_window, recv_packet, secure_transfer_path,
-        send_window_with_ack, PendingUpload,
+        recv_packet, secure_transfer_path, send_window, wait_for_ack, AckOutcome, PendingUpload,
+        Window,
     };
 
-    fn block_of(packet: &[u8]) -> u16 {
-        u16::from_be_bytes([packet[2], packet[3]])
-    }
-
     #[test]
-    fn data_windows_number_blocks_consecutively_across_windows() {
-        // Regression: send_file used to increment the block counter once per
-        // window in addition to the per-block increment, skipping every other
-        // block and breaking any transfer larger than one window.
-        let source = vec![7u8; 512 * 2 + 100];
-        let first = build_data_window(&source, 0, 1, 512, 2);
-        assert_eq!(
-            first
-                .packets
-                .iter()
-                .map(|p| block_of(p))
-                .collect::<Vec<_>>(),
-            vec![1, 2]
-        );
+    fn windows_number_blocks_consecutively_across_windows() {
+        // Regression: the old send loop used to increment the block counter
+        // once per window in addition to the per-block increment, skipping
+        // every other block and breaking transfers larger than one window.
+        let first = Window::plan(512 * 2 + 100, 0, 1, 512, 2);
+        assert_eq!((first.offset, first.end), (0, 1024));
+        assert_eq!((first.first, first.last), (1, 2));
         assert!(!first.is_final);
-        assert_eq!(first.offset, 1024);
-        assert_eq!(first.payload_bytes, 1024);
-        assert_eq!(first.next_block, 3);
-        let second = build_data_window(&source, first.offset, first.next_block, 512, 2);
-        assert_eq!(second.packets.len(), 1);
-        assert_eq!(block_of(&second.packets[0]), 3);
-        assert_eq!(second.last_block, 3);
-        assert_eq!(second.payload_bytes, 100);
+        let second = first.next(512 * 2 + 100, 512, 2);
+        assert_eq!((second.offset, second.end), (1024, 1124));
+        assert_eq!((second.first, second.last), (3, 3));
         assert!(second.is_final);
     }
 
@@ -813,32 +853,30 @@ mod tests {
     fn exact_multiple_of_block_size_ends_with_empty_final_block() {
         // RFC 1350: a file whose length is an exact multiple of the block size
         // terminates with a zero-length DATA packet.
-        let source = vec![1u8; 1024];
-        let first = build_data_window(&source, 0, 1, 512, 1);
+        let first = Window::plan(1024, 0, 1, 512, 1);
         assert!(!first.is_final);
-        assert_eq!(first.next_block, 2);
-        let second = build_data_window(&source, first.offset, first.next_block, 512, 1);
+        let second = first.next(1024, 512, 1);
         assert!(!second.is_final);
-        assert_eq!(block_of(&second.packets[0]), 2);
-        let third = build_data_window(&source, second.offset, second.next_block, 512, 1);
+        assert_eq!(second.last, 2);
+        let third = second.next(1024, 512, 1);
         assert!(third.is_final);
-        assert_eq!(third.payload_bytes, 0);
-        assert_eq!(block_of(&third.packets[0]), 3);
+        assert_eq!(third.last, 3);
+        assert_eq!(third.end - third.offset, 0);
+    }
+
+    #[test]
+    fn empty_file_is_one_empty_final_block() {
+        let window = Window::plan(0, 0, 1, 512, 4);
+        assert!(window.is_final);
+        assert_eq!((window.first, window.last), (1, 1));
+        assert_eq!(window.end - window.offset, 0);
     }
 
     #[test]
     fn block_numbers_wrap_at_u16_boundary() {
-        let source = vec![1u8; 1024];
-        let window = build_data_window(&source, 0, u16::MAX, 512, 2);
-        assert_eq!(
-            window
-                .packets
-                .iter()
-                .map(|p| block_of(p))
-                .collect::<Vec<_>>(),
-            vec![u16::MAX, 0]
-        );
-        assert_eq!(window.next_block, 1);
+        let window = Window::plan(1024, 0, u16::MAX, 512, 2);
+        assert_eq!((window.first, window.last), (u16::MAX, 0));
+        assert_eq!(window.next(1024, 512, 2).first, 1);
     }
 
     #[test]
@@ -924,19 +962,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn window_sender_waits_for_the_last_block_ack() {
+    async fn window_sender_sends_all_blocks_and_waits_for_the_last_ack() {
         let server = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
         let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let client_addr = client.local_addr().unwrap();
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
         let sender = server.clone();
         let task = tokio::spawn(async move {
-            let window = vec![data_packet(1, b"a"), data_packet(2, b"b")];
-            send_window_with_ack(
+            let window = Window::plan(2, 0, 1, 1, 2);
+            let mut scratch = Vec::new();
+            send_window(&sender, client_addr, b"ab", window, 1, &mut scratch)
+                .await
+                .unwrap();
+            wait_for_ack(
                 &sender,
                 client_addr,
-                &window,
-                2,
+                window.last,
                 Duration::from_secs(1),
                 &mut shutdown_rx,
             )
@@ -947,13 +988,58 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let _ = timeout(Duration::from_secs(1), client.recv_from(&mut packet))
+        assert_eq!(&packet[..5], &[0, 3, 0, 1, b'a']);
+        let (size, _) = timeout(Duration::from_secs(1), client.recv_from(&mut packet))
             .await
             .unwrap()
             .unwrap();
+        assert_eq!(&packet[..size], &[0, 3, 0, 2, b'b']);
         client.send_to(&[0, 4, 0, 2], source).await.unwrap();
-        assert!(task.await.unwrap().is_ok());
+        assert!(matches!(task.await.unwrap().unwrap(), AckOutcome::Acked));
         drop(shutdown_tx);
+    }
+
+    #[tokio::test]
+    async fn stale_ack_and_unexpected_packets_request_retransmission() {
+        let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let server_addr = server.local_addr().unwrap();
+        let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        // A stale ACK (not the expected block 2) must not complete the window.
+        client.send_to(&[0, 4, 0, 1], server_addr).await.unwrap();
+        assert!(matches!(
+            wait_for_ack(
+                &server,
+                client.local_addr().unwrap(),
+                2,
+                Duration::from_secs(1),
+                &mut shutdown_rx,
+            )
+            .await
+            .unwrap(),
+            AckOutcome::Resend
+        ));
+        // Neither does a retransmitted RRQ delivered to the transfer TID
+        // (some boot ROMs answer an OACK this way).
+        client
+            .send_to(
+                &[0, 1, b'f', 0, b'o', b'c', b't', b'e', b't', 0],
+                server_addr,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            wait_for_ack(
+                &server,
+                client.local_addr().unwrap(),
+                2,
+                Duration::from_secs(1),
+                &mut shutdown_rx,
+            )
+            .await
+            .unwrap(),
+            AckOutcome::Resend
+        ));
     }
 
     #[tokio::test]

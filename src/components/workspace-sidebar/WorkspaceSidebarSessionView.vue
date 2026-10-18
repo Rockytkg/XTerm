@@ -5,7 +5,6 @@ import { AppWindow, Cable, Globe2, Monitor, Server } from "@lucide/vue";
 import { useToasts } from "../../composables/useToasts";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
-  setBackendBackspaceMode,
   setBackendEncodingDetection,
   setBackendRuntimeMetricsEnabled,
 } from "../../services/terminalSessions";
@@ -19,9 +18,7 @@ import {
   BACKSPACE_SENDS_OPTIONS,
   DEFAULT_TERMINAL_ENCODING,
   DEFAULT_TERMINAL_TYPE,
-  SERIAL_BACKSPACE_SENDS_OPTIONS,
   TERMINAL_TYPE_OPTIONS,
-  TELNET_BACKSPACE_SENDS_OPTIONS,
   createEncodingOptions,
 } from "../../utils/terminalSessionOptions";
 
@@ -72,20 +69,15 @@ const baudRate = computed(
 
 const terminalType = computed(() => props.activeConnection?.terminalType || DEFAULT_TERMINAL_TYPE);
 const encoding = computed(() => props.activeConnection?.encoding || DEFAULT_TERMINAL_ENCODING);
-const backspaceSends = computed(
-  () =>
-    props.activeConnection?.backspaceSends ||
-    (isTelnetProtocol(protocol.value) || isSerialProtocol(protocol.value)
-      ? BACKSPACE_SENDS.AUTO
-      : BACKSPACE_SENDS.DEL),
+const backspaceSends = computed(() =>
+  // 只有显式 DEL 是有效覆盖；历史 "AUTO" 等值归一到默认 BS。
+  props.activeConnection?.backspaceSends === BACKSPACE_SENDS.DEL
+    ? BACKSPACE_SENDS.DEL
+    : BACKSPACE_SENDS.BS,
 );
 
 const encodingOptions = computed(() => createEncodingOptions(t));
-const backspaceSendsOptions = computed(() => {
-  if (isTelnetProtocol(protocol.value)) return TELNET_BACKSPACE_SENDS_OPTIONS;
-  if (isSerialProtocol(protocol.value)) return SERIAL_BACKSPACE_SENDS_OPTIONS;
-  return BACKSPACE_SENDS_OPTIONS;
-});
+const backspaceSendsOptions = BACKSPACE_SENDS_OPTIONS;
 const profileConnectionId = computed(
   () => props.activeConnection?.connectionId || props.activeConnection?.id || "",
 );
@@ -150,29 +142,10 @@ function handleEncodingChange(value) {
   }
 }
 
-async function handleBackspaceChange(value) {
-  if (backendSessionId.value) {
-    try {
-      await setBackendBackspaceMode({
-        sessionId: backendSessionId.value,
-        mode: value || null,
-      });
-    } catch (error) {
-      logger.warn("sidebar-session.backspace-mode.update.failed", error);
-      showToast({
-        type: "error",
-        title: t("notifications.connectionSaveFailed"),
-        message: error?.message || String(error),
-      });
-      return;
-    }
-  }
-  const defaultMode =
-    isTelnetProtocol(protocol.value) || isSerialProtocol(protocol.value)
-      ? BACKSPACE_SENDS.AUTO
-      : BACKSPACE_SENDS.DEL;
-  // 与弹窗序列化一致：协议默认值不落库，profile 只保存显式覆盖。
-  void persistProfileField("backspaceSends", value === defaultMode ? undefined : value);
+function handleBackspaceChange(value) {
+  // 与弹窗序列化一致：默认值不落库，profile 只保存显式覆盖；前端按键拦截
+  // 直接读 activeConnection.backspaceSends，无需后端参与。
+  void persistProfileField("backspaceSends", value === BACKSPACE_SENDS.BS ? undefined : value);
 }
 
 async function handleRuntimeMetricsChange(enabled) {

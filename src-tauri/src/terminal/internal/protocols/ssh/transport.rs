@@ -136,7 +136,6 @@ async fn handle_ssh_transport_command(
             .map_err(|_| "SSH channel write timed out".to_string())??;
             Ok(TransportCommandOutcome::Continue)
         }
-        TransportCommand::SetBackspaceMode(_) => Ok(TransportCommandOutcome::Continue),
         TransportCommand::InvokeCapability(command) => {
             resolve_unsupported_transport_capability(command)
         }

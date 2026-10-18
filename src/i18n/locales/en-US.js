@@ -87,7 +87,7 @@ export default {
       encodingAuto: "Auto",
       backspaceSends: "Backspace sends",
       backspaceSendsHint:
-        "Auto prefers the Telnet SLC negotiation and otherwise learns from echo probing (used on serial too); DEL(^?) or BS(^H) can be pinned.",
+        "Sends BS(^H) by default, the VT100 and mainstream line-editing convention; switch only when the peer strictly requires DEL(^?).",
       morePromptCleanup: "Clean More paging prompt",
       morePromptCleanupHint:
         "For legacy switches that print filler spaces after paging; disabled by default.",
