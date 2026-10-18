@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::path::Path;
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 
@@ -8,6 +9,25 @@ const MAX_SCRIPT_FETCH_BYTES: u64 = 1024 * 1024;
 // 脚本数据文件的读写上限：防止脚本把超大文件读进前端内存或写爆磁盘。
 const MAX_SCRIPT_DATA_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const SCRIPT_DATA_TEXT_EXTENSIONS: [&str; 7] = ["txt", "log", "csv", "json", "xml", "yaml", "yml"];
+
+/// Reads a user-picked text file.  Files saved as GBK/ANSI (common for
+/// scripts and CSV exports on Chinese Windows) are not valid UTF-8; fall
+/// back to a lossy decode so the content stays readable and editable
+/// instead of failing outright.  The lossy text is never written back over
+/// the original file by these commands.
+async fn read_text_file_lossy(path: &Path) -> Result<String, std::io::Error> {
+    let bytes = tokio::fs::read(path).await?;
+    Ok(match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => {
+            logging::event("scripting.commands", "script_file.lossy_decode")
+                .field("path", path.to_string_lossy())
+                .field("error", error.to_string())
+                .warn();
+            String::from_utf8_lossy(error.as_bytes()).into_owned()
+        }
+    })
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,7 +69,7 @@ pub(crate) async fn script_pick_file(
     let path = path
         .into_path()
         .map_err(|error| format!("failed to resolve selected file: {error}"))?;
-    let code = tokio::fs::read_to_string(&path).await.map_err(|error| {
+    let code = read_text_file_lossy(&path).await.map_err(|error| {
         format!(
             "failed to read script file '{}': {error}",
             path.to_string_lossy()
@@ -170,14 +190,12 @@ pub(crate) async fn script_read_data_file(
             MAX_SCRIPT_DATA_FILE_BYTES
         ));
     }
-    let bytes = tokio::fs::read(&path).await.map_err(|error| {
+    let content = read_text_file_lossy(&path).await.map_err(|error| {
         format!(
             "failed to read data file '{}': {error}",
             path.to_string_lossy()
         )
     })?;
-    let content =
-        String::from_utf8(bytes).map_err(|_| "data file is not valid utf-8 text".to_string())?;
     let name = path
         .file_name()
         .map(|value| value.to_string_lossy().to_string())

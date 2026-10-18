@@ -18,12 +18,12 @@ use serde::Serialize;
 /// Compact parser for `ssh://` and `telnet://` URIs.  Single forward scan,
 /// zero-copy slice extraction, lazy percent-decode.
 fn parse_uri(uri: &str) -> Option<ParsedUri> {
-    let b = uri.as_bytes();
-
-    // Detect scheme via byte-level prefix
-    let (scheme, prefix_len) = if b.len() >= 6 && b[..6] == *b"ssh://" {
+    // Detect scheme via case-insensitive prefix match: RFC 3986 §3.1 makes
+    // schemes case-insensitive, and Windows hand-off paths (registry shell
+    // verbs, the Run dialog) deliver the user's original casing.
+    let (scheme, prefix_len) = if uri.len() >= 6 && uri[..6].eq_ignore_ascii_case("ssh://") {
         (Scheme::Ssh, 6usize)
-    } else if b.len() >= 9 && b[..9] == *b"telnet://" {
+    } else if uri.len() >= 9 && uri[..9].eq_ignore_ascii_case("telnet://") {
         (Scheme::Telnet, 9)
     } else {
         return None;
@@ -296,5 +296,17 @@ mod tests {
         assert_eq!(parsed.password.as_deref(), Some("密码"));
         assert_eq!(parsed.host, "example.com");
         assert_eq!(parsed.port, 2222);
+    }
+
+    #[test]
+    fn parse_uri_accepts_uppercase_schemes() {
+        // RFC 3986 §3.1: schemes are case-insensitive; Windows hand-off
+        // delivers the user's original casing.
+        let parsed = parse_uri("SSH://admin@example.com").unwrap();
+        assert_eq!(parsed.host, "example.com");
+        assert_eq!(parsed.port, 22);
+        let parsed = parse_uri("Telnet://10.0.0.1:2323").unwrap();
+        assert_eq!(parsed.host, "10.0.0.1");
+        assert_eq!(parsed.port, 2323);
     }
 }

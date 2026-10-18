@@ -58,15 +58,26 @@ pub(crate) fn validate_bind_ip(bind_ip: &str) -> Result<(), String> {
     let ip = normalized
         .parse::<IpAddr>()
         .map_err(|_| format!("invalid bind IP address '{bind_ip}'"))?;
-    // 按值比较而非字符串：非规范书写形式（如 0::1）与 canonical 形式指向同一地址。
-    let exists = resolve_network_interfaces()?
-        .into_iter()
-        .any(|interface| interface.ip.parse::<IpAddr>() == Ok(ip));
-    if exists {
-        Ok(())
-    } else {
-        Err(format!(
-            "selected network interface IP '{bind_ip}' is unavailable"
-        ))
+    // NIC presence is advisory only: a saved config must keep loading when
+    // its interface is temporarily gone (cable unplugged, VPN down), and the
+    // real bind() reports the honest OS error when the address is truly
+    // unusable.  Compared by value so non-canonical forms (0::1) still match.
+    match resolve_network_interfaces() {
+        Ok(interfaces)
+            if interfaces
+                .iter()
+                .any(|interface| interface.ip.parse::<IpAddr>() == Ok(ip)) => {}
+        Ok(_) => {
+            crate::logging::event("network_interface", "bind_ip.not_on_nic")
+                .field("bind_ip", normalized)
+                .warn();
+        }
+        Err(error) => {
+            crate::logging::event("network_interface", "bind_ip.enum_failed")
+                .field("bind_ip", normalized)
+                .field("error", &error)
+                .warn();
+        }
     }
+    Ok(())
 }

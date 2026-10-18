@@ -92,7 +92,10 @@ mod single_instance {
     }
 
     fn is_supported_deeplink(url: &str) -> bool {
-        url.starts_with("ssh://") || url.starts_with("telnet://")
+        // RFC 3986 §3.1: schemes are case-insensitive.
+        ["ssh://", "telnet://"].iter().any(|scheme| {
+            url.len() >= scheme.len() && url[..scheme.len()].eq_ignore_ascii_case(scheme)
+        })
     }
 
     // ── Second-instance guard ────────────────────────────────────────────

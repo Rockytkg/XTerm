@@ -9,7 +9,14 @@ pub(super) fn read_path_settings(install_dir: &Path) -> Result<PersistedPathSett
     }
     let raw = std::fs::read_to_string(path)
         .map_err(|error| format!("failed to read path settings: {error}"))?;
-    serde_json::from_str(&raw).map_err(|error| format!("failed to parse path settings: {error}"))
+    // A torn or hand-edited file must not be a startup-fatal error: fall
+    // back to the default directories, exactly as if the file were missing.
+    Ok(serde_json::from_str(&raw).unwrap_or_else(|error| {
+        crate::logging::event("paths.persistence", "paths.settings.parse_failed")
+            .field("error", error.to_string())
+            .warn();
+        empty_path_settings()
+    }))
 }
 
 pub(super) async fn write_path_settings_async(
@@ -24,9 +31,15 @@ pub(super) async fn write_path_settings_async(
     }
     let raw = serde_json::to_string_pretty(settings)
         .map_err(|error| format!("failed to serialize path settings: {error}"))?;
-    tokio::fs::write(path, raw)
+    // Write-then-rename so a crash mid-write never leaves a truncated file
+    // behind (which older builds then failed to start on).
+    let temporary = path.with_extension("json.tmp");
+    tokio::fs::write(&temporary, raw)
         .await
-        .map_err(|error| format!("failed to write path settings: {error}"))
+        .map_err(|error| format!("failed to write path settings: {error}"))?;
+    tokio::fs::rename(&temporary, &path)
+        .await
+        .map_err(|error| format!("failed to replace path settings: {error}"))
 }
 
 fn path_settings_file(install_dir: &Path) -> PathBuf {

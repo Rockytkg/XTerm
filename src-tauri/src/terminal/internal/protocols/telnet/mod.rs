@@ -73,7 +73,6 @@ impl SessionTransportRuntime for TelnetSessionTransport {
 struct TelnetReceiveOutcome {
     data: Vec<u8>,
     writes: BytesMut,
-    error: Option<String>,
     transport_ready: bool,
 }
 
@@ -277,9 +276,6 @@ impl TelnetRuntime {
         if !outcome.writes.is_empty() {
             write_telnet_socket(&mut self.writer, &outcome.writes).await?;
         }
-        if let Some(error) = outcome.error {
-            return Err(error);
-        }
         Ok((outcome.data, outcome.transport_ready))
     }
 }
@@ -314,7 +310,6 @@ impl TelnetState {
     fn receive(&mut self, raw: &[u8]) -> TelnetReceiveOutcome {
         let mut writes = BytesMut::with_capacity(64);
         let mut received: Option<Vec<u8>> = None;
-        let mut error = None;
         let mut transport_ready = false;
         for event in self.engine.receive(raw) {
             if matches!(event, EngineEvent::Negotiation { .. }) {
@@ -384,15 +379,6 @@ impl TelnetState {
                 EngineEvent::Warning(detail) => {
                     log::warn!(target: "telnet.runtime", "protocol warning: {detail}")
                 }
-                EngineEvent::Error(detail) => {
-                    // The first error is the root cause; later ones from the
-                    // same read are cascade noise and only worth a log line.
-                    if error.is_none() {
-                        error = Some(detail);
-                    } else {
-                        log::warn!(target: "telnet.runtime", "superseded protocol error: {detail}");
-                    }
-                }
                 EngineEvent::Iac(command) => {
                     log::trace!(target: "telnet.runtime", "telnet command ignored: {command}");
                 }
@@ -402,7 +388,6 @@ impl TelnetState {
         TelnetReceiveOutcome {
             data: received.unwrap_or_default(),
             writes,
-            error,
             transport_ready,
         }
     }

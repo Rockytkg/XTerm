@@ -24,6 +24,9 @@ export function createJsonSettingPersistence({
   let persistTimer = null;
   let persistChain = Promise.resolve();
   let loadPromise = null;
+  // 读取失败（JSON 损坏或后端读失败）后禁止回写：空列表防抖落盘会把库中
+  // 仍可人工恢复的原始数据永久覆盖。此时界面只读展示空列表。
+  let persistBlocked = false;
 
   async function loadOnce() {
     try {
@@ -33,7 +36,8 @@ export function createJsonSettingPersistence({
         items.value = Array.isArray(parsed) ? parsed.map(normalize).filter(Boolean) : [];
       }
     } catch (error) {
-      // 读取失败（首次运行无此 key、JSON 损坏）按空列表处理，不阻塞界面。
+      // 读取失败按空列表处理，不阻塞界面。
+      persistBlocked = true;
       onLoadError?.(error);
       items.value = [];
     }
@@ -52,6 +56,7 @@ export function createJsonSettingPersistence({
   }
 
   function persistNow() {
+    if (persistBlocked) return Promise.resolve();
     if (persistTimer) {
       clearTimeout(persistTimer);
       persistTimer = null;
@@ -63,6 +68,7 @@ export function createJsonSettingPersistence({
   }
 
   function schedulePersist() {
+    if (persistBlocked) return;
     if (persistTimer) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;

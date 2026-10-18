@@ -72,8 +72,15 @@ pub(super) async fn probe_server_handshake(
 
     let (security_types, security_raw) = read_security_types(stream, minor, target).await?;
 
-    if security_types.contains(&SECURITY_VNC_AUTH) {
-        let Some(password) = password.filter(|value| !value.is_empty()) else {
+    let password = password.filter(|value| !value.is_empty());
+    let vnc_auth_offered = security_types.contains(&SECURITY_VNC_AUTH);
+    let none_offered = security_types.contains(&SECURITY_NONE);
+    // VNC auth is preferred while we hold a password.  Without one, a server
+    // that also offers None (x11vnc, some embedded VNC) is still reachable:
+    // the server itself declared passwordless access acceptable, and a list
+    // tampered mid-flight cannot forge a DES answer anyway.
+    if vnc_auth_offered && (password.is_some() || !none_offered) {
+        let Some(password) = password else {
             return Err(ConnectionError::with_args(
                 "vnc_auth_required",
                 format!("target={target}; server requires VNC authentication"),
@@ -91,7 +98,7 @@ pub(super) async fn probe_server_handshake(
         )
         .await;
     }
-    if security_types.contains(&SECURITY_NONE) {
+    if none_offered {
         return complete_terminated_handshake(stream, minor, SECURITY_NONE, None, shared, target)
             .await;
     }
@@ -293,20 +300,32 @@ fn parse_server_version(raw: &[u8; PROTOCOL_VERSION_LEN]) -> Option<u8> {
     }
     let major = ascii_number(&raw[4..7])?;
     let minor = ascii_number(&raw[8..11])?;
-    if major != 3 {
+    // Newer-than-3.x servers (Intel AMT KVM sends 004.000, RealVNC 4.6
+    // 004.001, RealVNC 5.3 005.000) keep the 3.8 handshake shape, so clamp
+    // them to 3.8 — the same thing noVNC has done in production for years.
+    // Older-than-3 banners stay rejected: a pre-3.3 peer cannot parse our
+    // 003.00x answer.
+    if major > 3 {
+        return Some(8);
+    }
+    if major < 3 {
         return None;
     }
     Some(minor)
 }
 
+/// Parses a three-digit version field, saturating on overflow: Apple Remote
+/// Desktop's 003.889 must not fail the u8 accumulation — only the 3 / 7 /
+/// >=8 distinction matters to version negotiation.
 fn ascii_number(digits: &[u8]) -> Option<u8> {
-    digits.iter().try_fold(0_u8, |value, digit| {
-        if digit.is_ascii_digit() {
-            value.checked_mul(10)?.checked_add(digit - b'0')
-        } else {
-            None
+    let mut value = 0_u32;
+    for digit in digits {
+        if !digit.is_ascii_digit() {
+            return None;
         }
-    })
+        value = value * 10 + u32::from(digit - b'0');
+    }
+    Some(value.min(u32::from(u8::MAX)) as u8)
 }
 
 /// VNC authentication response (RFC 6143 7.2.2): the password is truncated or
@@ -336,7 +355,16 @@ mod tests {
         assert_eq!(parse_server_version(b"RFB 003.008\n"), Some(8));
         assert_eq!(parse_server_version(b"RFB 003.007\n"), Some(7));
         assert_eq!(parse_server_version(b"RFB 003.003\n"), Some(3));
-        assert_eq!(parse_server_version(b"RFB 004.000\n"), None);
+        // 003.889 is Apple Remote Desktop; the minor saturates at u8::MAX,
+        // which the caller maps to the 3.8 handshake.
+        assert_eq!(parse_server_version(b"RFB 003.889\n"), Some(255));
+        // Newer majors clamp to the 3.8 handshake shape (Intel AMT KVM,
+        // RealVNC 4.6/5.3), mirroring noVNC.
+        assert_eq!(parse_server_version(b"RFB 004.000\n"), Some(8));
+        assert_eq!(parse_server_version(b"RFB 005.000\n"), Some(8));
+        // Pre-3.3 peers cannot parse our 003.00x answer; non-RFB banners
+        // (wrong port) keep the clear error.
+        assert_eq!(parse_server_version(b"RFB 002.000\n"), None);
         assert_eq!(parse_server_version(b"SSH-2.0-xxx\n"), None);
     }
 

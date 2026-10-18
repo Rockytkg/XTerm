@@ -43,8 +43,10 @@ pub(super) enum EngineEvent {
     Iac(u8),
     Negotiation { command: u8, option: u8 },
     Subnegotiation { option: u8, data: Vec<u8> },
+    // Peer input never produces a fatal event: anything undecodable degrades
+    // to a warning (and, for MCCP2, to plaintext passthrough) so a sloppy
+    // server cannot kill the session.
     Warning(String),
-    Error(String),
 }
 
 #[derive(Clone, Copy, Default)]
@@ -262,15 +264,21 @@ impl TelnetEngine {
         events: &mut Vec<EngineEvent>,
         pending_data: &mut Vec<u8>,
     ) {
-        self.compressed_input.extend_from_slice(data);
-        if self.compressed_input.len() > MAX_COMPRESSED_INPUT_SIZE {
-            events.push(EngineEvent::Error(
-                "MCCP2 compressed input buffer limit reached".to_string(),
-            ));
+        if self.compressed_input.len() + data.len() > MAX_COMPRESSED_INPUT_SIZE {
+            // The cap itself is a memory-DoS guard and stays; what changes on
+            // hitting it is the reaction: degrade to plaintext instead of
+            // killing the session.  The current batch is reprocessed as
+            // plain telnet so no received bytes are dropped.
+            self.warning(
+                events,
+                "MCCP2 compressed input buffer limit reached; decompression disabled".to_string(),
+            );
             self.compressed_input.clear();
             self.decompressor = None;
+            self.receive_uncompressed(data, events, pending_data, true);
             return;
         }
+        self.compressed_input.extend_from_slice(data);
         let mut output = [0_u8; 8192];
 
         while !self.compressed_input.is_empty() {
@@ -286,16 +294,34 @@ impl TelnetEngine {
             let consumed = (decoder.total_in() - input_before) as usize;
             let produced = (decoder.total_out() - output_before) as usize;
 
+            let status = match result {
+                Err(error) => {
+                    // A broken zlib stream (or a peer that armed compression
+                    // without meaning it) must not kill the session: warn,
+                    // drop the decompressor and reparse ALL buffered bytes —
+                    // including what the failed call claimed to consume — as
+                    // plain telnet.
+                    self.warning(
+                        events,
+                        format!("MCCP2 decompression failed: {error}; decompression disabled"),
+                    );
+                    self.decompressor = None;
+                    let remaining = std::mem::take(&mut self.compressed_input);
+                    self.receive_uncompressed(&remaining, events, pending_data, true);
+                    return;
+                }
+                Ok(status) => status,
+            };
+
             if consumed > 0 {
                 self.compressed_input.drain(..consumed);
             }
-
             if produced > 0 {
                 self.receive_uncompressed(&output[..produced], events, pending_data, false);
             }
 
-            match result {
-                Ok(Status::StreamEnd) => {
+            match status {
+                Status::StreamEnd => {
                     self.decompressor = None;
                     if !self.compressed_input.is_empty() {
                         let remaining = std::mem::take(&mut self.compressed_input);
@@ -303,20 +329,12 @@ impl TelnetEngine {
                     }
                     return;
                 }
-                Ok(Status::Ok) | Ok(Status::BufError) => {
+                Status::Ok | Status::BufError => {
                     if consumed == 0 && produced == 0 {
                         // A compressed frame may end between any two TCP reads.
                         // Retain the unconsumed prefix until the next read.
                         return;
                     }
-                }
-                Err(error) => {
-                    events.push(EngineEvent::Error(format!(
-                        "MCCP2 decompression failed: {error}"
-                    )));
-                    self.decompressor = None;
-                    self.compressed_input.clear();
-                    return;
                 }
             }
         }
@@ -634,13 +652,12 @@ impl TelnetEngine {
         });
         if compression_marker {
             // MCCP2 carries a zlib-wrapped DEFLATE stream after IAC SB 86 IAC
-            // SE. Only honour the marker when COMPRESS2 was actually
-            // negotiated; otherwise the peer could silently corrupt every
-            // following byte by forcing us into decompression.
-            if matches!(
-                self.options[COMPRESS2 as usize].him,
-                QState::Yes | QState::WantYes
-            ) {
+            // SE. Only honour the marker after the peer explicitly sent
+            // WILL COMPRESS2 (Q state Yes): this client offers DO COMPRESS2
+            // at startup, so WantYes is always armed and would let any five
+            // stray bytes silently corrupt the rest of the session by forcing
+            // us into decompression.
+            if self.options[COMPRESS2 as usize].him == QState::Yes {
                 self.decompressor = Some(Decompress::new(true));
             } else {
                 self.warning(
@@ -943,11 +960,12 @@ mod tests {
             event,
             EngineEvent::Warning(message) if message.contains("without prior negotiation")
         )));
-        assert!(!events
-            .iter()
-            .any(|event| matches!(event, EngineEvent::Error(_))));
     }
 
+    /// The MCCP2 handshake as it really happens: the server offers
+    /// WILL COMPRESS2, we answer DO, then the activation marker arms the
+    /// decompressor.  A marker arriving after only our startup DO offer
+    /// (WantYes) must NOT arm it.
     #[test]
     fn mccp2_decompresses_data_after_the_activation_marker() {
         use flate2::{write::ZlibEncoder, Compression};
@@ -960,12 +978,21 @@ mod tests {
         input.extend_from_slice(&compressed);
 
         let mut engine = TelnetEngine::new();
-        let _ = engine.negotiate(DO, COMPRESS2);
+        let _ = engine.receive(&[IAC, WILL, COMPRESS2]);
         let events = engine.receive(&input);
         assert_eq!(data(&events), b"compressed prompt> ");
-        assert!(!events
-            .iter()
-            .any(|event| matches!(event, EngineEvent::Error(_))));
+    }
+
+    #[test]
+    fn mccp2_marker_after_bare_do_offer_does_not_arm_decompression() {
+        let mut engine = TelnetEngine::new();
+        let _ = engine.negotiate(DO, COMPRESS2);
+        let events = engine.receive(&[IAC, super::SB, COMPRESS2, IAC, super::SE, b'o', b'k']);
+        assert_eq!(data(&events), b"ok");
+        assert!(events.iter().any(|event| matches!(
+            event,
+            EngineEvent::Warning(message) if message.contains("without prior negotiation")
+        )));
     }
 
     #[test]
@@ -977,7 +1004,7 @@ mod tests {
         compressed.write_all(b"fragmented").unwrap();
         let compressed = compressed.finish().unwrap();
         let mut engine = TelnetEngine::new();
-        let _ = engine.negotiate(DO, COMPRESS2);
+        let _ = engine.receive(&[IAC, WILL, COMPRESS2]);
         let _ = engine.receive(&[IAC, super::SB, COMPRESS2, IAC, super::SE]);
 
         let mut events = Vec::new();
@@ -988,9 +1015,9 @@ mod tests {
     }
 
     #[test]
-    fn mccp2_invalid_stream_is_reported_as_a_protocol_error() {
+    fn mccp2_invalid_stream_degrades_to_plaintext_instead_of_failing() {
         let mut engine = TelnetEngine::new();
-        let _ = engine.negotiate(DO, COMPRESS2);
+        let _ = engine.receive(&[IAC, WILL, COMPRESS2]);
         let events = engine.receive(&[
             IAC,
             super::SB,
@@ -1004,8 +1031,13 @@ mod tests {
         ]);
         assert!(events.iter().any(|event| matches!(
             event,
-            EngineEvent::Error(message) if message.contains("MCCP2 decompression failed")
+            EngineEvent::Warning(message) if message.contains("MCCP2 decompression failed")
         )));
+        // The undecodable bytes are delivered as plain data and the session
+        // stays alive for whatever follows.
+        assert_eq!(data(&events), &[0xde, 0xad, 0xbe, 0xef]);
+        let events = engine.receive(b"still alive");
+        assert_eq!(data(&events), b"still alive");
     }
 
     #[test]

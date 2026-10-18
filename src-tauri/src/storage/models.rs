@@ -224,14 +224,22 @@ impl<'de> Deserialize<'de> for StoredConnection {
         let user = take_string(obj, "user").unwrap_or_default();
 
         let (options, details) = if obj.contains_key("details") || obj.contains_key("options") {
-            let options_value = obj.remove("options").unwrap_or_default();
-            let options: ConnectionOptions =
-                serde_json::from_value(options_value).map_err(D::Error::custom)?;
-            let details_value = obj
+            // The nested shape decodes leniently, like the legacy flat path:
+            // a malformed field or object degrades to defaults so the record
+            // still loads and can be repaired in the UI, instead of failing
+            // the whole connection list.  An unknown protocol stays a hard
+            // error (the list reader skips such records with a warning).
+            let options = obj
+                .remove("options")
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or_default();
+            let details = obj
                 .remove("details")
-                .ok_or_else(|| D::Error::custom("missing details field"))?;
-            let details: ConnectionDetails =
-                serde_json::from_value(details_value).map_err(D::Error::custom)?;
+                .and_then(|value| serde_json::from_value(value).ok())
+                .or_else(|| default_details_for(&protocol))
+                .ok_or_else(|| {
+                    D::Error::custom(format!("unsupported connection protocol '{protocol}'"))
+                })?;
             (options, details)
         } else {
             let options = ConnectionOptions {
@@ -318,6 +326,20 @@ impl<'de> Deserialize<'de> for StoredConnection {
     }
 }
 
+/// All-default details for a known protocol: the nested-shape fallback when
+/// the stored details object is missing or cannot be decoded.  Returns None
+/// for unknown protocols, which stay a hard decode error.
+fn default_details_for(protocol: &str) -> Option<ConnectionDetails> {
+    match protocol {
+        "ssh" => Some(ConnectionDetails::Ssh(SshConnectionDetails::default())),
+        "telnet" => Some(ConnectionDetails::Telnet(TelnetConnectionDetails::default())),
+        "serial" => Some(ConnectionDetails::Serial(SerialConnectionDetails::default())),
+        "vnc" => Some(ConnectionDetails::Vnc(VncConnectionDetails::default())),
+        "rdp" => Some(ConnectionDetails::Rdp(RdpConnectionDetails::default())),
+        _ => None,
+    }
+}
+
 fn take_string(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
     obj.remove(key).and_then(|value| {
         if value.is_null() {
@@ -394,6 +416,43 @@ mod tests {
             }
             _ => panic!("expected telnet details"),
         }
+    }
+
+    #[test]
+    fn nested_record_with_malformed_details_degrades_to_defaults() {
+        // A wrong-typed field inside the nested shape must not kill the
+        // record: it loads with default details and can be repaired in the
+        // UI.  Regression: the strict from_value path used to fail the whole
+        // connection list on such rows.
+        let raw = r#"{
+            "protocol":"ssh",
+            "name":"broken-ish",
+            "host":"10.0.0.1",
+            "user":"root",
+            "options":{"terminal_highlight_enabled":"true"},
+            "details":{"protocol":"ssh","saved_credential_id":42}
+        }"#;
+
+        let connection: StoredConnection =
+            serde_json::from_str(raw).expect("record should load with degraded fields");
+
+        assert_eq!(connection.host, "10.0.0.1");
+        // Both malformed sub-objects degraded to defaults.
+        assert_eq!(connection.options.terminal_highlight_enabled, None);
+        assert!(matches!(connection.details, ConnectionDetails::Ssh(_)));
+        if let ConnectionDetails::Ssh(details) = connection.details {
+            assert_eq!(details.saved_credential_id, None);
+        }
+    }
+
+    #[test]
+    fn nested_record_with_unknown_protocol_is_rejected() {
+        let raw = r#"{
+            "protocol":"gopher",
+            "details":{"protocol":"gopher"}
+        }"#;
+
+        assert!(serde_json::from_str::<StoredConnection>(raw).is_err());
     }
 
     #[test]

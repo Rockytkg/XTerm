@@ -61,8 +61,15 @@ fn migrate_credential_usernames_to_connections(
             let (key, value) =
                 row.map_err(|error| format!("failed to read credential row: {error}"))?;
             let id = key.value().to_string();
-            let mut raw = serde_json::from_slice::<Value>(value.value())
-                .map_err(|error| format!("failed to decode credential '{id}': {error}"))?;
+            // A torn or foreign record must not abort startup; the list
+            // readers skip it too, and the row stays untouched.
+            let Ok(mut raw) = serde_json::from_slice::<Value>(value.value()) else {
+                crate::logging::event("storage.schema", "migration.record.skipped")
+                    .field("table", "credentials")
+                    .field("id", &id)
+                    .warn();
+                continue;
+            };
             if let Some(username) = take_string_field(&mut raw, "username") {
                 if !username.trim().is_empty() {
                     credential_usernames.insert(id.clone(), username.trim().to_string());
@@ -94,8 +101,15 @@ fn migrate_credential_usernames_to_connections(
         let (key, value) =
             row.map_err(|error| format!("failed to read connection row: {error}"))?;
         let id = key.value().to_string();
-        let mut raw = serde_json::from_slice::<Value>(value.value())
-            .map_err(|error| format!("failed to decode connection '{id}': {error}"))?;
+        // Same tolerance as the credentials loop above: skip the row, keep
+        // startup alive.
+        let Ok(mut raw) = serde_json::from_slice::<Value>(value.value()) else {
+            crate::logging::event("storage.schema", "migration.record.skipped")
+                .field("table", "connections")
+                .field("id", &id)
+                .warn();
+            continue;
+        };
         if migrate_connection_username_fields(&mut raw, &credential_usernames)? {
             changed.push((id, raw));
         }

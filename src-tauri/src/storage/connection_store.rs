@@ -36,10 +36,19 @@ impl Store {
         {
             let (key, value) =
                 row.map_err(|error| format!("failed to read connection row: {error}"))?;
-            entries.push((
-                key.value().to_string(),
-                decode_connection_entry(key.value(), value.value())?,
-            ));
+            let id = key.value().to_string();
+            match decode_connection_entry(&id, value.value()) {
+                Ok(entry) => entries.push((id, entry)),
+                // One undecodable record (written by a newer version with an
+                // unknown protocol, hand-edited, torn write) must not hide
+                // every other connection behind a whole-table error.
+                Err(error) => {
+                    logging::event("storage.connection_store", "connections.record.skipped")
+                        .field("connection_id", &id)
+                        .field("error", &error)
+                        .warn();
+                }
+            }
         }
         entries.sort_by(|a, b| {
             a.1.position
@@ -126,8 +135,12 @@ impl Store {
             {
                 let (key, value) =
                     row.map_err(|error| format!("failed to read connection row: {error}"))?;
-                let entry = decode_connection_entry(key.value(), value.value())?;
-                next_position = next_position.max(entry.position + 1);
+                // Undecodable rows (see connections()) simply do not
+                // contribute to position tracking; ties fall back to the
+                // name/id sort keys.
+                if let Ok(entry) = decode_connection_entry(key.value(), value.value()) {
+                    next_position = next_position.max(entry.position + 1);
+                }
             }
             let entry = StoredConnectionEntry {
                 position: next_position,

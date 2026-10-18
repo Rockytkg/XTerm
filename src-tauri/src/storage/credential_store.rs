@@ -73,8 +73,11 @@ fn next_credential_position(table: &redb::Table<'_, &str, &[u8]>) -> Result<i64,
     {
         let (key, value) =
             row.map_err(|error| format!("failed to read credential row: {error}"))?;
-        let credential = decode_credential(key.value(), value.value())?;
-        next_position = next_position.max(credential.position + 1);
+        // Undecodable rows (see credentials()) do not contribute to position
+        // tracking; ties fall back to the name/id sort keys.
+        if let Ok(credential) = decode_credential(key.value(), value.value()) {
+            next_position = next_position.max(credential.position + 1);
+        }
     }
     Ok(next_position)
 }
@@ -95,10 +98,18 @@ impl Store {
         {
             let (key, value) =
                 row.map_err(|error| format!("failed to read credential row: {error}"))?;
-            credentials.push(StoredCredentialRecord {
-                id: key.value().to_string(),
-                credential: decode_credential(key.value(), value.value())?,
-            });
+            let id = key.value().to_string();
+            match decode_credential(&id, value.value()) {
+                Ok(credential) => credentials.push(StoredCredentialRecord { id, credential }),
+                // One undecodable record (torn write, hand-edited, or from a
+                // newer schema version) must not hide every other credential.
+                Err(error) => {
+                    crate::logging::event("storage.credential_store", "credentials.record.skipped")
+                        .field("credential_id", &id)
+                        .field("error", &error)
+                        .warn();
+                }
+            }
         }
         credentials.sort_by(|a, b| {
             a.credential

@@ -51,5 +51,10 @@ function normalizeUrls(urls) {
 
 function isSupportedUrl(url) {
   if (typeof url !== "string" || url.length === 0) return false;
-  return url.startsWith("ssh://") || url.startsWith("telnet://");
+  // RFC 3986 §3.1: schemes are case-insensitive; Windows hand-off paths
+  // deliver the user's original casing.
+  const schemeEnd = url.indexOf("://");
+  if (schemeEnd <= 0) return false;
+  const scheme = url.slice(0, schemeEnd).toLowerCase();
+  return scheme === "ssh" || scheme === "telnet";
 }
