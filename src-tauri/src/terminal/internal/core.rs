@@ -22,8 +22,11 @@ pub(super) const OUTPUT_FLUSH_MAX_BYTES: usize = 128 * 1024;
 pub(super) const SFTP_TRANSFER_BUFFER_BYTES: usize = 256 * 1024;
 pub(super) const CODEC_RAW_BUFFER_CAPACITY: usize = 4 * 1024;
 pub(super) const DETECTION_SAMPLE_MAX_BYTES: usize = 4096;
-pub(super) const DETECTION_LOCK_CONFIDENCE: f32 = 0.95;
 pub(super) const DETECTION_ERROR_UNLOCK_THRESHOLD: u8 = 3;
+/// 检测未定型期间跨块积累的 legacy 字节证据上限。交换机类设备的中文输出
+/// 多为短脉冲（描述、日志行），单块达不到提交阈值；积累最近若干块后样本
+/// 才具备可靠统计量。锁定或清除检测状态时清空，不长期占用内存。
+pub(super) const DETECTION_HISTORY_MAX_BYTES: usize = 1024;
 pub(super) const SERIAL_FAST_BAUD_SAMPLE_MS: u64 = 220;
 pub(super) const SERIAL_PASSIVE_BAUD_SAMPLE_MS: u64 = 80;
 /// 深度探测先被动等待设备启动输出，再决定是否发送唤醒回车。
@@ -854,6 +857,7 @@ pub struct CodecState {
     pub(super) consecutive_errors: u8,
     pub(super) raw_buffer: Vec<u8>,
     pub(super) pending_tail: Vec<u8>,
+    pub(super) detection_history: Vec<u8>,
     pub(super) realtime_detection_enabled: bool,
 }
 

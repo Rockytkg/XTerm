@@ -1,15 +1,23 @@
+use std::borrow::Cow;
+
 use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use encoding_rs::{Encoding, BIG5, EUC_KR, GB18030, GBK, SHIFT_JIS, UTF_8};
 use memchr::memchr;
 
 use crate::terminal::internal::core::{
     CodecState, ConnectionReadResult, CODEC_RAW_BUFFER_CAPACITY, DETECTION_ERROR_UNLOCK_THRESHOLD,
-    DETECTION_LOCK_CONFIDENCE, DETECTION_SAMPLE_MAX_BYTES, SERIAL_MIN_DETECT_BYTES,
+    DETECTION_HISTORY_MAX_BYTES, DETECTION_SAMPLE_MAX_BYTES, SERIAL_MIN_DETECT_BYTES,
 };
 
 /// Confidence reported for a buffer that is valid UTF-8 except for a
 /// truncated tail character (stream chunking artifact, not real content).
 const UTF8_PREFIX_CONFIDENCE: f32 = 0.86;
+
+/// 候选评分分差小于该值视为近平局：GBK/Big5 互解都落在合法 CJK 区块，
+/// 启发式评分无法区分，需要统计检测器仲裁。
+const DETECTION_TIE_MARGIN: f32 = 0.08;
+/// 样本短于该长度时统计检测器自身也不可靠，不做仲裁，维持评分结果。
+const DETECTION_ARBITRATION_MIN_BYTES: usize = 8;
 
 const TRZSZ_TRIGGER_BYTES: &[u8] = b"::TRZSZ:TRANSFER:";
 
@@ -78,6 +86,7 @@ impl CodecState {
             consecutive_errors: 0,
             raw_buffer: Vec::with_capacity(CODEC_RAW_BUFFER_CAPACITY),
             pending_tail: Vec::with_capacity(8),
+            detection_history: Vec::new(),
             realtime_detection_enabled,
         }
     }
@@ -123,24 +132,8 @@ pub(super) fn decode_backend_bytes_with_raw(
     }
 
     if codec.raw_buffer.is_empty() && codec.pending_tail.is_empty() {
-        // 单遍校验的直发路径：纯 ASCII 直接交付；合法的非 ASCII UTF-8 在检测
-        // 未定型时做置信度簿记后交付。两种情形都不会把字节复制进缓冲。
-        if let Ok(text) = std::str::from_utf8(bytes) {
-            if text.is_ascii() {
-                let (encoding, confidence) =
-                    active_encoding(codec).unwrap_or((UTF_8, default_confidence(codec, UTF_8)));
-                return ConnectionReadResult {
-                    data: text.to_owned(),
-                    raw_bytes: raw_mode.select(bytes),
-                    encoding: encoding_label(encoding),
-                    confidence,
-                };
-            }
-            if let Some(result) = valid_utf8_unsettled_result(codec, bytes, text, raw_mode) {
-                return result;
-            }
-        }
-        // 缓冲为空时直接借用新块解码，只有未消费的尾部才会进入缓冲。
+        // 缓冲为空时直接借用新块解码，只有未消费的尾部才会进入缓冲；
+        // UTF-8 预检、ASCII 直发与置信度簿记全部在 decode_chunk 内完成。
         return decode_chunk(codec, bytes, false, raw_mode);
     }
 
@@ -237,6 +230,7 @@ fn decode_chunk(
         had_errors,
         complete_len,
     );
+    record_detection_evidence(codec, &chunk[..complete_len], had_non_ascii, had_errors);
 
     ConnectionReadResult {
         data,
@@ -310,7 +304,11 @@ fn apply_decode_feedback(
     had_errors: bool,
     decoded_len: usize,
 ) {
-    if codec.backend_encoding.is_some() {
+    // 纯 ASCII 块在所有候选编码下解码结果一致，对编码判定零贡献：既不重置
+    // 也不累计错误计数，更不触发提交。交换机输出中大量 ASCII 行夹在中文行
+    // 之间，若重置计数，"连续 3 块错误即解锁重检"在 ASCII 主导的流量下永不
+    // 达成（且纯 ASCII 块必然无解码错误，两个分支互斥）。
+    if codec.backend_encoding.is_some() || !had_non_ascii {
         return;
     }
 
@@ -323,13 +321,12 @@ fn apply_decode_feedback(
     }
 
     codec.consecutive_errors = 0;
-    if codec.realtime_detection_enabled
-        && had_non_ascii
-        && should_commit_detected_encoding(decoded_len, confidence)
+    if codec.realtime_detection_enabled && should_commit_detected_encoding(decoded_len, confidence)
     {
         codec.detected_encoding = Some(encoding_label(encoding));
         codec.detected_encoding_handle = Some(encoding);
         codec.detected_confidence = confidence.max(codec.detected_confidence);
+        codec.detection_history.clear();
     }
 }
 
@@ -343,6 +340,7 @@ fn clear_detected_encoding(codec: &mut CodecState) {
     codec.detected_encoding = None;
     codec.detected_encoding_handle = None;
     codec.detected_confidence = 0.0;
+    codec.detection_history.clear();
 }
 
 /// Buffer holds only a truncated tail character: emit nothing yet but keep
@@ -407,34 +405,29 @@ fn precheck_utf8(
                 None => PrecheckUtf8::Skipped,
             }
         }
-        Err(error) if error.error_len().is_none() => {
-            let complete_len = error.valid_up_to();
-            if complete_len == 0 {
-                return PrecheckUtf8::Held;
+        Err(_) => match split_truncated_utf8_prefix(bytes) {
+            None => PrecheckUtf8::Invalid,
+            Some((_, 0)) => PrecheckUtf8::Held,
+            Some((prefix, complete_len)) => {
+                codec.raw_buffer.clear();
+                codec.pending_tail = bytes[complete_len..].to_vec();
+                apply_decode_feedback(
+                    codec,
+                    UTF_8,
+                    UTF8_PREFIX_CONFIDENCE,
+                    !prefix.is_ascii(),
+                    false,
+                    complete_len,
+                );
+
+                PrecheckUtf8::Delivered(ConnectionReadResult {
+                    data: prefix.to_string(),
+                    raw_bytes: raw_mode.select(&bytes[..complete_len]),
+                    encoding: encoding_label(UTF_8),
+                    confidence: UTF8_PREFIX_CONFIDENCE,
+                })
             }
-            let Some(prefix) = std::str::from_utf8(&bytes[..complete_len]).ok() else {
-                return PrecheckUtf8::Invalid;
-            };
-
-            codec.raw_buffer.clear();
-            codec.pending_tail = bytes[complete_len..].to_vec();
-            apply_decode_feedback(
-                codec,
-                UTF_8,
-                UTF8_PREFIX_CONFIDENCE,
-                !prefix.is_ascii(),
-                false,
-                complete_len,
-            );
-
-            PrecheckUtf8::Delivered(ConnectionReadResult {
-                data: prefix.to_string(),
-                raw_bytes: raw_mode.select(&bytes[..complete_len]),
-                encoding: encoding_label(UTF_8),
-                confidence: UTF8_PREFIX_CONFIDENCE,
-            })
-        }
-        Err(_) => PrecheckUtf8::Invalid,
+        },
     }
 }
 
@@ -504,6 +497,7 @@ fn decode_utf8_candidate_for_auto_detected_legacy(
         codec.detected_encoding_handle = Some(UTF_8);
         codec.detected_confidence = confidence;
         codec.consecutive_errors = 0;
+        codec.detection_history.clear();
         return Some(ConnectionReadResult {
             data: text.to_string(),
             raw_bytes: raw_mode.select(bytes),
@@ -536,7 +530,8 @@ fn should_commit_detected_encoding(sample_len: usize, confidence: f32) -> bool {
         0..=15 => 1.0,
         16..=31 => 0.96,
         32..=63 => 0.91,
-        64..=127 => 0.84,
+        // 置信度上限 0.82，阈值须低于上限该分段才可达成；仅高分样本能锁定。
+        64..=127 => 0.80,
         128..=255 => 0.76,
         256..=511 => 0.68,
         _ => 0.35,
@@ -569,8 +564,10 @@ fn active_encoding(codec: &CodecState) -> Option<(&'static Encoding, f32)> {
     }
 
     if codec.realtime_detection_enabled {
+        // 提交置信度下限即 0.35（finalize_detection_confidence 的钳制下界），
+        // 此处无需再设地板。
         if let Some(encoding) = codec.detected_encoding_handle {
-            return Some((encoding, codec.detected_confidence.max(0.35)));
+            return Some((encoding, codec.detected_confidence));
         }
     }
 
@@ -638,20 +635,65 @@ fn select_encoding_for_decode(
         return ((UTF_8, default_confidence(codec, UTF_8)), None);
     }
 
-    let should_refresh = codec.detected_confidence < DETECTION_LOCK_CONFIDENCE
-        || codec.consecutive_errors >= DETECTION_ERROR_UNLOCK_THRESHOLD;
-    if !should_refresh {
-        return (
-            active_encoding(codec).unwrap_or((UTF_8, default_confidence(codec, UTF_8))),
-            None,
-        );
-    }
-
-    let (encoding, confidence, decode) = select_detected_encoding_with_decode(bytes);
-    maybe_commit_detected_encoding(codec, bytes.len(), encoding, confidence, force);
+    // 不变式：到达此处时检测必然未定型（无固定编码、无已提交检测结果，
+    // detected_confidence 恒为 0），每个 legacy 块都重新评分；样本含跨块
+    // 积累的历史证据。
+    let (encoding, confidence, decode, sample_len) = {
+        let sample = detection_sample(codec, bytes);
+        let (encoding, confidence, decode) = select_detected_encoding_with_decode(&sample);
+        (encoding, confidence, decode, sample.len())
+    };
+    maybe_commit_detected_encoding(codec, sample_len, encoding, confidence, force);
     ((encoding, confidence), decode)
 }
 
+/// 构建检测样本：检测历史尾部 + 当前块，总量不超过 `DETECTION_SAMPLE_MAX_BYTES`，
+/// 且始终完整包含当前块。历史为空时零拷贝借用当前块（与改造前逐块检测一致）。
+fn detection_sample<'a>(codec: &CodecState, chunk: &'a [u8]) -> Cow<'a, [u8]> {
+    if codec.detection_history.is_empty() || chunk.len() >= DETECTION_SAMPLE_MAX_BYTES {
+        let window_start = chunk.len().saturating_sub(DETECTION_SAMPLE_MAX_BYTES);
+        return Cow::Borrowed(&chunk[window_start..]);
+    }
+
+    let history_budget = DETECTION_SAMPLE_MAX_BYTES - chunk.len();
+    let history_start = codec.detection_history.len().saturating_sub(history_budget);
+    let history = &codec.detection_history[history_start..];
+    let mut sample = Vec::with_capacity(history.len() + chunk.len());
+    sample.extend_from_slice(history);
+    sample.extend_from_slice(chunk);
+    Cow::Owned(sample)
+}
+
+/// 检测未定型期间，把成功交付的 legacy 字节积累进历史窗口。仅积累"无错误
+/// 且含非 ASCII"的解码块：纯 ASCII 行对编码判定无贡献，带替换符的块说明
+/// 当前判定可能错误，都不应污染证据。
+fn record_detection_evidence(
+    codec: &mut CodecState,
+    decoded_bytes: &[u8],
+    had_non_ascii: bool,
+    had_errors: bool,
+) {
+    if decoded_bytes.is_empty()
+        || codec.backend_encoding.is_some()
+        || codec.detected_encoding_handle.is_some()
+        || !codec.realtime_detection_enabled
+        || !had_non_ascii
+        || had_errors
+    {
+        return;
+    }
+
+    let overflow = codec.detection_history.len() + decoded_bytes.len();
+    if overflow > DETECTION_HISTORY_MAX_BYTES {
+        codec
+            .detection_history
+            .drain(..overflow - DETECTION_HISTORY_MAX_BYTES);
+    }
+    codec.detection_history.extend_from_slice(decoded_bytes);
+}
+
+/// 调用点已保证检测未定型（detected_encoding_handle 为空、confidence 为 0），
+/// 达阈值即提交。提交后清空历史证据，避免占用内存或在解锁重检时混入旧证据。
 fn maybe_commit_detected_encoding(
     codec: &mut CodecState,
     sample_len: usize,
@@ -662,16 +704,10 @@ fn maybe_commit_detected_encoding(
     if !force && !should_commit_detected_encoding(sample_len, confidence) {
         return;
     }
-    if codec.detected_encoding_handle == Some(encoding) && confidence <= codec.detected_confidence {
-        return;
-    }
-    if confidence >= codec.detected_confidence
-        || codec.detected_confidence < DETECTION_LOCK_CONFIDENCE
-    {
-        codec.detected_encoding = Some(encoding_label(encoding));
-        codec.detected_encoding_handle = Some(encoding);
-        codec.detected_confidence = confidence;
-    }
+    codec.detected_encoding = Some(encoding_label(encoding));
+    codec.detected_encoding_handle = Some(encoding);
+    codec.detected_confidence = confidence;
+    codec.detection_history.clear();
 }
 
 #[cfg(test)]
@@ -702,44 +738,89 @@ fn select_detected_encoding_with_decode(
         had_errors,
         sample_len: sample.len(),
     });
-    let mut runner_up = 0.0_f32;
+    let mut runner_up: (&'static Encoding, f32) = (candidates[0], 0.0);
 
     for encoding in candidates.into_iter().skip(1) {
         let (score, text, had_errors) = decode_and_score(sample, encoding);
         if score > best.1 {
-            runner_up = best.1;
+            runner_up = best;
             best = (encoding, score);
             best_decode = Some(ScoredDecode {
                 text,
                 had_errors,
                 sample_len: sample.len(),
             });
-        } else if score > runner_up {
-            runner_up = score;
+        } else if score > runner_up.1 {
+            runner_up = (encoding, score);
         }
     }
 
-    if should_consult_statistical_detector(sample.len(), best.1, runner_up) {
+    if should_consult_statistical_detector(sample.len(), best.1, runner_up.1) {
         let mut detector = EncodingDetector::new(Iso2022JpDetection::Allow);
         detector.feed(sample, true);
         let guessed = detector.guess(None, Utf8Detection::Allow);
         let (score, text, had_errors) = decode_and_score(sample, guessed);
         let guessed_score = score + 0.03;
         if guessed_score > best.1 {
-            runner_up = best.1;
+            runner_up = best;
             best = (guessed, guessed_score);
             best_decode = Some(ScoredDecode {
                 text,
                 had_errors,
                 sample_len: sample.len(),
             });
-        } else if guessed_score > runner_up {
-            runner_up = guessed_score;
+        } else if guessed_score > runner_up.1 {
+            runner_up = (guessed, guessed_score);
         }
+    } else {
+        maybe_arbitrate_cjk_tie(sample, &mut best, &mut best_decode, runner_up);
     }
 
-    let confidence = finalize_detection_confidence(sample.len(), best.1, runner_up);
+    let confidence = finalize_detection_confidence(sample.len(), best.1, runner_up.1);
     (best.0, confidence, best_decode)
+}
+
+/// 短样本上的简繁近平局仲裁。GBK 与 Big5 互解都落在合法 CJK 区块、不产生
+/// 替换符，启发式评分分差常在浮点噪声量级，逐块重检会掷出不同胜者（同一
+/// 设备这行正常、下行乱码的根因）。此时让带语言模型的统计检测器仲裁，但
+/// 仅在它明确支持亚军候选时才交换胜者；给出第三种编码时维持原判，避免在
+/// 短样本上引入 ISO-2022-JP 之类的新误判面。
+fn maybe_arbitrate_cjk_tie(
+    sample: &[u8],
+    best: &mut (&'static Encoding, f32),
+    best_decode: &mut Option<ScoredDecode>,
+    runner_up: (&'static Encoding, f32),
+) {
+    if sample.len() < DETECTION_ARBITRATION_MIN_BYTES
+        || best.1 - runner_up.1 >= DETECTION_TIE_MARGIN
+        || !is_cjk_confusable_pair(best.0, runner_up.0)
+    {
+        return;
+    }
+
+    let mut detector = EncodingDetector::new(Iso2022JpDetection::Allow);
+    detector.feed(sample, true);
+    if detector.guess(None, Utf8Detection::Allow) != runner_up.0 {
+        return;
+    }
+
+    let (_, text, had_errors) = decode_and_score(sample, runner_up.0);
+    *best = (runner_up.0, runner_up.1);
+    *best_decode = Some(ScoredDecode {
+        text,
+        had_errors,
+        sample_len: sample.len(),
+    });
+}
+
+/// 简（GBK/GB18030）繁（Big5）是设备控制台上唯一一对互解后仍全部落在
+/// 合法 CJK 区块的候选：其它组合都会被 kana/hangul 惩罚或替换符拉开分差。
+fn is_cjk_confusable_pair(a: &'static Encoding, b: &'static Encoding) -> bool {
+    matches!(
+        (codec_encoding_kind(a), codec_encoding_kind(b)),
+        (CodecEncodingKind::Chinese, CodecEncodingKind::Big5)
+            | (CodecEncodingKind::Big5, CodecEncodingKind::Chinese)
+    )
 }
 
 fn should_consult_statistical_detector(sample_len: usize, best_score: f32, runner_up: f32) -> bool {
@@ -1645,5 +1726,140 @@ mod tests {
 
         assert!(text_score >= 0.52);
         assert!(text_score > noise_score);
+    }
+
+    #[test]
+    fn repeated_short_gbk_lines_lock_via_accumulated_evidence() {
+        // 交换机典型流量：ASCII CLI 之间夹短促中文行（描述/日志）。单行
+        // 14 字节远低于任何可提交分段，改造前每行独立检测、永不锁定；
+        // 跨块积累后样本量进入可提交分段，应锁定且每行都解码正确。
+        let mut codec = CodecState::new(None, true);
+        let line = "接口状态正常\r\n";
+        let (encoded, _, _) = Encoding::for_label(b"gbk").expect("gbk").encode(line);
+        let mut locked_at = None;
+
+        for index in 0..12 {
+            let decoded = decode_backend_bytes(encoded.as_ref(), &mut codec);
+            assert_eq!(decoded.data, line);
+            if locked_at.is_none() && codec.detected_encoding.is_some() {
+                locked_at = Some(index);
+            }
+        }
+
+        assert!(locked_at.is_some(), "accumulated evidence should lock");
+        assert!(matches!(
+            codec.detected_encoding.as_deref(),
+            Some("gbk" | "gb18030")
+        ));
+        assert!(codec.detection_history.is_empty());
+    }
+
+    #[test]
+    fn accumulated_history_is_never_redelivered() {
+        // 历史只参与检测评分，不得混入交付文本。
+        let mut codec = CodecState::new(None, true);
+        let line = "端口描述办公网\r\n";
+        let (encoded, _, _) = Encoding::for_label(b"gbk").expect("gbk").encode(line);
+        let mut delivered = String::new();
+
+        for _ in 0..6 {
+            delivered.push_str(&decode_backend_bytes(encoded.as_ref(), &mut codec).data);
+        }
+
+        assert_eq!(delivered, line.repeat(6));
+    }
+
+    #[test]
+    fn ascii_chunks_do_not_erase_accumulated_evidence() {
+        // 交换机输出中中文行之间隔着大量纯 ASCII 行；ASCII 对编码判定无贡献，
+        // 不得清空已积累的中文证据。
+        let mut codec = CodecState::new(None, true);
+        let chinese = "接口状态正常\r\n";
+        let (encoded, _, _) = Encoding::for_label(b"gbk").expect("gbk").encode(chinese);
+
+        for index in 0..10 {
+            let decoded = decode_backend_bytes(encoded.as_ref(), &mut codec);
+            assert_eq!(decoded.data, chinese);
+            let ascii = decode_backend_bytes(b"  GigabitEthernet0/0/1 up\r\n", &mut codec);
+            assert_eq!(ascii.data, "  GigabitEthernet0/0/1 up\r\n");
+            if codec.detected_encoding.is_some() {
+                assert!(
+                    index >= 2,
+                    "lock should come from accumulated evidence, not the first line"
+                );
+                break;
+            }
+            assert!(!codec.detection_history.is_empty());
+        }
+
+        assert!(matches!(
+            codec.detected_encoding.as_deref(),
+            Some("gbk" | "gb18030")
+        ));
+    }
+
+    #[test]
+    fn short_big5_traditional_sample_is_arbitrated_to_big5() {
+        // 繁体 Big5 短样本按 GB18030 解码同样落在合法 CJK 区块，评分近平局；
+        // 统计仲裁应把胜者判给 Big5。
+        let sample = "繁體中文資訊網路".repeat(2);
+        let (encoded, _, _) = Encoding::for_label(b"big5").expect("big5").encode(&sample);
+
+        let (encoding, _) = select_detected_encoding(encoded.as_ref());
+
+        assert_eq!(encoding, encoding_rs::BIG5);
+    }
+
+    #[test]
+    fn locked_encoding_keeps_history_cleared() {
+        let mut codec = CodecState::new(None, true);
+        let line = "接口状态正常\r\n";
+        let (encoded, _, _) = Encoding::for_label(b"gbk").expect("gbk").encode(line);
+
+        for _ in 0..12 {
+            decode_backend_bytes(encoded.as_ref(), &mut codec);
+            if codec.detected_encoding.is_some() {
+                break;
+            }
+        }
+        assert!(codec.detected_encoding.is_some());
+
+        for _ in 0..3 {
+            let decoded = decode_backend_bytes(encoded.as_ref(), &mut codec);
+            assert_eq!(decoded.data, line);
+            assert!(codec.detection_history.is_empty());
+        }
+    }
+
+    #[test]
+    fn ascii_chunks_do_not_reset_consecutive_decode_errors() {
+        // 交换机流量常态：中文行之间夹大量 ASCII 行。错误恢复要求"连续 3 个
+        // 带错块"才解锁重检，ASCII 块对编码判定零贡献，不得打断计数。
+        let mut codec = CodecState::new(None, true);
+        let sample = "中文命令提示> 中文命令提示# 中文命令提示$ 中文命令提示: 中文命令提示> 中文命令提示# 中文命令提示$ 中文命令提示: 中文命令提示> 中文命令提示# 中文命令提示$ 中文命令提示:";
+        let (encoded, _, _) = Encoding::for_label(b"gbk").expect("gbk").encode(sample);
+        decode_backend_bytes(encoded.as_ref(), &mut codec);
+        assert!(codec.detected_encoding.is_some());
+
+        // 0xFF 在所有候选编码下都无法解码（产生替换符），即"锁定编码错误"
+        // 的代理；且不是任何编码的前导字节，不会形成撕裂尾部粘住下一块。
+        decode_backend_bytes(&[0xff, 0xff], &mut codec);
+        assert_eq!(codec.consecutive_errors, 1);
+
+        let ascii = decode_backend_bytes(b"display interface brief\r\n", &mut codec);
+        assert_eq!(ascii.data, "display interface brief\r\n");
+        assert_eq!(codec.consecutive_errors, 1);
+
+        decode_backend_bytes(&[0xff, 0xff], &mut codec);
+        decode_backend_bytes(b"up up\r\n", &mut codec);
+        assert_eq!(codec.consecutive_errors, 2);
+
+        // 第三个带错块达成阈值：已提交编码被清除（解锁），下一块起重新检测。
+        decode_backend_bytes(&[0xff, 0xff], &mut codec);
+        assert_eq!(codec.consecutive_errors, 3);
+        assert!(
+            codec.detected_encoding.is_none(),
+            "3 consecutive error chunks should unlock the committed encoding"
+        );
     }
 }
