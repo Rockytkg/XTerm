@@ -18,6 +18,8 @@ import {
   BACKSPACE_SENDS_OPTIONS,
   DEFAULT_TERMINAL_ENCODING,
   DEFAULT_TERMINAL_TYPE,
+  TELNET_ENTER_SENDS,
+  TELNET_ENTER_SENDS_OPTIONS,
   TERMINAL_TYPE_OPTIONS,
   createEncodingOptions,
 } from "../../utils/terminalSessionOptions";
@@ -50,6 +52,7 @@ const statusPillClass = computed(() => {
 });
 const isSerial = computed(() => connectionCan(props.activeConnection, "serialBaudDetection"));
 const isSsh = computed(() => isSshProtocol(protocol.value));
+const isTelnet = computed(() => isTelnetProtocol(protocol.value));
 const isVnc = computed(() => isVncProtocol(protocol.value));
 const isRdp = computed(() => isRdpProtocol(protocol.value));
 // 桌面类会话（VNC/RDP）没有终端类开关，侧边栏统一隐藏。
@@ -75,9 +78,16 @@ const backspaceSends = computed(() =>
     ? BACKSPACE_SENDS.DEL
     : BACKSPACE_SENDS.BS,
 );
+const telnetEnterSends = computed(() =>
+  // 只有显式 CR LF 是有效覆盖，其余归一到默认 CR（线上编码为 CR NUL）。
+  props.activeConnection?.telnetEnterSends === TELNET_ENTER_SENDS.CRLF
+    ? TELNET_ENTER_SENDS.CRLF
+    : TELNET_ENTER_SENDS.CR,
+);
 
 const encodingOptions = computed(() => createEncodingOptions(t));
 const backspaceSendsOptions = BACKSPACE_SENDS_OPTIONS;
+const telnetEnterSendsOptions = TELNET_ENTER_SENDS_OPTIONS;
 const profileConnectionId = computed(
   () => props.activeConnection?.connectionId || props.activeConnection?.id || "",
 );
@@ -146,6 +156,15 @@ function handleBackspaceChange(value) {
   // 与弹窗序列化一致：默认值不落库，profile 只保存显式覆盖；前端按键拦截
   // 直接读 activeConnection.backspaceSends，无需后端参与。
   void persistProfileField("backspaceSends", value === BACKSPACE_SENDS.BS ? undefined : value);
+}
+
+function handleTelnetEnterSendsChange(value) {
+  // 与退格键同路：输入重映射在前端按键时读 activeConnection.telnetEnterSends，
+  // 即改即生效；自动填写的凭据行终止符在连接建立时读取，随下次连接生效。
+  void persistProfileField(
+    "telnetEnterSends",
+    value === TELNET_ENTER_SENDS.CR ? undefined : value,
+  );
 }
 
 async function handleRuntimeMetricsChange(enabled) {
@@ -491,6 +510,25 @@ async function handleRuntimeMetricsChange(enabled) {
             :model-value="backspaceSends"
             :options="backspaceSendsOptions"
             @update:model-value="handleBackspaceChange($event)"
+          />
+        </div>
+
+        <div
+          v-if="isTelnet"
+          class="workspace-sidebar-pref-row workspace-sidebar-pref-row-stack"
+        >
+          <div class="workspace-sidebar-pref-text">
+            <span class="workspace-sidebar-pref-label">{{
+              t("connectionDialog.fields.telnetEnterSends")
+            }}</span>
+            <span class="workspace-sidebar-pref-hint">{{
+              t("connectionDialog.fields.telnetEnterSendsHint")
+            }}</span>
+          </div>
+          <UiSelect
+            :model-value="telnetEnterSends"
+            :options="telnetEnterSendsOptions"
+            @update:model-value="handleTelnetEnterSendsChange($event)"
           />
         </div>
       </div>

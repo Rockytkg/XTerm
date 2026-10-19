@@ -33,6 +33,7 @@ pub struct ConnectionProfileOptions {
     pub(crate) terminal_type: Option<String>,
     pub(crate) encoding: Option<String>,
     pub(crate) backspace_sends: Option<String>,
+    pub(crate) telnet_enter_sends: Option<String>,
     pub(crate) realtime_encoding_detection: Option<bool>,
     pub(crate) terminal_highlight_enabled: Option<bool>,
     pub(crate) terminal_more_prompt_cleanup: Option<bool>,
@@ -269,6 +270,8 @@ pub struct ConnectionListItem {
     pub encoding: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backspace_sends: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub telnet_enter_sends: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_more_prompt_cleanup: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -920,6 +923,7 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
         terminal_type: c.options.terminal_type,
         encoding: c.options.encoding,
         backspace_sends: c.options.backspace_sends,
+        telnet_enter_sends: c.options.telnet_enter_sends,
         terminal_more_prompt_cleanup: c.options.terminal_more_prompt_cleanup,
         runtime_metrics: c.options.runtime_metrics,
         vnc_view_only,
@@ -942,6 +946,7 @@ fn connection_profile_from_stored(id: String, c: StoredConnection) -> Connection
         terminal_type: item.terminal_type,
         encoding: item.encoding,
         backspace_sends: item.backspace_sends,
+        telnet_enter_sends: item.telnet_enter_sends,
         realtime_encoding_detection: item.realtime_encoding_detection,
         terminal_highlight_enabled: item.terminal_highlight_enabled,
         terminal_more_prompt_cleanup: item.terminal_more_prompt_cleanup,
@@ -1009,6 +1014,7 @@ impl From<&ConnectionProfile> for StoredConnection {
             terminal_type: c.options.terminal_type.clone(),
             encoding: c.options.encoding.clone(),
             backspace_sends: c.options.backspace_sends.clone(),
+            telnet_enter_sends: c.options.telnet_enter_sends.clone(),
             realtime_encoding_detection: c.options.realtime_encoding_detection,
             terminal_highlight_enabled: c.options.terminal_highlight_enabled,
             terminal_more_prompt_cleanup: c.options.terminal_more_prompt_cleanup,
@@ -1183,6 +1189,7 @@ mod tests {
                 terminal_type: Some("vt100".to_string()),
                 encoding: None,
                 backspace_sends: None,
+                telnet_enter_sends: None,
                 realtime_encoding_detection: Some(false),
                 terminal_highlight_enabled: Some(true),
                 terminal_more_prompt_cleanup: Some(true),

@@ -24,6 +24,8 @@ impl Default for AppPreferences {
             ui_font_size: default_ui_font_size(),
             locale: default_locale(),
             show_latency: true,
+            update_notifications_enabled: true,
+            update_skipped_version: String::new(),
             proxy_toolbar_enabled: false,
             file_service_toolbar_enabled: true,
             serial_redetect_baud_shortcut: default_serial_redetect_shortcut(),
@@ -201,6 +203,8 @@ define_preference_mappings! {
     ui_font_size: integer = "uiFontSize";
     locale: text = "locale";
     show_latency: bool = "showLatency";
+    update_notifications_enabled: bool = "updateNotificationsEnabled";
+    update_skipped_version: text = "updateSkippedVersion";
     proxy_toolbar_enabled: bool = "proxyToolbarEnabled";
     file_service_toolbar_enabled: bool = "fileServiceToolbarEnabled";
     serial_redetect_baud_shortcut: text = "serialRedetectBaudShortcut";

@@ -11,7 +11,7 @@ const logger = createLogger("frontend.preferences");
 const PREFERENCES_SAVE_DEBOUNCE_MS = 300;
 const THEME_TRANSITION_CLASS = "theme-transition-running";
 
-const preferences = reactive({});
+export const preferences = reactive({});
 let preferencesLoaded = false;
 let preferencesSaveTimer = 0;
 let persistedPreferenceSnapshot = {};

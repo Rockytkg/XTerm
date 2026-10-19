@@ -2,6 +2,7 @@ const CONNECTION_OPTION_FIELDS = new Set([
   "terminalType",
   "encoding",
   "backspaceSends",
+  "telnetEnterSends",
   "realtimeEncodingDetection",
   "terminalHighlightEnabled",
   "terminalMorePromptCleanup",

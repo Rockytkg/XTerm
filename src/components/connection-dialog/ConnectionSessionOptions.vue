@@ -5,9 +5,14 @@ import { ChevronDown, SlidersHorizontal } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import UiSwitch from "../UiSwitch.vue";
 import UiSelect from "../UiSelect.vue";
-import { isSerialProtocol, isSshProtocol } from "../../utils/connectionProtocols";
+import {
+  isSerialProtocol,
+  isSshProtocol,
+  isTelnetProtocol,
+} from "../../utils/connectionProtocols";
 import {
   BACKSPACE_SENDS_OPTIONS,
+  TELNET_ENTER_SENDS_OPTIONS,
   TERMINAL_TYPE_OPTIONS,
   createEncodingOptions,
 } from "../../utils/terminalSessionOptions";
@@ -22,6 +27,7 @@ const emit = defineEmits(["update-field", "update:open"]);
 const { t } = useI18n();
 const isSerial = computed(() => isSerialProtocol(props.protocol));
 const isSsh = computed(() => isSshProtocol(props.protocol));
+const isTelnet = computed(() => isTelnetProtocol(props.protocol));
 
 function updateField(field, value) {
   emit("update-field", field, value);
@@ -29,6 +35,7 @@ function updateField(field, value) {
 
 const encodingOptions = computed(() => createEncodingOptions(t));
 const backspaceSendsOptions = BACKSPACE_SENDS_OPTIONS;
+const telnetEnterSendsOptions = TELNET_ENTER_SENDS_OPTIONS;
 </script>
 
 <template>
@@ -80,6 +87,21 @@ const backspaceSendsOptions = BACKSPACE_SENDS_OPTIONS;
           :model-value="form.backspaceSends"
           :options="backspaceSendsOptions"
           @update:model-value="updateField('backspaceSends', $event)"
+        />
+      </div>
+
+      <div
+        v-if="isTelnet"
+        class="conn-field-group"
+      >
+        <span class="conn-field-label">{{ t("connectionDialog.fields.telnetEnterSends") }}</span>
+        <span class="conn-field-hint">{{
+          t("connectionDialog.fields.telnetEnterSendsHint")
+        }}</span>
+        <UiSelect
+          :model-value="form.telnetEnterSends"
+          :options="telnetEnterSendsOptions"
+          @update:model-value="updateField('telnetEnterSends', $event)"
         />
       </div>
 

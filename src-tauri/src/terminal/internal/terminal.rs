@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
@@ -20,6 +21,10 @@ use super::{
     },
     startup_auth::{StartupAuthState, StartupPasswordAuth},
 };
+
+/// 自动登录窗口内暂存的前端输入条数上限（与前端 pendingInputs 一致）：超限丢弃
+/// 最旧的输入，保留较新的按键更贴近用户当前意图。
+const STARTUP_AUTH_HELD_INPUT_MAX: usize = 256;
 pub(crate) struct SessionWorkerOptions {
     pub(crate) session_id: String,
     pub(crate) transport: SessionTransport,
@@ -126,6 +131,8 @@ struct SessionWorkerLoop<'a> {
     codec: &'a mut CodecState,
     delivery: SessionDeliveryState,
     startup_auth: Option<StartupAuthState>,
+    /// 自动登录窗口内被暂存的前端输入，窗口关闭后按到达顺序补发。
+    startup_auth_held_input: VecDeque<Vec<u8>>,
     last_transport_resize: Option<TerminalResize>,
     supports_pixel_resize: bool,
 }
@@ -165,6 +172,7 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
         codec,
         delivery,
         startup_auth,
+        startup_auth_held_input: VecDeque::new(),
         last_transport_resize,
         supports_pixel_resize,
     };
@@ -191,7 +199,12 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
         let replay_pending = session_loop.delivery.output_ready_channel_id.is_some()
             && session_loop.delivery.replay_channel_id.is_some()
             && session_loop.delivery.delivered_offset < session_loop.delivery.next_offset;
-        let event = next_session_event(&mut rx, &mut event_rx, replay_pending).await;
+        let input_hold_until = session_loop
+            .startup_auth
+            .as_ref()
+            .and_then(StartupAuthState::input_hold_until);
+        let event =
+            next_session_event(&mut rx, &mut event_rx, replay_pending, input_hold_until).await;
 
         match event {
             SessionLoopEvent::Command(command) => {
@@ -204,6 +217,14 @@ async fn run_session_worker(runtime: SessionWorkerRuntime<'_>) {
                     WorkerEventOutcome::Continue => {}
                     WorkerEventOutcome::SkipDrain => continue,
                     WorkerEventOutcome::Stop => return,
+                }
+            }
+            SessionLoopEvent::StartupAuthHoldExpired => {
+                // 自动登录窗口到期（对端始终未出现可识别的登录提示）：放弃认证，
+                // 按到达顺序补发暂存输入，会话完全交还给用户。
+                session_loop.startup_auth = None;
+                if !flush_startup_auth_held_input(&mut session_loop) {
+                    return;
                 }
             }
             SessionLoopEvent::CommandChannelClosed => {
@@ -290,12 +311,7 @@ async fn handle_session_command(
                 return true;
             }
             let bytes = encode_for_backend(&data, session_loop.codec);
-            forward_transport_write(
-                &session_loop.app,
-                &session_loop.session_id,
-                &session_loop.transport_tx,
-                bytes,
-            )
+            forward_or_hold_session_input(session_loop, bytes)
         }
         SessionCommand::WriteBytes {
             channel_id,
@@ -305,12 +321,7 @@ async fn handle_session_command(
             if !accept_input_sequence(&mut session_loop.delivery, channel_id, input_sequence) {
                 return true;
             }
-            forward_transport_write(
-                &session_loop.app,
-                &session_loop.session_id,
-                &session_loop.transport_tx,
-                data,
-            )
+            forward_or_hold_session_input(session_loop, data)
         }
         SessionCommand::FlushOutput => {
             session_loop.delivery.output_ready_channel_id = session_loop.delivery.active_channel_id;
@@ -500,6 +511,20 @@ fn handle_worker_event(
                 Some(payload.raw_bytes),
             );
             send_startup_auth_payload(&session_loop.transport_tx, startup_auth_payload);
+            // 凭据行落线（若有）后检查持有窗口：认证完成、或流程转入只能由用户
+            // 推进的阶段（密码-only 配置见到了用户名提示）都会关闭窗口，补发
+            // 暂存输入。
+            let hold_open = session_loop
+                .startup_auth
+                .as_ref()
+                .and_then(StartupAuthState::input_hold_until)
+                .is_some();
+            if !hold_open
+                && !session_loop.startup_auth_held_input.is_empty()
+                && !flush_startup_auth_held_input(session_loop)
+            {
+                return WorkerEventOutcome::Stop;
+            }
             WorkerEventOutcome::Continue
         }
         SessionWorkerEvent::Closed(reason) => {
@@ -563,6 +588,49 @@ fn prepare_startup_auth_write(
         *startup_auth = None;
     }
     payload
+}
+
+/// 自动登录窗口内的前端输入一律暂存而不是直接落线：窗口内到达的字节（用户
+/// 提前敲的按键、xterm 对设备查询序列的自动应答等）若插在自动填写的用户名/
+/// 密码前面，会把凭据行顶成 "xxadmin" 之类导致登录失败。窗口结束后按到达
+/// 顺序补发，既不丢输入也不污染凭据行。
+fn forward_or_hold_session_input(session_loop: &mut SessionWorkerLoop<'_>, bytes: Vec<u8>) -> bool {
+    let holding = session_loop
+        .startup_auth
+        .as_ref()
+        .and_then(StartupAuthState::input_hold_until)
+        .is_some();
+    if !holding && session_loop.startup_auth_held_input.is_empty() {
+        return forward_transport_write(
+            &session_loop.app,
+            &session_loop.session_id,
+            &session_loop.transport_tx,
+            bytes,
+        );
+    }
+    if session_loop.startup_auth_held_input.len() >= STARTUP_AUTH_HELD_INPUT_MAX {
+        session_loop.startup_auth_held_input.pop_front();
+    }
+    session_loop.startup_auth_held_input.push_back(bytes);
+    if holding {
+        return true;
+    }
+    // 窗口刚好到期：新输入连同暂存一起按序补发，保持到达顺序。
+    flush_startup_auth_held_input(session_loop)
+}
+
+fn flush_startup_auth_held_input(session_loop: &mut SessionWorkerLoop<'_>) -> bool {
+    while let Some(bytes) = session_loop.startup_auth_held_input.pop_front() {
+        if !forward_transport_write(
+            &session_loop.app,
+            &session_loop.session_id,
+            &session_loop.transport_tx,
+            bytes,
+        ) {
+            return false;
+        }
+    }
+    true
 }
 
 fn send_startup_auth_payload(
@@ -643,13 +711,23 @@ enum SessionLoopEvent {
     CommandChannelClosed,
     Worker(SessionWorkerEvent),
     WorkerChannelClosed,
+    StartupAuthHoldExpired,
 }
 
 async fn next_session_event(
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<SessionCommand>,
     event_rx: &mut tokio::sync::mpsc::UnboundedReceiver<SessionWorkerEvent>,
     replay_pending: bool,
+    input_hold_until: Option<std::time::Instant>,
 ) -> SessionLoopEvent {
+    // 无持有窗口时该分支永不就绪；窗口存在时保证截止时刻必被观察到，
+    // 即使对端此后不再输出、用户也不再输入。
+    let hold_expired = async move {
+        match input_hold_until {
+            Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+            None => std::future::pending().await,
+        }
+    };
     if replay_pending {
         tokio::select! {
             biased;
@@ -659,6 +737,7 @@ async fn next_session_event(
             event = event_rx.recv() => {
                 event.map(SessionLoopEvent::Worker).unwrap_or(SessionLoopEvent::WorkerChannelClosed)
             }
+            _ = hold_expired => SessionLoopEvent::StartupAuthHoldExpired,
         }
     } else {
         tokio::select! {
@@ -668,6 +747,7 @@ async fn next_session_event(
             command = rx.recv() => {
                 command.map(SessionLoopEvent::Command).unwrap_or(SessionLoopEvent::CommandChannelClosed)
             }
+            _ = hold_expired => SessionLoopEvent::StartupAuthHoldExpired,
         }
     }
 }

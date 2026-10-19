@@ -60,7 +60,11 @@ import {
   TERMINAL_FONT_SIZE_MIN,
   TERMINAL_OUTPUT_WRITE_CHUNK_CHARS,
 } from "../utils/terminalPanelHelpers";
-import { binaryStringToBase64, shouldSendBackspaceAsBs } from "../utils/terminal/inputRouting";
+import {
+  binaryStringToBase64,
+  resolveTerminalEnterInput,
+  shouldSendBackspaceAsBs,
+} from "../utils/terminal/inputRouting";
 import { compileTerminalHighlightRules } from "../utils/terminal/highlightRules";
 import { createXtermOptions } from "../utils/terminal/xtermOptions";
 import { createTerminalContextMenuItems } from "../utils/terminal/contextMenu";
@@ -373,7 +377,7 @@ function forwardTerminalInput(data) {
   if (!props.sessionId) return;
   if (trzszAddon?.processTerminalInput(data)) return;
   clearMorePromptForContinueInput(data);
-  queueBackendInput(data);
+  queueBackendInput(resolveTerminalEnterInput(data, props.activeConnection));
 }
 
 function handleBackspace(event) {

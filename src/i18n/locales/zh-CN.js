@@ -86,7 +86,11 @@ export default {
       encodingHint: "自动检测或指定远端字符集。",
       encodingAuto: "自动",
       backspaceSends: "退格键发送",
-      backspaceSendsHint: "默认发送 BS(^H)，VT100 与主流行编辑惯例；仅当对端只认 DEL(^?) 时才需要切换。",
+      backspaceSendsHint:
+        "默认发送 BS(^H)，VT100 与主流行编辑惯例；仅当对端只认 DEL(^?) 时才需要切换。",
+      telnetEnterSends: "回车键发送",
+      telnetEnterSendsHint:
+        "默认 CR（线上编码为 CR NUL，与 SecureCRT 等主流终端一致）；仅当服务端严格要求 NVT 标准换行时切换 CR LF。",
       morePromptCleanup: "清理 More 分页提示",
       morePromptCleanupHint: "兼容会在翻页后输出填充空格的老交换机；默认关闭。",
       runtimeMetrics: "运行时指标",
@@ -722,6 +726,8 @@ export default {
       license: "开源许可",
       repository: "开源地址",
       feedback: "问题反馈",
+      updateNotifications: "更新提示",
+      updateNotificationsHint: "发现新版本时弹窗提醒。",
       open: "打开",
       feedbackAction: "反馈",
       update: {
@@ -739,6 +745,7 @@ export default {
           publishedAt: "发布于 {date}",
           download: "下载更新",
           later: "稍后",
+          skipVersion: "暂不提醒",
           viewRelease: "查看发布页",
         },
       },

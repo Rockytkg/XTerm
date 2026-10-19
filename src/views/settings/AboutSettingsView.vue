@@ -2,14 +2,18 @@
 import { computed, ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { Bug, ExternalLink, GitBranch as Github, Info, RefreshCw } from "@lucide/vue";
+import { storeToRefs } from "pinia";
 import { checkForUpdates, getAppMetadata, openExternalUrl } from "../../services/appInfo";
 import { runManualUpdateCheck } from "../../composables/useUpdateChecker";
 import { showToast } from "../../composables/useToasts";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
+import UiSwitch from "../../components/UiSwitch.vue";
 import { createLogger } from "../../utils/logger";
 
 const logger = createLogger("frontend.settings.about");
 
 const { t } = useI18n();
+const { preferences } = storeToRefs(useWorkspaceStore());
 
 const metadata = ref(null);
 const updateStatus = ref(null);
@@ -71,6 +75,13 @@ async function handleCheckUpdates(notify = true) {
       v-if="metadata"
       class="settings-fields"
     >
+      <div class="settings-toggle">
+        <div>
+          <span class="settings-label">{{ t("settings.about.updateNotifications") }}</span>
+          <span class="settings-hint">{{ t("settings.about.updateNotificationsHint") }}</span>
+        </div>
+        <UiSwitch v-model="preferences.updateNotificationsEnabled" />
+      </div>
       <div class="settings-toggle">
         <div>
           <span class="settings-label">{{ t("settings.about.version") }}</span>

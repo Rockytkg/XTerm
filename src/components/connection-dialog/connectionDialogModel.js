@@ -12,6 +12,7 @@ import {
   BACKSPACE_SENDS,
   DEFAULT_TERMINAL_ENCODING,
   DEFAULT_TERMINAL_TYPE,
+  TELNET_ENTER_SENDS,
 } from "../../utils/terminalSessionOptions.js";
 
 const PROTOCOL_PORT_DEFAULTS = {
@@ -45,6 +46,11 @@ function normalizeBackspaceSends(value) {
   return value === BACKSPACE_SENDS.DEL ? BACKSPACE_SENDS.DEL : defaultBackspaceSends();
 }
 
+// 与退格键同理：只有显式 CR LF 是有效覆盖，其余（含历史未知值）归一到默认 CR。
+function normalizeTelnetEnterSends(value) {
+  return value === TELNET_ENTER_SENDS.CRLF ? TELNET_ENTER_SENDS.CRLF : TELNET_ENTER_SENDS.CR;
+}
+
 function commonDraftFromProfile(profile, protocol) {
   const options = profile?.options ?? {};
   return {
@@ -53,6 +59,7 @@ function commonDraftFromProfile(profile, protocol) {
     terminalType: options.terminalType || DEFAULT_TERMINAL_TYPE,
     encoding: options.encoding || DEFAULT_TERMINAL_ENCODING,
     backspaceSends: normalizeBackspaceSends(options.backspaceSends),
+    telnetEnterSends: normalizeTelnetEnterSends(options.telnetEnterSends),
     terminalMorePromptCleanup: options.terminalMorePromptCleanup === true,
     runtimeMetrics: options.runtimeMetrics !== false,
   };
@@ -210,6 +217,9 @@ export function buildConnectionProfile({
     encoding: encodingValue,
     backspaceSends:
       form.backspaceSends === defaultBackspace ? undefined : form.backspaceSends || undefined,
+    // 仅 telnet 会话消费；默认值（CR）不落库，profile 只保存显式 CR LF 覆盖。
+    telnetEnterSends:
+      form.telnetEnterSends === TELNET_ENTER_SENDS.CRLF ? TELNET_ENTER_SENDS.CRLF : undefined,
     terminalHighlightEnabled: form.terminalHighlightEnabled,
     terminalMorePromptCleanup: form.terminalMorePromptCleanup === true ? true : undefined,
     runtimeMetrics: form.runtimeMetrics === false ? false : undefined,

@@ -14,7 +14,7 @@ use crate::{
                 SessionTransportRuntime, SessionWorkerEvent, TelnetConfig, TelnetEnvVarKind,
                 TerminalSessionResources, TerminalSize, TransportCommand, CONNECT_TIMEOUT_MS,
             },
-            startup_auth::resolve_startup_password_auth,
+            startup_auth::{self, resolve_startup_password_auth},
             telnet_transport::spawn_telnet_transport_actor,
             terminal::{spawn_bound_session, BoundSessionOptions},
             transport_events::write_all_transport,
@@ -176,7 +176,13 @@ impl TelnetConnectionFactory {
         })
         .await?;
         let startup_auth =
-            resolve_startup_password_auth(state, &request, "telnet_startup_auth_failed")?;
+            resolve_startup_password_auth(state, &request, "telnet_startup_auth_failed")?.map(
+                |mut auth| {
+                    auth.line_ending =
+                        telnet_credential_line_ending(request.telnet_enter_sends.as_deref());
+                    auth
+                },
+            );
 
         ensure_open_not_cancelled(&request)?;
         ensure_open_current(state, &request)?;
@@ -631,6 +637,17 @@ pub(super) fn normalize_terminal_type(value: Option<&str>) -> String {
     .to_string()
 }
 
+/// 凭据行终止符默认 CR NUL（RFC 854 的裸 CR 编码，SecureCRT/BSD telnet 同款
+/// 默认）：整链只有一个终止符，把 CR 与 LF 各算一次提交的设备链路（嵌套
+/// telnet 常见）不会把凭据行的回车执行为两次、也不会把 LF 当成空行提前提交。
+/// 仅当会话显式选择 NVT 标准换行（CRLF）时回退为 CR。
+fn telnet_credential_line_ending(enter_sends: Option<&str>) -> &'static [u8] {
+    match enter_sends {
+        Some(value) if value.eq_ignore_ascii_case("crlf") => startup_auth::LINE_ENDING_CR,
+        _ => startup_auth::LINE_ENDING_CR_NUL,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::engine::{DONT, IAC, LINEMODE, LINEMODE_MODE, MODE_ACK, STATUS_IS};
@@ -829,5 +846,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(startup[..size].windows(2).any(|bytes| bytes[0] == 255));
+    }
+
+    #[test]
+    fn credential_line_ending_follows_the_enter_sends_option() {
+        // 默认与未知值均为 CR NUL；只有显式 CRLF 回退到 CR（经引擎编成 CR LF）。
+        assert_eq!(telnet_credential_line_ending(None), b"\r\0");
+        assert_eq!(telnet_credential_line_ending(Some("CR")), b"\r\0");
+        assert_eq!(telnet_credential_line_ending(Some("AUTO")), b"\r\0");
+        assert_eq!(telnet_credential_line_ending(Some("CRLF")), b"\r");
+        assert_eq!(telnet_credential_line_ending(Some("crlf")), b"\r");
     }
 }

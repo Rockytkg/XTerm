@@ -1037,6 +1037,7 @@ mod tests {
             accept_host_key_once: None,
             terminal_type: None,
             runtime_metrics: None,
+            telnet_enter_sends: None,
             cols: None,
             rows: None,
             jump_hosts: None,

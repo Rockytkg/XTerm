@@ -88,6 +88,9 @@ export default {
       backspaceSends: "Backspace sends",
       backspaceSendsHint:
         "Sends BS(^H) by default, the VT100 and mainstream line-editing convention; switch only when the peer strictly requires DEL(^?).",
+      telnetEnterSends: "Enter key sends",
+      telnetEnterSendsHint:
+        "CR by default (sent as CR NUL, matching SecureCRT and BSD telnet); switch to CR LF only for servers that strictly require the NVT new line.",
       morePromptCleanup: "Clean More paging prompt",
       morePromptCleanupHint:
         "For legacy switches that print filler spaces after paging; disabled by default.",
@@ -761,6 +764,8 @@ export default {
       license: "License",
       repository: "Repository",
       feedback: "Issue feedback",
+      updateNotifications: "Update notifications",
+      updateNotificationsHint: "Show a dialog when a new version is available.",
       open: "Open",
       feedbackAction: "Feedback",
       update: {
@@ -778,6 +783,7 @@ export default {
           publishedAt: "Published {date}",
           download: "Download update",
           later: "Later",
+          skipVersion: "Skip this version",
           viewRelease: "View release page",
         },
       },

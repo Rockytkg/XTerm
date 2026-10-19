@@ -40,6 +40,8 @@ pub struct AppPreferences {
     pub ui_font_size: i64,
     pub locale: String,
     pub show_latency: bool,
+    pub update_notifications_enabled: bool,
+    pub update_skipped_version: String,
     pub proxy_toolbar_enabled: bool,
     pub file_service_toolbar_enabled: bool,
     pub serial_redetect_baud_shortcut: String,
@@ -125,6 +127,8 @@ pub struct ConnectionOptions {
     pub terminal_type: Option<String>,
     pub encoding: Option<String>,
     pub backspace_sends: Option<String>,
+    /// Telnet 回车键的线上编码：缺省 CR LF（NVT 标准）；"CR" 表示 CR NUL。
+    pub telnet_enter_sends: Option<String>,
     pub realtime_encoding_detection: Option<bool>,
     pub terminal_highlight_enabled: Option<bool>,
     pub terminal_more_prompt_cleanup: Option<bool>,

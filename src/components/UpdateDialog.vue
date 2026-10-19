@@ -9,11 +9,12 @@ import {
   DialogRoot,
   DialogTitle,
 } from "reka-ui";
-import { Download, ExternalLink, PackageOpen } from "@lucide/vue";
+import { BellOff, Download, ExternalLink, PackageOpen } from "@lucide/vue";
 import {
   closeUpdateDialog,
   downloadUpdate,
   openUpdateReleasePage,
+  skipUpdateVersion,
   useUpdateChecker,
 } from "../composables/useUpdateChecker";
 
@@ -95,6 +96,17 @@ function handleDownload() {
               stroke-width="1.8"
             />
             {{ t("settings.about.update.dialog.viewRelease") }}
+          </button>
+          <button
+            type="button"
+            class="ui-button-secondary flex items-center gap-[6px]"
+            @click="skipUpdateVersion"
+          >
+            <BellOff
+              :size="13"
+              stroke-width="1.8"
+            />
+            {{ t("settings.about.update.dialog.skipVersion") }}
           </button>
           <button
             type="button"
