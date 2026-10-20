@@ -1,6 +1,6 @@
 import { i18n } from "../../i18n/index.js";
 import { cancelScriptPrompts, requestScriptPrompt } from "./scriptPromptController.js";
-import { getRecordingBridge, getScriptBridge } from "./bridges.js";
+import { getRecordingBridge, getScriptBridge, getSessionControlBridge } from "./bridges.js";
 import { readDataFile, writeDataFile } from "./scriptFileLoader.js";
 
 const MAX_OUTPUT_BUFFER_CHARS = 128 * 1024;
@@ -385,6 +385,21 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     return recording;
   }
 
+  function requireSessionControlBridge() {
+    const control = getSessionControlBridge();
+    if (!control) throw new Error(i18n.global.t("scripts.errors.sessionControlUnavailable"));
+    return control;
+  }
+
+  // 串口波特率重检：等同工具栏"重新检测波特率"按钮（检测期间终端输入被屏蔽）；
+  // 仅串口会话可用，返回 { serialPort, baudRate, confirmed }。
+  async function redetectBaudRate() {
+    throwIfStopped();
+    const result = await requireSessionControlBridge().redetectBaudRate(context.targetSessionId);
+    throwIfStopped();
+    return result;
+  }
+
   // 开启会话记录：写入路径由用户在原生保存对话框中选定，脚本无法指定。
   async function startRecording() {
     throwIfStopped();
@@ -470,6 +485,9 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     startRecording: () => trackTask(startRecording()),
     stopRecording: () => trackTask(stopRecording()),
     isRecording: () => getRecordingBridge()?.isActive(context.targetSessionId) === true,
+    // 会话控制：串口波特率重检（仅串口），由工作区会话控制桥落到既有管线；
+    // 协议不符时抛出本地化错误。
+    redetectBaudRate: () => trackTask(redetectBaudRate()),
     sleep: (...args) => trackTask(sleep(...args)),
     input: (messageOrOptions, options) => trackTask(prompt("input", messageOrOptions, options)),
     confirm: (messageOrOptions, options) =>

@@ -15,6 +15,7 @@ export const DEFAULT_SCRIPT_BODY = `// 终端 API（异步函数请使用 await�
 // await xterm.alert("配置完成") — 显示提示框。
 // const values = await xterm.form({ title: "参数", fields: [{ key: "hostname", label: "主机名", required: true }] }) — 显示多字段表单。
 // xterm.log("运行日志", { ok: true }) — 写入脚本运行日志。
+// const detected = await xterm.redetectBaudRate() — 串口会话重检波特率，返回 { serialPort, baudRate, confirmed }。
 // xterm.session.id — 当前目标会话 ID。
 // xterm.session.label — 当前目标会话显示名称。
 // xterm.session.protocol / host / port / username — 非敏感连接信息（不含密码、私钥）。

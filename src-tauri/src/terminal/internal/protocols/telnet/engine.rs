@@ -822,6 +822,20 @@ mod tests {
         assert_eq!(sent(&engine.send_terminal_input(b"\r\0")), b"\r\0");
     }
 
+    /// 前端默认把回车折叠为 CR NUL 交给后端：无论 BINARY 是否已协商，线上都
+    /// 必须保持单个 CR NUL。任何展开/分裂都会让把 CR 与 LF 各算一次提交的
+    /// 对端（嵌套 telnet 链路常见）把一次回车执行为多次。
+    #[test]
+    fn cr_nul_input_stays_one_terminator_in_every_mode() {
+        let mut engine = TelnetEngine::new();
+        assert_eq!(sent(&engine.send_terminal_input(b"\r\0")), b"\r\0");
+
+        let mut engine = TelnetEngine::new();
+        let _ = engine.negotiate(WILL, BINARY);
+        let _ = engine.receive(&[IAC, DO, BINARY]);
+        assert_eq!(sent(&engine.send_terminal_input(b"\r\0")), b"\r\0");
+    }
+
     #[test]
     fn linemode_is_accepted_as_a_remote_option() {
         let mut engine = TelnetEngine::new();

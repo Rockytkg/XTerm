@@ -272,6 +272,18 @@ await xterm.alert(`配置已保存到 ${path}`);
 
 **取消保存对话框 = 取消整个脚本的执行**。脚本正常结束不会自动停止记录——未调用 `stopRecording()` 时记录会继续，可在终端工具栏手动停止；脚本被中途停止且记录对话框还悬停时，刚开始的记录会自动回滚。
 
+### 会话控制
+
+```js
+// 串口会话：重新检测波特率（等同工具栏"重新检测波特率"按钮，检测期间终端输入会被屏蔽）。
+// 返回 { serialPort, baudRate, confirmed }；不要求连接配置的波特率为"自动"。
+// 非串口会话调用会抛出错误。
+const detected = await xterm.redetectBaudRate();
+if (!detected.confirmed) {
+  xterm.log("波特率未确认，已保留", detected.baudRate);
+}
+```
+
 ### 会话信息
 
 ```js

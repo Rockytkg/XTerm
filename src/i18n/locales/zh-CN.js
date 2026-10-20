@@ -321,6 +321,9 @@ export default {
         "脚本沙盒已禁用“{api}”：网络、本地存储与系统资源只能通过会请求用户授权的 xterm.* 专用函数访问",
       targetUnavailable: "目标会话不可用（可能已关闭或断连）",
       recordingUnavailable: "会话录音不可用（可能已关闭或断连）",
+      sessionControlUnavailable: "会话控制不可用（可能已关闭或断连）",
+      sessionUnavailable: "目标会话未连接或已关闭",
+      redetectBaudRateSerialOnly: "仅串口会话支持重新检测波特率",
       unknownError: "未知脚本错误",
     },
     validation: {

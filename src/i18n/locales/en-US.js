@@ -333,6 +333,10 @@ export default {
         '"{api}" is blocked by the script sandbox; access network, local storage, and system resources only via the dedicated xterm.* APIs, which ask for user authorization',
       targetUnavailable: "Target session is not available (it may be closed or disconnected)",
       recordingUnavailable: "Session recording is not available (it may be closed or disconnected)",
+      sessionControlUnavailable:
+        "Session control is not available (it may be closed or disconnected)",
+      sessionUnavailable: "The target session is not connected or has been closed",
+      redetectBaudRateSerialOnly: "Baud rate redetect is only available for serial sessions",
       unknownError: "Unknown script error",
     },
     validation: {

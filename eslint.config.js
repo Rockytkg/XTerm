@@ -10,6 +10,9 @@ export default [
       "src-tauri/target/**",
       "src-tauri/gen/**",
       "src-tauri/vendor/**",
+      // data/ 是应用默认的运行时数据目录（gitignore）：本地浏览器 profile、临时
+      // 探针脚本等产物不参与 lint。
+      "data/**",
     ],
   },
   js.configs.recommended,

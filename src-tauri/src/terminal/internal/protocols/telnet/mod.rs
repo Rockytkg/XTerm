@@ -857,4 +857,42 @@ mod tests {
         assert_eq!(telnet_credential_line_ending(Some("CRLF")), b"\r");
         assert_eq!(telnet_credential_line_ending(Some("crlf")), b"\r");
     }
+
+    /// 经真实 socket 的运行时契约：前端折叠后的 CR NUL 在 NVT 与 BINARY 两种
+    /// 协商状态下都必须以单个 CR NUL 落线（不展开为 CR LF、不重复写入）。
+    #[tokio::test]
+    async fn cr_nul_write_stays_single_on_the_wire_in_every_mode() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (client, accepted) =
+            tokio::join!(tokio::net::TcpStream::connect(address), listener.accept());
+        let mut server = accepted.unwrap().0;
+        let mut runtime = TelnetRuntime::new(client.unwrap(), test_config());
+
+        let mut buffer = [0_u8; 64];
+        runtime.write(b"\r\0").await.unwrap();
+        let size = tokio::time::timeout(Duration::from_millis(100), server.read(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&buffer[..size], b"\r\0");
+
+        // 对端接受我们发送二进制（DO BINARY）后，同样的输入仍保持单个 CR NUL。
+        // WILL BINARY 已在启动协商时发出，Q 方法（RFC 1143）不会重复应答；
+        // 读处理返回时引擎已切换到 BINARY 发送态。
+        server.write_all(&[255, 253, 0]).await.unwrap();
+        let _ = runtime
+            .read_into_with_negotiation(&mut buffer)
+            .await
+            .ok()
+            .expect("negotiation read failed");
+        runtime.write(b"\r\0").await.unwrap();
+        let size = tokio::time::timeout(Duration::from_millis(100), server.read(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&buffer[..size], b"\r\0");
+    }
 }

@@ -44,7 +44,7 @@ mod vnc;
 
 pub(crate) use core::{
     resolve_connection_request, ConnectionError, ConnectionOpenRequest, ConnectionOpenResult,
-    ConnectionResult, RdpBridgeInfo, ResolvedConnection, SerialProbeResult, SerialRedetectResult,
+    ConnectionResult, RdpBridgeInfo, ResolvedConnection, SerialRedetectResult,
     SessionCapabilityCommand, SessionCommand, SshRuntimeMetricsRequest, TerminalSession,
     VncBridgeInfo,
 };

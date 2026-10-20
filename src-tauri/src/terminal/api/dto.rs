@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::terminal::{
-    domain::{ConnectionCapabilities, ProtocolKind},
-    internal::SerialProbeResult,
-};
+use crate::terminal::domain::{ConnectionCapabilities, ProtocolKind};
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TerminalEventEnvelope<T: Serialize> {
@@ -64,7 +62,6 @@ pub(crate) enum ConnectionOpenResponse {
         capabilities: ConnectionCapabilities,
         serial_port: Option<String>,
         baud_rate: Option<u32>,
-        serial_scores: Option<Vec<SerialProbeResult>>,
         vnc_bridge: Option<crate::terminal::internal::VncBridgeInfo>,
         rdp_bridge: Option<crate::terminal::internal::RdpBridgeInfo>,
     },

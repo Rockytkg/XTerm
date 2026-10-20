@@ -11,6 +11,7 @@ import {
   publishTerminalOutput,
   registerRecordingBridge,
   registerScriptBridge,
+  registerSessionControlBridge,
 } from "../src/services/scripting/bridges.js";
 import {
   requestScriptPrompt,
@@ -64,6 +65,20 @@ function createFakeRecording(startResult = "/tmp/recording.txt") {
     },
     isActive() {
       return this.active;
+    },
+  };
+}
+
+// 模拟会话控制桥的测试桩：记录入参，redetect 返回可断言的固定结果。
+function createFakeSessionControl() {
+  return {
+    calls: [],
+    redetectResult: { serialPort: "COM3", baudRate: 115200, confirmed: true },
+    redetectError: null,
+    async redetectBaudRate(frontendSessionId) {
+      this.calls.push(["redetectBaudRate", frontendSessionId]);
+      if (this.redetectError) throw this.redetectError;
+      return this.redetectResult;
     },
   };
 }
@@ -629,4 +644,57 @@ test("recording api fails fast when no recording controller is registered", asyn
   teardown();
   assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
   assert.match(run.error, new RegExp(i18n.global.t("scripts.errors.recordingUnavailable")));
+});
+
+test("redetectBaudRate returns the session control bridge result", async () => {
+  setup();
+  const control = createFakeSessionControl();
+  const unregisterControl = registerSessionControlBridge(control);
+  const run = await runScript(
+    {
+      id: "s16",
+      name: "redetect-baud",
+      code: `const r = await xterm.redetectBaudRate(); xterm.log("redetect", r.serialPort, r.baudRate, r.confirmed);`,
+    },
+    testContext(),
+  );
+  unregisterControl();
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.deepEqual(control.calls, [["redetectBaudRate", TARGET]]);
+  assert.equal(run.logs[0].text, "redetect COM3 115200 true");
+});
+
+test("redetectBaudRate bridge failure fails the script run", async () => {
+  setup();
+  const control = createFakeSessionControl();
+  control.redetectError = new Error("no usable baud rate");
+  const unregisterControl = registerSessionControlBridge(control);
+  const run = await runScript(
+    {
+      id: "s16b",
+      name: "redetect-baud-failure",
+      code: `await xterm.redetectBaudRate();`,
+    },
+    testContext(),
+  );
+  unregisterControl();
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
+  assert.equal(run.error, "no usable baud rate");
+});
+
+test("session control api fails fast when no session control bridge is registered", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "s16d",
+      name: "session-control-unavailable",
+      code: `await xterm.redetectBaudRate();`,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
+  assert.match(run.error, new RegExp(i18n.global.t("scripts.errors.sessionControlUnavailable")));
 });

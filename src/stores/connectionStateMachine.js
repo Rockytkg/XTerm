@@ -99,7 +99,6 @@ export function reduceConnectionState(previous = IDLE_CONNECTION_STATE, event) {
         detectedBaudRate: payload.baudRate || null,
         detectedBaudConfirmed: payload.confirmed === true,
         detectedSerialPort: payload.serialPort || "",
-        serialScores: Array.isArray(payload.serialScores) ? payload.serialScores : [],
         serialBaudError: null,
       };
     case CONNECTION_EVENT.OPEN_FAILED:
@@ -191,7 +190,6 @@ export function reduceConnectionState(previous = IDLE_CONNECTION_STATE, event) {
         detectedBaudRate: payload.baudRate || null,
         detectedBaudConfirmed: payload.confirmed === true,
         detectedSerialPort: payload.serialPort || "",
-        serialScores: Array.isArray(payload.serialScores) ? payload.serialScores : [],
         serialBaudError: null,
       };
     case CONNECTION_EVENT.SERIAL_REDETECT_FAILED:

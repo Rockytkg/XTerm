@@ -1,3 +1,4 @@
+import { onScopeDispose } from "vue";
 import {
   createConnection,
   deleteConnection,
@@ -24,6 +25,8 @@ import {
   findReusableSerialSession,
   serialConnectionProfileKey,
 } from "../utils/serialConnectionProfile";
+import { registerSessionControlBridge } from "../services/scripting/bridges";
+import { i18n } from "../i18n";
 
 const logger = createLogger("frontend.workspace.session_controller");
 
@@ -574,7 +577,6 @@ export function createWorkspaceSessionController({
         baudRate: 0,
         confirmed: false,
         serialPort: "",
-        scores: [],
         error: details.detail || details.message || String(error),
       };
     });
@@ -605,10 +607,52 @@ export function createWorkspaceSessionController({
       baudRate: response?.baudRate || 0,
       confirmed: response?.confirmed === true,
       serialPort: response?.serialPort || "",
-      scores: Array.isArray(response?.serialScores) ? response.serialScores : [],
       error: "",
     };
+    return response;
   }
+
+  // ── 脚本会话控制桥（xterm.redetectBaudRate）──────────────────────────────
+  // 注册时机与记录桥一致：store setup 同步注册，作用域销毁（HMR/测试重建）时注销。
+
+  function requireScriptTargetSession(frontendSessionId) {
+    const session = getSessionInstance(frontendSessionId);
+    if (!session || !session.sessionId) {
+      throw new Error(i18n.global.t("scripts.errors.sessionUnavailable"));
+    }
+    return session;
+  }
+
+  // IPC 错误优先按 connectionErrors 错误码本地化；非结构化错误回退原始信息。
+  function localizeSessionControlError(error) {
+    const formatted = formatConnectionError(error);
+    const key = `connectionErrors.${formatted.code}`;
+    if (formatted.code !== "unknown" && i18n.global.te(key)) {
+      return new Error(i18n.global.t(key, formatted.args || {}));
+    }
+    return new Error(formatted.detail || formatted.message || String(error));
+  }
+
+  async function scriptRedetectBaudRate(frontendSessionId) {
+    const session = requireScriptTargetSession(frontendSessionId);
+    if (!isSerialProtocol(getConnection(session.connectionId)?.protocol)) {
+      throw new Error(i18n.global.t("scripts.errors.redetectBaudRateSerialOnly"));
+    }
+    const result = await redetectSerialAutoBaud(frontendSessionId).catch((error) => {
+      throw localizeSessionControlError(error);
+    });
+    // 只透传可结构化克隆的字段给脚本沙箱。
+    return {
+      serialPort: result?.serialPort || "",
+      baudRate: result?.baudRate || 0,
+      confirmed: result?.confirmed === true,
+    };
+  }
+
+  const disposeSessionControlBridge = registerSessionControlBridge({
+    redetectBaudRate: scriptRedetectBaudRate,
+  });
+  onScopeDispose(disposeSessionControlBridge);
 
   function toggleActiveSessionHighlight(
     connectionId = connectionIdForSession(activeConnection.value),

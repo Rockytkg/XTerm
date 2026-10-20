@@ -6,9 +6,12 @@ const bridgeLogger = createLogger("frontend.scripting.bridge");
 // - 终端桥：TerminalPanel 为每个终端加载 ScriptBridgeAddon 后按前端会话 id 注册；
 //   输出数据经 publishTerminalOutput 喂给对应 addon 的监听器（与渲染同源）。
 // - 记录桥：workspaceRecordingController 注册全局适配器，脚本按会话 id 启停记录。
+// - 会话控制桥：workspaceSessionController 注册全局适配器，脚本按会话 id 重检
+//   串口波特率。
 // runner 不直接 import Pinia store / addon 类，保持 node 单测可加载。
 const scriptBridges = new Map();
 let recordingBridge = null;
+let sessionControlBridge = null;
 
 export function registerScriptBridge(frontendSessionId, bridge) {
   if (!frontendSessionId || !bridge) return () => {};
@@ -61,4 +64,16 @@ export function registerRecordingBridge(adapter) {
 
 export function getRecordingBridge() {
   return recordingBridge;
+}
+
+export function registerSessionControlBridge(adapter) {
+  if (!adapter) return () => {};
+  sessionControlBridge = adapter;
+  return () => {
+    if (sessionControlBridge === adapter) sessionControlBridge = null;
+  };
+}
+
+export function getSessionControlBridge() {
+  return sessionControlBridge;
 }

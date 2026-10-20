@@ -99,7 +99,6 @@ pub enum ConnectionOpenResult {
         encoding: String,
         serial_port: Option<String>,
         baud_rate: Option<u32>,
-        serial_scores: Option<Vec<SerialProbeResult>>,
         vnc_bridge: Option<VncBridgeInfo>,
         rdp_bridge: Option<RdpBridgeInfo>,
     },
@@ -151,7 +150,6 @@ impl ConnectionOpenResult {
             encoding,
             serial_port: None,
             baud_rate: None,
-            serial_scores: None,
             vnc_bridge: None,
             rdp_bridge: None,
         }
@@ -162,7 +160,6 @@ impl ConnectionOpenResult {
         encoding: String,
         serial_port: String,
         baud_rate: u32,
-        serial_scores: Vec<SerialProbeResult>,
     ) -> Self {
         Self::Connected {
             session_id,
@@ -170,7 +167,6 @@ impl ConnectionOpenResult {
             encoding,
             serial_port: Some(serial_port),
             baud_rate: Some(baud_rate),
-            serial_scores: Some(serial_scores),
             vnc_bridge: None,
             rdp_bridge: None,
         }
@@ -183,7 +179,6 @@ impl ConnectionOpenResult {
             encoding: "binary".to_string(),
             serial_port: None,
             baud_rate: None,
-            serial_scores: None,
             vnc_bridge: Some(bridge),
             rdp_bridge: None,
         }
@@ -197,7 +192,6 @@ impl ConnectionOpenResult {
             encoding: "binary".to_string(),
             serial_port: None,
             baud_rate: None,
-            serial_scores: None,
             vnc_bridge: None,
             rdp_bridge: Some(bridge),
         }
@@ -598,21 +592,10 @@ pub(crate) struct SftpTransferProgressEvent {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SerialProbeResult {
-    pub(super) port_name: String,
-    pub(super) baud_rate: u32,
-    pub(super) score: f32,
-    pub(super) bytes_read: usize,
-    pub(super) can_open: bool,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SerialRedetectResult {
     pub(super) serial_port: String,
     pub(super) baud_rate: u32,
     pub(super) confirmed: bool,
-    pub(super) serial_scores: Vec<SerialProbeResult>,
     #[serde(skip)]
     pub(super) initial_sample: Vec<u8>,
 }

@@ -12,10 +12,10 @@ use crate::{
         codec::analyze_serial_sample,
         core::{
             compare_serial_port_names, open_serial_port, ConnectionError, ConnectionOpenResult,
-            ConnectionResult, ResolvedConnection, SerialLineSettings, SerialProbeResult,
-            SerialRedetectResult, SessionCommand, SessionTransportRuntime, SessionWorkerEvent,
-            TerminalSession, TerminalSessionResources, TerminalSize, TransportCommand,
-            BAUD_CANDIDATES, SERIAL_DEEP_PASSIVE_BAUD_SAMPLE_MS, SERIAL_DEEP_SLEEP_SAMPLE_MS,
+            ConnectionResult, ResolvedConnection, SerialLineSettings, SerialRedetectResult,
+            SessionCommand, SessionTransportRuntime, SessionWorkerEvent, TerminalSession,
+            TerminalSessionResources, TerminalSize, TransportCommand, BAUD_CANDIDATES,
+            SERIAL_DEEP_PASSIVE_BAUD_SAMPLE_MS, SERIAL_DEEP_SLEEP_SAMPLE_MS,
             SERIAL_EARLY_ACCEPT_BAUD_SCORE, SERIAL_FALLBACK_BAUD_RATE, SERIAL_FAST_BAUD_SAMPLE_MS,
             SERIAL_MIN_DETECT_BYTES, SERIAL_PASSIVE_BAUD_SAMPLE_MS,
             SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS, SERIAL_PROBE_MAX_SAMPLE_MS,
@@ -42,7 +42,6 @@ pub(crate) struct SerialPortCandidate {
 struct SerialOpenSelection {
     port_name: String,
     baud_rate: u32,
-    scores: Vec<SerialProbeScore>,
     initial_sample: Vec<u8>,
     port: tokio_serial::SerialStream,
 }
@@ -118,18 +117,6 @@ impl SerialProbePhase {
     }
 }
 
-impl From<SerialProbeScore> for SerialProbeResult {
-    fn from(score: SerialProbeScore) -> Self {
-        Self {
-            port_name: score.port_name,
-            baud_rate: score.baud_rate,
-            score: score.score,
-            bytes_read: score.bytes_read,
-            can_open: score.can_open,
-        }
-    }
-}
-
 pub(crate) struct SerialConnectionFactory;
 
 impl SerialConnectionFactory {
@@ -184,7 +171,6 @@ impl SerialConnectionFactory {
         let SerialOpenSelection {
             port_name,
             baud_rate,
-            scores,
             initial_sample,
             mut port,
         } = result;
@@ -238,7 +224,6 @@ impl SerialConnectionFactory {
             open_context.encoding_label,
             port_name,
             baud_rate,
-            scores.into_iter().map(SerialProbeResult::from).collect(),
         ))
     }
 }
@@ -282,7 +267,9 @@ pub(crate) async fn redetect_serial_baud_on_open_port(
         .is_none_or(|candidate| !is_decisive_serial_probe(candidate))
     {
         let additional = additional_serial_baud_candidates(&quick_candidates, BAUD_CANDIDATES);
-        if should_expand_serial_baud_search(&scores, false, port_name, !additional.is_empty()) {
+        // 重检作用于用户已选定并打开的端口，静默只可能是设备休眠（不存在
+        // auto 端口发现中"空原生端口"的顾虑），直接扫完整候选列表。
+        if !additional.is_empty() {
             selection = match detect_serial_baud(
                 port,
                 port_name,
@@ -303,7 +290,13 @@ pub(crate) async fn redetect_serial_baud_on_open_port(
     }
 
     let (baud_rate, confirmed, initial_sample) = if let Some(selection) = selection {
-        (selection.baud_rate, true, selection.sample)
+        match ensure_selected_serial_baud(port, port_name, selection.baud_rate).await {
+            Ok(()) => (selection.baud_rate, true, selection.sample),
+            Err(error) => {
+                restore_serial_probe_port(port, port_name, original_baud_rate).await;
+                return Err(error);
+            }
+        }
     } else {
         set_serial_probe_baud(port, port_name, original_baud_rate)?;
         prepare_serial_probe_port(port).await;
@@ -314,14 +307,13 @@ pub(crate) async fn redetect_serial_baud_on_open_port(
         serial_port: port_name.to_string(),
         baud_rate,
         confirmed,
-        serial_scores: scores.into_iter().map(SerialProbeResult::from).collect(),
         initial_sample,
     })
 }
 
 /// Redetection quick round: the current baud, then the common quick rates.
-/// Most redetects confirm within these; the full list is only probed when the
-/// quick round saw line activity (see `redetect_serial_baud_on_open_port`).
+/// Most redetects confirm within these; otherwise the full candidate list is
+/// probed unconditionally (see `redetect_serial_baud_on_open_port`).
 fn redetect_quick_baud_candidates(current_baud_rate: u32) -> Vec<u32> {
     let mut candidates = vec![current_baud_rate];
     for baud_rate in SERIAL_QUICK_AUTO_BAUD_CANDIDATES {
@@ -346,17 +338,20 @@ async fn resolve_serial_candidates_for_open(
     )
     .await?;
     if auto_port {
-        return available_auto_serial_candidates(state, requested_port, port_candidates);
+        return resolve_auto_serial_candidates(state, port_candidates, connection_id).await;
     }
 
     close_conflicting_serial_sessions(state, &port_candidates, connection_id).await?;
     Ok(port_candidates)
 }
 
-fn available_auto_serial_candidates(
+/// 自动选口优先避开工作区内已占用的端口;仅当候选端口全部被占用时,才按探测
+/// 优先级挑出一个端口,断开占用它的会话后接管——此时没有可避开的空闲端口,
+/// 后打开者应能复用该端口,而不是直接报"端口不可用"。
+async fn resolve_auto_serial_candidates(
     state: &AppState,
-    requested_port: &str,
     port_candidates: Vec<SerialPortCandidate>,
+    connection_id: &str,
 ) -> ConnectionResult<Vec<SerialPortCandidate>> {
     let candidate_names: Vec<String> = port_candidates
         .iter()
@@ -373,21 +368,36 @@ fn available_auto_serial_candidates(
         .map(normalized_serial_port_name)
         .collect();
     let available: Vec<SerialPortCandidate> = port_candidates
-        .into_iter()
+        .iter()
         .filter(|candidate| !occupied_ports.contains(&normalized_serial_port_name(&candidate.name)))
+        .cloned()
         .collect();
-    if available.is_empty() {
-        return Err(ConnectionError::serial_port_unavailable(
-            requested_port,
-            "all detected serial ports are already active in this workspace".to_string(),
-        ));
+    if !available.is_empty() {
+        log::info!(
+            target: "terminal.serial",
+            "serial auto port skipped {} active workspace port(s)",
+            occupied_ports.len()
+        );
+        return Ok(available);
     }
-    log::info!(
-        target: "terminal.serial",
-        "serial auto port skipped {} active workspace port(s)",
-        occupied_ports.len()
-    );
-    Ok(available)
+
+    // 只驱逐探测顺序最靠前(USB 优先)的一个端口,而不是断开全部占用者:接管
+    // 一个端口已足够本次打开,其余会话不受影响。驱逐失败(关闭超时)会以可重试
+    // 的 serial_session_close_timeout 报错,不会留下半开状态。
+    let target = sorted_serial_port_candidates(port_candidates)
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            ConnectionError::serial_port_not_found("auto", "no serial ports were found".to_string())
+        })?;
+    let occupying_sessions = state.serial_sessions_for_ports(std::slice::from_ref(&target.name));
+    close_serial_sessions(
+        state,
+        occupying_sessions,
+        &format!("auto selection found no free serial port for connection '{connection_id}'"),
+    )
+    .await?;
+    Ok(vec![target])
 }
 
 fn normalized_serial_port_name(port: &str) -> String {
@@ -692,22 +702,26 @@ async fn resolve_auto_baud(
         }
 
         if let Some(best) = detection.confirmed {
-            log::info!(
-                target: "terminal.serial",
-                "serial auto baud selected best confirmation requested='{requested_port}' selected='{}@{}' usb={} confidence={:.3} scores=[{}]",
-                best.port_name,
-                best.baud_rate,
-                candidate.usb,
-                best.score,
-                serial_probe_score_summary(&scores)
-            );
-            return Ok(SerialOpenSelection {
-                port_name: best.port_name,
-                baud_rate: best.baud_rate,
-                scores,
-                initial_sample: best.sample,
-                port,
-            });
+            match ensure_selected_serial_baud(&mut port, &port_name, best.baud_rate).await {
+                Ok(()) => {
+                    log::info!(
+                        target: "terminal.serial",
+                        "serial auto baud selected best confirmation requested='{requested_port}' selected='{}@{}' usb={} confidence={:.3} scores=[{}]",
+                        best.port_name,
+                        best.baud_rate,
+                        candidate.usb,
+                        best.score,
+                        serial_probe_score_summary(&scores)
+                    );
+                    return Ok(SerialOpenSelection {
+                        port_name: best.port_name,
+                        baud_rate: best.baud_rate,
+                        initial_sample: best.sample,
+                        port,
+                    });
+                }
+                Err(error) => last_error = Some(error),
+            }
         }
 
         if fallback_selection.is_none() {
@@ -735,7 +749,6 @@ async fn resolve_auto_baud(
         return Ok(SerialOpenSelection {
             port_name,
             baud_rate: SERIAL_FALLBACK_BAUD_RATE,
-            scores,
             initial_sample: Vec::new(),
             port,
         });
@@ -781,8 +794,9 @@ async fn detect_serial_baud(
         } else if is_reliable_serial_probe(&probe) {
             let confirmation =
                 confirm_serial_baud(port, port_name, *baud_rate, encoding, phase).await;
-            scores.push(confirmation.clone());
-            merge_serial_probe_confirmation(&probe, &confirmation)
+            let merged = merge_serial_probe_confirmation(&probe, &confirmation);
+            scores.push(confirmation);
+            merged
         } else {
             None
         };
@@ -849,6 +863,23 @@ async fn restore_serial_probe_port(
 ) {
     let _ = set_serial_probe_baud(port, port_name, baud_rate);
     prepare_serial_probe_port(port).await;
+}
+
+/// 探测循环只在决定性命中时提前结束；非决定性确认（深睡眠阶段接受次优
+/// 候选）意味着循环跑完了全部候选，端口停留在最后探测的波特率上，与胜选
+/// 候选不一致。交付前把线路切到所选速率并排空跨速率噪声，否则会话会以
+/// 错误波特率运行——上报值与实际线路状态不符，输出必然乱码。
+async fn ensure_selected_serial_baud(
+    port: &mut tokio_serial::SerialStream,
+    port_name: &str,
+    baud_rate: u32,
+) -> ConnectionResult<()> {
+    if port.baud_rate().ok() == Some(baud_rate) {
+        return Ok(());
+    }
+    set_serial_probe_baud(port, port_name, baud_rate)?;
+    prepare_serial_probe_port(port).await;
+    Ok(())
 }
 
 fn merge_serial_probe_confirmation(
@@ -1049,7 +1080,6 @@ async fn open_serial_selection(
     Ok(SerialOpenSelection {
         port_name,
         baud_rate,
-        scores: Vec::new(),
         initial_sample: Vec::new(),
         port,
     })

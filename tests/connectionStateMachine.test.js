@@ -13,7 +13,7 @@ test("serial baud detection blocks only for the duration of redetection", () => 
 
   const connected = reduceConnectionState(detecting, {
     type: CONNECTION_EVENT.SERIAL_REDETECT_SUCCEEDED,
-    payload: { baudRate: 115200, confirmed: true, serialPort: "COM3", serialScores: [] },
+    payload: { baudRate: 115200, confirmed: true, serialPort: "COM3" },
   });
 
   assert.equal(connected.status, "connected");

@@ -94,7 +94,6 @@ impl ConnectionApplicationService {
                 session_id,
                 serial_port,
                 baud_rate,
-                serial_scores,
                 vnc_bridge,
                 rdp_bridge,
                 ..
@@ -142,7 +141,6 @@ impl ConnectionApplicationService {
                     capabilities,
                     serial_port,
                     baud_rate,
-                    serial_scores,
                     vnc_bridge,
                     rdp_bridge,
                 })
