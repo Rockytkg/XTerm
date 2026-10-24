@@ -371,3 +371,63 @@ test("session metadata defaults to empty values when the context omits it", asyn
   assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
   assert.equal(run.logs[0].text, '["","","",""]');
 });
+
+test("expect ring-buffer truncation does not expose an orphaned low surrogate", async () => {
+  setup();
+  const runPromise = runScript(
+    {
+      id: "e13",
+      name: "expect-grapheme-suffix",
+      code: `
+        const hit = await xterm.expect("END", 2000);
+        xterm.log(JSON.stringify({
+          length: hit.before.length,
+          wellFormed: hit.before.isWellFormed(),
+          content: hit.before === "b".repeat(65535),
+        }));
+      `,
+    },
+    testContext(),
+  );
+  await settle();
+  publishTerminalOutput(TARGET, `${"a".repeat(65536)}🙂${"b".repeat(65535)}`);
+  publishTerminalOutput(TARGET, "END");
+  const run = await runPromise;
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.deepEqual(JSON.parse(run.logs[0].text), {
+    length: 65535,
+    wellFormed: true,
+    content: true,
+  });
+});
+
+test("expect ring-buffer truncation retains an emoji starting at the cut point", async () => {
+  setup();
+  const runPromise = runScript(
+    {
+      id: "e14",
+      name: "expect-grapheme-suffix-boundary",
+      code: `
+        const hit = await xterm.expect("END", 2000);
+        xterm.log(JSON.stringify({
+          length: hit.before.length,
+          wellFormed: hit.before.isWellFormed(),
+          content: hit.before === "🙂" + "b".repeat(65534),
+        }));
+      `,
+    },
+    testContext(),
+  );
+  await settle();
+  publishTerminalOutput(TARGET, `${"a".repeat(65537)}🙂${"b".repeat(65534)}`);
+  publishTerminalOutput(TARGET, "END");
+  const run = await runPromise;
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.deepEqual(JSON.parse(run.logs[0].text), {
+    length: 65536,
+    wellFormed: true,
+    content: true,
+  });
+});

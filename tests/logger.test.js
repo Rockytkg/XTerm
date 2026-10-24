@@ -32,6 +32,13 @@ test("summarizeValue truncates long strings", () => {
   assert.ok(summary.endsWith("..."));
 });
 
+test("summarizeValue truncates strings without splitting surrogate pairs", () => {
+  const summary = summarizeValue(`${"a".repeat(156)}🙂xxx`);
+  assert.equal(summary.isWellFormed(), true);
+  assert.ok(summary.length <= 160);
+  assert.equal(summary, `${"a".repeat(156)}...`);
+});
+
 test("summarizeValue summarizes errors structurally", () => {
   const summary = summarizeValue(new TypeError("boom"));
   assert.deepEqual(summary, {

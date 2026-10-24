@@ -1,4 +1,5 @@
 import { fg } from "../../../terminalPanelHelpers.js";
+import { getTerminalTextWidth } from "../../unicodeWidth.js";
 import {
   isSerialProtocol,
   isTelnetProtocol,
@@ -8,13 +9,21 @@ import {
 
 function normalizeLines(lines = []) {
   const seen = new Set();
-  return lines.reduce((result, line) => {
-    const text = typeof line === "string" ? line.trim() : "";
-    if (!text || seen.has(text)) return result;
-    seen.add(text);
-    result.push(text);
-    return result;
-  }, []);
+  const result = [];
+  for (const line of lines) {
+    if (typeof line !== "string") continue;
+    for (const part of line.split(/\r\n|\r|\n/)) {
+      const text = part.trim();
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      result.push(text);
+    }
+  }
+  return result;
+}
+
+function countWrappedRows(value, columns, startColumn = 0) {
+  return Math.max(1, Math.ceil((startColumn + getTerminalTextWidth(value)) / columns));
 }
 
 function buildBlock({ title, lines, titleColor, lineColor }) {
@@ -75,19 +84,28 @@ export class TerminalStatusAddon {
       _queueWrite: queueWrite,
       _t: t,
       _terminal: null,
+      _resizeDisposable: null,
       _fingerprint: "",
       _overlayLineCount: 0,
       _overlayAttached: false,
       _overlayPresentation: null,
       _overlayStatus: null,
+      _overlayTitle: "",
+      _overlayLines: [],
+      _overlayFirstColumn: 0,
     });
   }
 
   activate(terminal) {
+    this._resizeDisposable?.dispose?.();
     this._terminal = terminal;
+    const resizeSubscription = terminal?.onResize?.(() => this._refreshOverlayLineCount());
+    this._resizeDisposable = resizeSubscription?.dispose ? resizeSubscription : null;
   }
 
   dispose() {
+    this._resizeDisposable?.dispose?.();
+    this._resizeDisposable = null;
     this.reset();
     this._terminal = null;
   }
@@ -98,6 +116,9 @@ export class TerminalStatusAddon {
     this._overlayAttached = false;
     this._overlayPresentation = null;
     this._overlayStatus = null;
+    this._overlayTitle = "";
+    this._overlayLines = [];
+    this._overlayFirstColumn = 0;
   }
 
   reset() {
@@ -114,6 +135,23 @@ export class TerminalStatusAddon {
     this._overlayAttached = false;
     this._overlayPresentation = null;
     this._overlayStatus = null;
+    this._overlayTitle = "";
+    this._overlayLines = [];
+    this._overlayFirstColumn = 0;
+  }
+
+  _refreshOverlayLineCount() {
+    if (!this._overlayAttached) return;
+    this._overlayLineCount = this._countOverlayLines();
+  }
+
+  _countOverlayLines() {
+    const columns = Math.max(1, Number(this._terminal?.cols) || 80);
+    let lineCount = countWrappedRows(this._overlayTitle, columns, this._overlayFirstColumn);
+    for (const line of this._overlayLines) {
+      lineCount += countWrappedRows(line, columns);
+    }
+    return lineCount;
   }
 
   write(status, detail = "") {
@@ -232,11 +270,14 @@ export class TerminalStatusAddon {
     presentation = STATUS_PRESENTATION.LIFECYCLE,
   }) {
     const normalized = normalizeLines(lines);
-    const lineCount = 1 + normalized.length;
     const shouldErasePrevious = this._hasProgressBlock() || this._hasAttachedStatus(status);
     // 断开/失败提示前始终补一个换行：即使光标已在行首，也与上方会话输出
     // 之间留出空行分隔；仅在覆盖前一块状态（重连进度等）时不追加。
     const shouldStartOnNewLine = leadingNewline && !shouldErasePrevious;
+    const startsAtBlockOrigin = clearTerminal || shouldErasePrevious || shouldStartOnNewLine;
+    const firstColumn = startsAtBlockOrigin
+      ? 0
+      : Number(this._terminal?.buffer?.active?.cursorX) || 0;
     const prefix = `${clearTerminal ? CLEAR_TERMINAL : ""}${
       shouldErasePrevious ? erasePreviousBlock(this._overlayLineCount) : ""
     }${shouldStartOnNewLine ? "\r\n" : ""}`;
@@ -246,7 +287,10 @@ export class TerminalStatusAddon {
       titleColor,
       lineColor,
     })}`;
-    this._overlayLineCount = lineCount;
+    this._overlayTitle = title;
+    this._overlayLines = normalized;
+    this._overlayFirstColumn = firstColumn;
+    this._overlayLineCount = this._countOverlayLines();
     this._overlayAttached = true;
     this._overlayPresentation = presentation;
     this._overlayStatus = status;

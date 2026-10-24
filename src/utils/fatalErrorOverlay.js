@@ -4,6 +4,8 @@
  * 同一页面生命周期内只叠加一次；之后的错误仅追加到详情里（保留开头，崩溃首帧堆栈最有价值）。
  */
 
+import { sliceGraphemePrefix } from "./grapheme.js";
+
 const OVERLAY_ID = "fatal-error-overlay";
 const DETAILS_LIMIT = 4000;
 
@@ -146,7 +148,10 @@ export function showFatalErrorOverlay(detail = "") {
   if (existing) {
     const details = existing.querySelector("[data-fatal-details]");
     if (details && detail) {
-      details.textContent = `${details.textContent}\n${detail}`.trim().slice(0, DETAILS_LIMIT);
+      details.textContent = sliceGraphemePrefix(
+        `${details.textContent}\n${detail}`.trim(),
+        DETAILS_LIMIT,
+      );
     }
     return;
   }
@@ -180,7 +185,7 @@ export function showFatalErrorOverlay(detail = "") {
   );
 
   if (detail) {
-    const details = h("pre", "feo-details", String(detail).slice(0, DETAILS_LIMIT));
+    const details = h("pre", "feo-details", sliceGraphemePrefix(String(detail), DETAILS_LIMIT));
     details.dataset.fatalDetails = "1";
     card.appendChild(details);
   }

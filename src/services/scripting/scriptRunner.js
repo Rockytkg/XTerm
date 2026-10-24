@@ -1,5 +1,6 @@
 import { reactive, ref } from "vue";
 import { i18n } from "../../i18n/index.js";
+import { sliceGraphemePrefix } from "../../utils/grapheme.js";
 import { createLogger } from "../../utils/logger.js";
 import { createRuntimeId } from "../../utils/runtimeIds.js";
 import { getScriptBridge } from "./bridges.js";
@@ -39,7 +40,9 @@ function stringifyLogArg(value) {
       text = String(value);
     }
   }
-  return text.length > MAX_LOG_ARG_CHARS ? `${text.slice(0, MAX_LOG_ARG_CHARS)}…` : text;
+  return text.length > MAX_LOG_ARG_CHARS
+    ? `${sliceGraphemePrefix(text, MAX_LOG_ARG_CHARS)}…`
+    : text;
 }
 
 function appendRunLog(run, ...args) {

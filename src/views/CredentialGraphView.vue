@@ -32,6 +32,7 @@ import {
   supportsSavedCredential,
 } from "../utils/connectionProtocols";
 import { isPrimaryModifier } from "../utils/platform";
+import { sliceGraphemePrefix } from "../utils/grapheme";
 import { createLogger } from "../utils/logger";
 
 const logger = createLogger("frontend.credentials.graph");
@@ -748,7 +749,7 @@ function nodeSubtitleText(properties) {
 
 function truncateText(value, maxLength) {
   const text = String(value || "");
-  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+  return text.length > maxLength ? `${sliceGraphemePrefix(text, maxLength - 1)}…` : text;
 }
 
 function estimateSvgTextWidth(value, fontSize) {

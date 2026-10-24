@@ -1,3 +1,5 @@
+import { sliceGraphemePrefix } from "./grapheme.js";
+
 const LOG_LEVEL_PRIORITY = Object.freeze({
   error: 0,
   warn: 1,
@@ -85,7 +87,7 @@ function formatLocalTimestamp(date = new Date()) {
 
 function summarizeString(value) {
   if (value.length <= 160) return value;
-  return `${value.slice(0, 157)}...`;
+  return `${sliceGraphemePrefix(value, 157)}...`;
 }
 
 function summarizeError(error) {

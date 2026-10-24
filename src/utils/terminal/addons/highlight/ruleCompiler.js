@@ -13,6 +13,36 @@ function compareMatches(left, right) {
   );
 }
 
+function createLowercaseOffsetMap(text, lowercasedText) {
+  if (text.length === lowercasedText.length) return undefined;
+
+  const startOffsets = new Array(lowercasedText.length);
+  const endOffsets = new Array(lowercasedText.length);
+  let originalOffset = 0;
+  let lowercaseOffset = 0;
+  for (const character of text) {
+    const lowercased = character.toLocaleLowerCase();
+    const originalEnd = originalOffset + character.length;
+    for (let index = 0; index < lowercased.length; index += 1) {
+      if (lowercaseOffset + index >= lowercasedText.length) return null;
+      startOffsets[lowercaseOffset + index] = originalOffset;
+      endOffsets[lowercaseOffset + index] = originalEnd;
+    }
+    lowercaseOffset += lowercased.length;
+    originalOffset = originalEnd;
+  }
+  if (lowercaseOffset !== lowercasedText.length) return null;
+  return { startOffsets, endOffsets };
+}
+
+function mapLowercaseMatch(match, offsetMap) {
+  if (!offsetMap) return match;
+  const start = offsetMap.startOffsets[match.index];
+  const end = offsetMap.endOffsets[match.index + match.length - 1];
+  if (start === undefined || end === undefined) return null;
+  return { ...match, index: start, length: end - start };
+}
+
 function splitTopLevelAlternatives(source) {
   const parts = [];
   let depth = 0;
@@ -413,11 +443,14 @@ class CompiledHighlightRuleSet {
     if (limit <= 0) return [];
     const candidateLimit = limit * MATCH_CANDIDATE_MULTIPLIER;
     const candidates = [];
-    const collectLiteralMatches = (matcher, source) => {
+    const collectLiteralMatches = (matcher, source, offsetMap) => {
       if (!matcher) return;
       const matches = [];
       matcher.search(source, matches, candidateLimit);
-      candidates.push(...matches);
+      for (const match of matches) {
+        const mapped = mapLowercaseMatch(match, offsetMap);
+        if (mapped) candidates.push(mapped);
+      }
     };
 
     // 大小写不敏感的 literal 与 regex 预筛复用同一份小写文本，避免每行重复 toLocaleLowerCase；
@@ -428,7 +461,12 @@ class CompiledHighlightRuleSet {
         : null;
 
     collectLiteralMatches(this.textMatcherCaseSensitive, text);
-    collectLiteralMatches(this.textMatcherCaseInsensitive, lowercasedText);
+    if (this.textMatcherCaseInsensitive) {
+      const offsetMap = createLowercaseOffsetMap(text, lowercasedText);
+      if (offsetMap !== null) {
+        collectLiteralMatches(this.textMatcherCaseInsensitive, lowercasedText, offsetMap);
+      }
+    }
     const regexMatches = [];
     this.regexRuleMatcher.collect(text, lowercasedText, regexMatches, candidateLimit);
     candidates.push(...regexMatches);

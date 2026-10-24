@@ -1,4 +1,5 @@
 import { i18n } from "../../i18n/index.js";
+import { sliceGraphemeSuffix } from "../../utils/grapheme.js";
 import { cancelScriptPrompts, requestScriptPrompt } from "./scriptPromptController.js";
 import { getRecordingBridge, getScriptBridge, getSessionControlBridge } from "./bridges.js";
 import { readDataFile, writeDataFile } from "./scriptFileLoader.js";
@@ -165,7 +166,7 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     if (!text) return;
     outputBuffer += text;
     if (outputBuffer.length > MAX_OUTPUT_BUFFER_CHARS) {
-      outputBuffer = outputBuffer.slice(-MAX_OUTPUT_BUFFER_CHARS / 2);
+      outputBuffer = sliceGraphemeSuffix(outputBuffer, MAX_OUTPUT_BUFFER_CHARS / 2);
     }
     for (const entry of [...pending]) {
       if (entry.kind === "wait") checkWaiter(entry);

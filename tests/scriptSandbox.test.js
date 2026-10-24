@@ -206,6 +206,22 @@ test("oversized log arguments are truncated instead of stored whole", async () =
   assert.ok(run.logs[0].text.endsWith("…"));
 });
 
+test("log truncation keeps surrogate pairs well-formed", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "log-grapheme-truncation",
+      name: "log-grapheme-truncation",
+      code: `xterm.log("x".repeat(8191) + "🙂" + "tail");`,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.equal(run.logs[0].text.isWellFormed(), true);
+  assert.equal(run.logs[0].text, `${"x".repeat(8191)}…`);
+});
+
 test("terminal interaction still works under the sandbox", async () => {
   setup();
   const runPromise = runScript(

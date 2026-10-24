@@ -1,21 +1,42 @@
-const PROGRESS_SPEED_SAMPLE_SIZE = 30;
+import { graphemeSegments } from "../../../grapheme.js";
+import { getTerminalTextWidth } from "../../unicodeWidth.js";
 
-function getDisplayLength(value) {
-  return String(value || "").replace(/[\u4e00-\u9fa5]/gu, "**").length;
+const PROGRESS_SPEED_SAMPLE_SIZE = 30;
+const SAVE_CURSOR = "\x1b7";
+const RESTORE_CURSOR_AND_CLEAR = "\x1b8\x1b[0J\x1b7";
+const CONTROL_CHARACTER_ESCAPES = {
+  "\b": "\\b",
+  "\n": "\\n",
+  "\r": "\\r",
+  "\t": "\\t",
+};
+
+function displayFileName(value) {
+  let display = "";
+  for (const character of String(value ?? "")) {
+    const codePoint = character.codePointAt(0);
+    const isControl = codePoint < 0x20 || (codePoint >= 0x7f && codePoint <= 0x9f);
+    if (!isControl) {
+      display += character;
+      continue;
+    }
+    display +=
+      CONTROL_CHARACTER_ESCAPES[character] || `\\x${codePoint.toString(16).padStart(2, "0")}`;
+  }
+  return display;
 }
 
 function ellipsizeDisplayString(value, maxLength) {
   const max = maxLength - 3;
   let length = 0;
   let text = "";
-  for (let index = 0; index < value.length; index += 1) {
-    const charLength =
-      value.charCodeAt(index) >= 0x4e00 && value.charCodeAt(index) <= 0x9fa5 ? 2 : 1;
-    if (length + charLength > max) {
+  for (const segment of graphemeSegments(value)) {
+    const segmentLength = getTerminalTextWidth(segment);
+    if (length + segmentLength > max) {
       return { text: `${text}...`, length: length + 3 };
     }
-    length += charLength;
-    text += value[index];
+    length += segmentLength;
+    text += segment;
   }
   return { text: `${text}...`, length: length + 3 };
 }
@@ -66,6 +87,9 @@ export class TextProgressBar {
     if (this._tmuxPaneColumns > 0) {
       this._tmuxPaneColumns = 0;
     }
+    if (this._firstWrite || this._fileStep < 0 || this._fileSize === undefined) return;
+    this._lastUpdateTime = 0;
+    this._showProgress();
   }
 
   onNum(count) {
@@ -74,7 +98,7 @@ export class TextProgressBar {
   }
 
   onName(name) {
-    this._fileName = name;
+    this._fileName = displayFileName(name);
     this._fileIndex += 1;
     this._startTime = Date.now();
     this._timeSamples[0] = this._startTime;
@@ -121,14 +145,11 @@ export class TextProgressBar {
     const progressText = this._getProgressText(percentage, total, speedText, etaText);
     if (this._firstWrite) {
       this._firstWrite = false;
-      this._writer(progressText);
+      const lineStart = this._tmuxPaneColumns > 0 ? `\x1b[${this._columns}D\x1b[2K` : "\r\x1b[2K";
+      this._writer(`${lineStart}${SAVE_CURSOR}${progressText}`);
       return;
     }
-    if (this._tmuxPaneColumns > 0) {
-      this._writer(`\x1b[${this._columns}D${progressText}`);
-    } else {
-      this._writer(`\r${progressText}`);
-    }
+    this._writer(`${RESTORE_CURSOR_AND_CLEAR}${progressText}`);
   }
 
   _getSpeed(now) {
@@ -156,7 +177,7 @@ export class TextProgressBar {
       this._fileCount > 1
         ? `(${this._fileIndex}/${this._fileCount}) ${this._fileName}`
         : this._fileName;
-    let leftLength = getDisplayLength(left);
+    let leftLength = getTerminalTextWidth(left);
     let right = ` ${percentage} | ${total} | ${speed} | ${eta}`;
 
     progressLayout: {
@@ -200,7 +221,11 @@ export class TextProgressBar {
       barLength -= leftLength + 1;
       left += " ";
     }
-    return (left + this._getProgressBar(barLength) + right).trim();
+    const progressText = (left + this._getProgressBar(barLength) + right).trim();
+    if (barLength >= 12 || getTerminalTextWidth(progressText) <= this._columns) {
+      return progressText;
+    }
+    return "";
   }
 
   _getProgressBar(length) {
@@ -212,7 +237,6 @@ export class TextProgressBar {
   }
 
   onDone() {
-    if (this._fileSize === 0) return;
     this._fileStep = this._fileSize;
     this._lastUpdateTime = 0;
     this._showProgress();
