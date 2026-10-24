@@ -35,6 +35,8 @@ const props = defineProps({
   onDownload: { type: Function, default: null },
   // 库内子资源下载（如邮件附件）的回调：{ name, contentBase64 }
   onDownloadResource: { type: Function, default: null },
+  // 子资源读取或保存失败时上抛；开始下一次下载时以 null 清除旧错误。
+  onResourceError: { type: Function, default: null },
   theme: { type: String, default: "light" },
 });
 
@@ -75,20 +77,26 @@ const toolbar = {
 // 预览库所有下载入口（各插件失败回退的 <a href="blob:..." download>、文本插件"下载"按钮
 // 的程序化 link.click()——该 link 挂在 document.body 上、不经过本组件 DOM）在 Tauri
 // webview 中都会无提示写入系统下载目录。组件存活期间在 document 捕获阶段统一拦截：
-// download 名与当前文件一致的走 onDownload（后端 SFTP 传输），其余是预览内部子资源
-// （如邮件附件），取 blob 字节经 onDownloadResource 交后端保存对话框落盘。
+// 邮件附件优先按子资源处理（即使与主文件同名），其余同名链接走 onDownload（后端 SFTP
+// 传输）；子资源取 blob 字节经 onDownloadResource 交后端保存对话框落盘。
+let disposed = false;
+
 async function routeDownload(anchor) {
   const name = anchor.getAttribute("download");
-  if (!name || name === props.fileName) {
+  const isEmailAttachment = !!anchor.closest(".ofv-email-attachment-item");
+  if (!name || (!isEmailAttachment && name === props.fileName)) {
     props.onDownload?.();
     return;
   }
   if (!props.onDownloadResource) return;
+  props.onResourceError?.(null);
   try {
     const bytes = new Uint8Array(await (await fetch(anchor.href)).arrayBuffer());
-    props.onDownloadResource({ name, contentBase64: bytesToBase64(bytes) });
+    if (disposed) return;
+    await props.onDownloadResource({ name, contentBase64: bytesToBase64(bytes) });
   } catch (error) {
-    logger.warn("preview.resource.read_failed", error);
+    logger.warn("preview.resource.download_failed", error);
+    if (!disposed) props.onResourceError?.(error);
   }
 }
 
@@ -106,6 +114,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
   document.removeEventListener("click", handleDownloadClick, true);
 });
 </script>

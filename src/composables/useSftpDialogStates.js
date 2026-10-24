@@ -85,15 +85,7 @@ export function useSftpDialogStates({ t }) {
   }
 
   function requestOverwriteEditorAction(payload) {
-    return new Promise((resolve) => {
-      resolvePendingDirtyEditorDialog();
-      dirtyEditorDialog.value = {
-        kind: "overwrite",
-        open: true,
-        resolver: resolve,
-        tab: payload.tab || null,
-      };
-    });
+    return requestDirtyEditorAction({ ...payload, kind: "overwrite" });
   }
 
   function requestUploadConflictAction(payload) {
@@ -150,15 +142,9 @@ export function useSftpDialogStates({ t }) {
     if (!value) resolveConflictAction(conflictDialog.value.kind === "rename" ? "cancel" : "skip");
   }
 
-  // The pane can be destroyed (key rebuild) while a dialog promise is still
-  // pending; resolve with each dialog's cancel semantics so callers never hang.
   onBeforeUnmount(() => {
-    if (dirtyEditorDialog.value.open) {
-      resolveDirtyEditorAction(dirtyEditorDialog.value.kind === "overwrite" ? false : "cancel");
-    }
-    if (conflictDialog.value.open) {
-      resolveConflictAction(conflictDialog.value.kind === "rename" ? "cancel" : "skip");
-    }
+    resolvePendingDirtyEditorDialog();
+    resolvePendingConflictDialog();
   });
 
   return {

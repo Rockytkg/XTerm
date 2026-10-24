@@ -56,7 +56,7 @@ export function createAsyncListenerRegistry() {
 
 // 单个异步监听（如 getCurrentWindow().onDragDropEvent）的挂载生命周期：
 // register 是异步的，attach 可能连续触发，用 in-flight Promise 去重避免重复注册；
-// detach 在 attach 在途时等其 settle 后再取消，否则新注册的监听会残留。
+// attachRequested 记录最终挂载目标，attach→detach→attach 不会被旧 detach 回调误取消。
 // 调用方只提供订阅动作与挂载条件，日志文案经 onSubscribeError 保留在调用方。
 export function createAsyncListenerLifecycle({
   canAttach = () => true,
@@ -66,8 +66,11 @@ export function createAsyncListenerLifecycle({
   const registry = createAsyncListenerRegistry();
   let unlisten = null;
   let attachPromise = null;
+  let attachRequested = false;
 
   function attach() {
+    if (registry.disposed) return Promise.resolve();
+    attachRequested = true;
     if (unlisten || !canAttach()) return Promise.resolve();
     if (attachPromise) return attachPromise;
     let registration;
@@ -89,9 +92,10 @@ export function createAsyncListenerLifecycle({
   }
 
   function detach() {
+    attachRequested = false;
     if (attachPromise) {
       void attachPromise.then(() => {
-        release();
+        if (!attachRequested) release();
       });
       return;
     }
@@ -102,8 +106,8 @@ export function createAsyncListenerLifecycle({
     const current = unlisten;
     unlisten = null;
     if (!current) return;
-    current();
-    // 单独取消后同步移出注册表，避免重新 attach 后 dispose 重复调用旧的 unlisten
+    // dispose 已统一取消注册表内监听；在途 attach 随后 settle 时不能重复调用。
+    if (!registry.disposed) current();
     registry.remove(current);
   }
 

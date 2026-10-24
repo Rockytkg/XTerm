@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use russh_sftp::protocol::OpenFlags;
 use std::time::Duration;
 use tauri::AppHandle;
 use tokio::io::AsyncWriteExt;
@@ -15,8 +16,8 @@ use crate::{
             SftpWriteFileRequest,
         },
         sftp::{
-            delete_remote_path, ensure_remote_dir, join_remote_path, read_remote_file_bytes,
-            remote_file_kind, remote_modified_timestamp, remote_parent_path, rename_remote_path,
+            delete_remote_path, join_remote_path, read_remote_file_bytes, remote_file_kind,
+            remote_modified_timestamp, remote_parent_path, rename_remote_path,
             resolve_remote_child_path, resolve_remote_input_path, sftp_file_stat_result,
             sniff_remote_file_mime, sort_sftp_entries, SftpNameConflictAction, SFTP_EDIT_MAX_BYTES,
             SFTP_PREVIEW_MAX_BYTES,
@@ -152,7 +153,11 @@ pub(crate) async fn sftp_create_dir(
     let path = resolve_remote_child_path(&request.parent_path, &request.name)?;
     sftp_session
         .run_with_timeout(SFTP_COMMAND_TIMEOUT, move |sftp| {
-            Box::pin(async move { ensure_remote_dir(sftp, &path).await })
+            Box::pin(async move {
+                sftp.create_dir(path.clone())
+                    .await
+                    .map_err(|error| format!("failed to create remote directory '{path}': {error}"))
+            })
         })
         .await
 }
@@ -176,7 +181,10 @@ pub(crate) async fn sftp_create_file(
         .run_with_timeout(SFTP_COMMAND_TIMEOUT, move |sftp| {
             Box::pin(async move {
                 let mut file = sftp
-                    .create(path.clone())
+                    .open_with_flags(
+                        path.clone(),
+                        OpenFlags::CREATE | OpenFlags::WRITE | OpenFlags::EXCLUDE,
+                    )
                     .await
                     .map_err(|error| format!("failed to create remote file '{path}': {error}"))?;
                 file.shutdown()

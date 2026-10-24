@@ -125,6 +125,13 @@ async function browseDirectory() {
       t("sidebar.fileService.chooseDirectory"),
     );
     if (selected) await workspace.updateFileServiceSharedDir(selected);
+  } catch (error) {
+    logger.error("file_service.shared_dir.update.failed", error);
+    showToast({
+      type: "error",
+      title: t("notifications.fileServiceOperationFailed"),
+      message: String(error),
+    });
   } finally {
     savingDirectory.value = false;
   }

@@ -4,11 +4,8 @@ import {
   isSameOrChildPath,
   normalizeRemotePath,
 } from "./sftpDragNavigation";
-import {
-  NAME_CONFLICT_ACTION,
-  renameRemoteEntry,
-  resolveNameConflict,
-} from "./sftpRemoteOperations";
+import { NAME_CONFLICT_ACTION, resolveNameConflict } from "./sftpRemoteOperations";
+import { renameRemoteSftp } from "../services/sftp";
 import { createRafThrottle } from "../utils/schedulers";
 
 const LEFT_MOUSE_BUTTON = 0;
@@ -114,6 +111,7 @@ export function useSftpMoveDrag({
   }
 
   function resetDragState() {
+    if (activeDrag) activeDrag.active = false;
     clearPendingPress();
     navigator.reset();
     updateActiveDragFromPointer.cancel();
@@ -145,11 +143,12 @@ export function useSftpMoveDrag({
 
   function cancelDrag() {
     resetDragState();
+    suppressClick = false;
   }
 
   async function commitMove(drag) {
-    const session = sessionSnapshot();
-    if (isStaleSession(session)) return;
+    const session = drag.session;
+    if (!session || isStaleSession(session)) return;
     const destinationDirectory = drag.destinationDirectory || remotePath.value;
     const sourceDirectory = drag.sourceDirectory || remotePath.value;
     const fromPath = drag.entry.path;
@@ -184,14 +183,14 @@ export function useSftpMoveDrag({
         return;
       }
       if (isStaleSession(session)) return;
-      await renameRemoteEntry({
-        connectionId: session.connectionId,
-        sessionId: session.sessionId,
+      await renameRemoteSftp(
+        session.connectionId,
+        session.sessionId,
         fromPath,
-        toParentPath: destinationDirectory,
-        toName: drag.entry.name,
-        conflictAction: conflict.action,
-      });
+        destinationDirectory,
+        drag.entry.name,
+        conflict.action,
+      );
       if (isStaleSession(session)) return;
       await refreshCurrentDirectoryIncremental();
     } catch (error) {
@@ -207,22 +206,29 @@ export function useSftpMoveDrag({
       return;
     }
     const drag = activeDrag;
-    drag.active = false;
     resetDragState();
     if (!drag.dropAllowed) return;
     await commitMove(drag);
   }
 
   function beginDrag() {
-    if (!pendingPress || !props.connection || !props.sessionId) return;
-    const { entry, row, x, y } = pendingPress;
+    if (!pendingPress) return;
+    const { entry, row, session, sourceDirectory, x, y } = pendingPress;
+    if (
+      isStaleSession(session) ||
+      normalizeRemotePath(sourceDirectory) !== normalizeRemotePath(remotePath.value)
+    ) {
+      clearPendingPress();
+      return;
+    }
     clearPendingPress();
 
     activeDrag = {
       active: true,
       entry,
-      sourceDirectory: remotePath.value,
-      destinationDirectory: remotePath.value,
+      session,
+      sourceDirectory,
+      destinationDirectory: sourceDirectory,
       dropAllowed: true,
     };
     selectedNames.value = new Set([entry.name]);
@@ -266,18 +272,15 @@ export function useSftpMoveDrag({
     if (event.button !== LEFT_MOUSE_BUTTON) return;
     event.preventDefault();
     event.stopPropagation();
+    updateActiveDragFromPointer(event.clientX, event.clientY);
     updateActiveDragFromPointer.flush();
     finishDrag();
   }
 
   function onMoveMouseDown(event) {
-    if (
-      event.button !== LEFT_MOUSE_BUTTON ||
-      !props.visible ||
-      loading.value ||
-      inlineEdit.value.active
-    )
-      return;
+    if (event.button !== LEFT_MOUSE_BUTTON) return;
+    suppressClick = false;
+    if (!props.visible || loading.value || inlineEdit.value.active) return;
     const row = event.target?.closest?.(".sftp-move-draggable");
     if (!row || !tableBodyRef.value?.contains(row)) return;
 
@@ -285,10 +288,13 @@ export function useSftpMoveDrag({
     if (!entry || entry.name === "..") return;
 
     event.preventDefault();
+    row.focus({ preventScroll: true });
     clearPendingPress();
     pendingPress = {
       entry: { ...entry },
       row,
+      session: sessionSnapshot(),
+      sourceDirectory: remotePath.value,
       x: event.clientX,
       y: event.clientY,
     };

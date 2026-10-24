@@ -897,6 +897,7 @@ export default {
     remotePath: "Remote path",
     transferQueue: "Transfer queue",
     transferDone: "Done",
+    queued: "Queued",
     pauseTransfer: "Pause transfer",
     pausing: "Pausing",
     paused: "Paused",
@@ -916,8 +917,9 @@ export default {
     chooseUploadTitle: "Choose files to upload",
     uploadOverwriteAction: "Overwrite",
     uploadOverwriteMessage:
-      'A file named "{name}" already exists in the target directory. Choose overwrite, resume from the remote file size, or skip this file.',
+      'An item named "{name}" already exists in the target directory. Choose overwrite, resume, or skip this item.',
     uploadOverwriteTitle: "Target exists: {name}",
+    uploadDuplicateTarget: 'Duplicate target "{name}" in this batch. The duplicate was skipped.',
     uploadResumeAction: "Resume",
     uploadSkipAction: "Skip",
     renameConflictTitle: "Name already exists: {name}",

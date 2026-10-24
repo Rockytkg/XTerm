@@ -20,6 +20,7 @@ export function createSftpSessionScope(props) {
       !session ||
       !session.connectionId ||
       !session.sessionId ||
+      !connectionCan(props.connection, "sftp") ||
       props.connection?.id !== session.connectionId ||
       props.sessionId !== session.sessionId
     );

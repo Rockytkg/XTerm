@@ -53,7 +53,7 @@ const MODIFIED_TIME_CACHE_LIMIT = 256;
 const modifiedTimeCache = new Map();
 
 function formatModified(seconds) {
-  if (!seconds) return "-";
+  if (seconds == null) return "-";
   const cached = modifiedTimeCache.get(seconds);
   if (cached !== undefined) return cached;
   const formatted = new Date(seconds * 1000).toLocaleString();
@@ -146,7 +146,7 @@ const {
 } = useSftpBrowser({
   props,
   t,
-  dismissContextMenu,
+  closeContextMenu: dismissContextMenu,
   requestRenameConflictAction,
 });
 
@@ -455,7 +455,7 @@ const { moveDragActive, moveDropTargetPath, onMoveMouseDown, suppressMoveClick, 
     loading,
     errorMessage,
     refreshRemote,
-    dismissContextMenu,
+    closeContextMenu: dismissContextMenu,
     requestRenameConflictAction,
     t,
   });
@@ -540,16 +540,12 @@ function downloadOpenFile(file) {
 }
 
 // 预览内部子资源（如邮件附件）没有远端路径，内容已在前端：经保存对话框落盘
-async function downloadPreviewResource({ name, contentBase64 }) {
-  try {
-    await saveSftpPreviewResource({
-      defaultFileName: name,
-      contentBase64,
-      title: t("sftp.chooseDownloadTitle"),
-    });
-  } catch (error) {
-    errorMessage.value = `${t("sftp.preview.saveFailed")}: ${String(error?.message || error)}`;
-  }
+function downloadPreviewResource({ name, contentBase64 }) {
+  return saveSftpPreviewResource({
+    defaultFileName: name,
+    contentBase64,
+    title: t("sftp.chooseDownloadTitle"),
+  });
 }
 
 // 双击/回车的默认打开方式：目录进入，可编辑文本进编辑器，其余进预览

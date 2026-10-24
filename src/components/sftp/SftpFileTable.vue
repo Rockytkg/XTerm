@@ -70,10 +70,14 @@ const visibleRange = computed(() => {
     return { start: 0, end: rows.value.length, top: 0, bottom: 0 };
   }
 
-  const firstVisible = Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN_ROWS);
   const visibleCount =
     Math.ceil(Math.max(ROW_HEIGHT, viewportHeight.value - ROW_HEIGHT) / ROW_HEIGHT) +
     OVERSCAN_ROWS * 2;
+  const maxStart = Math.max(0, rows.value.length - visibleCount);
+  const firstVisible = Math.min(
+    maxStart,
+    Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN_ROWS),
+  );
   const end = Math.min(rows.value.length, firstVisible + visibleCount);
   return {
     start: firstVisible,
@@ -129,7 +133,7 @@ onBeforeUnmount(() => {
       :ref="setBrowserRef"
       class="sftp-browser"
       @click="$emit('clearSelection', $event)"
-      @dragover.prevent="$emit('domDragOver', $event)"
+      @dragover="$emit('domDragOver', $event)"
       @dragleave="$emit('domDragLeave', $event)"
       @drop="$emit('domDrop', $event)"
       @scroll="updateViewport"
@@ -275,7 +279,7 @@ onBeforeUnmount(() => {
               </div>
               <div
                 v-else-if="row.type === 'creating'"
-                class="sftp-row is-selected is-editing sftp-row-selected sftp-row-editing"
+                class="sftp-row sftp-row-selected sftp-row-editing"
                 :class="{ 'is-dir': creatingFolder }"
                 role="row"
                 :data-row-key="row.key"

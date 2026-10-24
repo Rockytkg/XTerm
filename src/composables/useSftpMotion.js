@@ -83,12 +83,14 @@ export function useSftpMotion({
 
   function animateRows() {
     const rows = visibleRows(tableBodyRef.value);
-    if (!rows.length) {
-      previousRowKeys = new Set();
-      return;
+    const nextKeys = new Set(
+      (filteredRemoteFiles.value || []).map((entry) => entry.path).filter(Boolean),
+    );
+    for (const row of rows) {
+      const key = rowKey(row);
+      if (key) nextKeys.add(key);
+      if (row.dataset.rowKey) nextKeys.add(row.dataset.rowKey);
     }
-
-    const nextKeys = new Set(rows.map((row) => rowKey(row)).filter(Boolean));
     const enteringRows = rows.filter((row) => {
       const key = rowKey(row);
       return key && !previousRowKeys.has(key);

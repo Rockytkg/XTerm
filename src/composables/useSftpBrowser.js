@@ -4,32 +4,20 @@ import {
   createRemoteSftpFile,
   deleteRemoteSftp,
   listRemoteSftp,
+  renameRemoteSftp,
 } from "../services/sftp";
 import { normalizeRemotePath } from "./sftpDragNavigation";
 import {
   loadRemoteEntriesByName,
   NAME_CONFLICT_ACTION,
   remoteNameFromPath,
-  renameRemoteEntry,
   resolveNameConflict,
 } from "./sftpRemoteOperations";
 import { createSftpSessionScope } from "./sftpSessionScope";
 import { createLogger } from "../utils/logger";
-import { connectionCan } from "../utils/connectionCapabilities";
 
 const logger = createLogger("frontend.sftp.browser");
 const SFTP_ROW_ANIMATION_MS = 700;
-
-function sortRemoteEntries(entries) {
-  // 小写 key 每条目只算一次，避免 O(N log N) 次比较里重复 toLowerCase。
-  const keyed = entries.map((entry) => ({
-    entry,
-    rank: entry.kind === "dir" ? 0 : 1,
-    nameKey: entry.name.toLowerCase(),
-  }));
-  keyed.sort((a, b) => a.rank - b.rank || a.nameKey.localeCompare(b.nameKey));
-  return keyed.map(({ entry }) => entry);
-}
 
 function sameRemoteEntry(previous, next) {
   return (
@@ -102,7 +90,6 @@ export function useSftpBrowser({
   });
 
   let remoteRequestId = 0;
-  let initializedSessionKey = "";
   let reconcileAnimationTimer = 0;
 
   const { currentSession, isDisposed, isStaleSession, setDisposed } = createSftpSessionScope(props);
@@ -177,12 +164,11 @@ export function useSftpBrowser({
     }, SFTP_ROW_ANIMATION_MS);
   }
 
-  function reconcileRemoteEntries(nextEntries, options = {}) {
+  function reconcileRemoteEntries(nextEntries) {
     if (sameRemoteEntries(remoteFiles.value, nextEntries || [])) {
       return false;
     }
 
-    const animate = options.animate !== false;
     const previousByPath = new Map(
       remoteFiles.value.map((entry) => [normalizeRemotePath(entry.path), entry]),
     );
@@ -195,27 +181,22 @@ export function useSftpBrowser({
       previousByPath.delete(path);
       if (!previous) {
         changed = true;
-        next.push(normalizeEntry(rawEntry, animate ? "added" : ""));
+        next.push(normalizeEntry(rawEntry, "added"));
       } else if (sameRemoteEntry(previous, rawEntry)) {
         next.push(previous.animation ? { ...previous, animation: "" } : previous);
       } else {
         changed = true;
-        next.push(normalizeEntry(rawEntry, animate ? "updated" : ""));
+        next.push(normalizeEntry(rawEntry, "updated"));
       }
     }
 
     if (previousByPath.size) changed = true;
     if (!changed) return false;
 
-    remoteFiles.value = sortRemoteEntries(next);
-    if (options.clearSelection !== false) {
-      const names = new Set(remoteFiles.value.map((entry) => entry.name));
-      selectedNames.value = new Set([...selectedNames.value].filter((name) => names.has(name)));
-    }
-    if (options.selectName) {
-      selectedNames.value = new Set([options.selectName]);
-    }
-    if (animate) scheduleClearReconcileAnimations();
+    remoteFiles.value = next;
+    const names = new Set(remoteFiles.value.map((entry) => entry.name));
+    selectedNames.value = new Set([...selectedNames.value].filter((name) => names.has(name)));
+    scheduleClearReconcileAnimations();
     return true;
   }
 
@@ -341,6 +322,10 @@ export function useSftpBrowser({
     const session = currentSession(remotePath.value);
     if (!session) return;
     const edit = inlineEdit.value;
+    if (edit.mode === "rename" && edit.value === edit.originalName) {
+      cancelInlineEdit();
+      return;
+    }
     const nextName = edit.value.trim();
     if (!nextName) {
       cancelInlineEdit();
@@ -381,18 +366,18 @@ export function useSftpBrowser({
           nextTick(selectInlineEditText);
           return;
         }
-        await renameRemoteEntry({
-          connectionId: session.connectionId,
-          sessionId: session.sessionId,
-          fromPath: edit.originalPath,
-          toParentPath: session.path,
-          toName: nextName,
+        await renameRemoteSftp(
+          session.connectionId,
+          session.sessionId,
+          edit.originalPath,
+          session.path,
+          nextName,
           conflictAction,
-        });
+        );
       }
       if (isStaleSession(session)) return;
       cancelInlineEdit();
-      await refreshCurrentDirectoryIncremental();
+      await refreshCurrentDirectoryIncremental({ suppressError: false });
     } catch (error) {
       if (isStaleSession(session)) return;
       errorMessage.value = String(error?.message || error);
@@ -417,53 +402,49 @@ export function useSftpBrowser({
   }
 
   function submitPathEdit() {
+    if (!editingPath.value) return;
     const nextPath = editablePath.value.trim();
     editingPath.value = false;
     if (nextPath && nextPath !== remotePath.value) {
-      refreshRemote(nextPath);
+      void refreshRemote(nextPath);
     }
+  }
+
+  function remoteSessionKey() {
+    return `${props.connection?.id || ""}:${props.sessionId || ""}`;
   }
 
   async function initializeRemotePath() {
+    const sessionKey = remoteSessionKey();
+    if (sessionKey === ":") return null;
     const path = props.workingDirectory || remotePath.value || ".";
-    const loaded = await refreshRemote(path, { pathLoading: true, suppressError: true });
-    if (!loaded && !isDisposed()) {
-      await refreshRemote(".", { pathLoading: true });
+    const requestPromise = refreshRemote(path, { pathLoading: true, suppressError: true });
+    const requestId = remoteRequestId;
+    const loaded = await requestPromise;
+    if (
+      loaded !== false ||
+      requestId !== remoteRequestId ||
+      sessionKey !== remoteSessionKey() ||
+      isDisposed()
+    ) {
+      return loaded;
     }
-  }
-
-  async function initializeVisibleRemotePath() {
-    if (!props.visible) return;
-    const sessionKey = `${props.connection?.id || ""}:${props.sessionId || ""}`;
-    if (!sessionKey || sessionKey === ":") return;
-    if (initializedSessionKey === sessionKey) return;
-    await initializeRemotePath();
-    if (!isDisposed()) initializedSessionKey = sessionKey;
+    return refreshRemote(".", { pathLoading: true });
   }
 
   function createRemoteRequest(path) {
-    if (!connectionCan(props.connection, "sftp") || !props.sessionId) return;
-    return {
-      id: ++remoteRequestId,
-      connectionId: props.connection.id,
-      sessionId: props.sessionId,
-      path,
-    };
+    const session = currentSession(path);
+    if (!session) return null;
+    return { ...session, id: ++remoteRequestId };
   }
 
   function isStaleRemoteRequest(request) {
-    return (
-      isDisposed() ||
-      !request ||
-      request.id !== remoteRequestId ||
-      props.connection?.id !== request.connectionId ||
-      props.sessionId !== request.sessionId
-    );
+    return !request || request.id !== remoteRequestId || isStaleSession(request);
   }
 
   async function refreshRemote(path = remotePath.value || ".", options = {}) {
     const request = createRemoteRequest(path);
-    if (!request) return false;
+    if (!request) return null;
     logger.debug("remote.refresh.start", {
       path,
       connectionId: request.connectionId,
@@ -471,18 +452,18 @@ export function useSftpBrowser({
     });
 
     const preserveEntries = options.preserveEntries === true;
-    if (!preserveEntries) loading.value = true;
-    if (options.pathLoading) pathLoading.value = true;
+    loading.value = !preserveEntries;
+    pathLoading.value = options.pathLoading === true;
     errorMessage.value = "";
     try {
       const result = await listRemoteSftp(request.connectionId, request.sessionId, request.path);
-      if (isStaleRemoteRequest(request)) return false;
+      if (isStaleRemoteRequest(request)) return null;
 
       remotePath.value = result.path || request.path;
       remoteParent.value = result.parent || "";
       const entries = Array.isArray(result.entries) ? result.entries : [];
       if (options.incremental) {
-        reconcileRemoteEntries(entries, options);
+        reconcileRemoteEntries(entries);
       } else {
         clearReconcileAnimations();
         remoteFiles.value = entries.map((entry) => normalizeEntry(entry));
@@ -490,15 +471,15 @@ export function useSftpBrowser({
       }
       return true;
     } catch (error) {
-      if (isStaleRemoteRequest(request)) return false;
+      if (isStaleRemoteRequest(request)) return null;
       if (!options.suppressError) {
         errorMessage.value = String(error?.message || error);
       }
       return false;
     } finally {
-      if (!isStaleRemoteRequest(request)) {
-        if (!preserveEntries) loading.value = false;
-        if (options.pathLoading) pathLoading.value = false;
+      if (request.id === remoteRequestId) {
+        loading.value = false;
+        pathLoading.value = false;
       }
     }
   }
@@ -537,50 +518,50 @@ export function useSftpBrowser({
       paths: entries.map((entry) => entry.path),
     });
     deleteDialog.value = { ...deleteDialog.value, deleting: true };
+    let deleteError = "";
     try {
       await deleteRemoteSftp(
         session.connectionId,
         session.sessionId,
         entries.map((entry) => entry.path),
       );
-      if (isStaleSession(session)) return;
-      // 同 closeDeleteDialog：保留 entries 直至退出动画结束
-      deleteDialog.value = { ...deleteDialog.value, open: false, deleting: false };
-      await refreshCurrentDirectoryIncremental();
     } catch (error) {
-      if (isStaleSession(session)) return;
-      errorMessage.value = String(error?.message || error);
-      deleteDialog.value = { ...deleteDialog.value, deleting: false };
+      deleteError = String(error?.message || error);
     }
+    if (isStaleSession(session)) return;
+
+    // 批量删除可能已部分成功；失败也要同步真实剩余项，且不能让刷新覆盖原始删除错误。
+    deleteDialog.value = { ...deleteDialog.value, open: false, deleting: false };
+    await refreshCurrentDirectoryIncremental({ suppressError: Boolean(deleteError) });
+    if (deleteError) errorMessage.value = deleteError;
   }
 
   function resetBrowser() {
     remoteRequestId += 1;
-    initializedSessionKey = "";
+    clearReconcileAnimations();
     remotePath.value = ".";
+    remoteParent.value = "";
     remoteQuery.value = "";
     remoteFiles.value = [];
+    loading.value = false;
+    pathLoading.value = false;
+    errorMessage.value = "";
+    editingPath.value = false;
+    editablePath.value = "";
+    deleteDialog.value = { ...deleteDialog.value, open: false, deleting: false };
+    cancelInlineEdit();
     clearSelection();
   }
 
   onMounted(() => {
     setDisposed(false);
-    initializeVisibleRemotePath();
+    void initializeRemotePath();
   });
 
   watch([() => props.connection?.id, () => props.sessionId], () => {
     resetBrowser();
-    initializeVisibleRemotePath();
+    void initializeRemotePath();
   });
-
-  watch(
-    () => props.visible,
-    (visible) => {
-      if (visible) {
-        initializeVisibleRemotePath();
-      }
-    },
-  );
 
   onBeforeUnmount(() => {
     setDisposed(true);

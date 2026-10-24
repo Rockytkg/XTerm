@@ -1,5 +1,5 @@
 <script setup>
-import { computed, defineAsyncComponent } from "vue";
+import { computed, defineAsyncComponent, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ArrowLeft } from "@lucide/vue";
 import { formatBytes } from "../../utils/formatBytes";
@@ -35,14 +35,34 @@ const canConvertToEdit = computed(
 // 预览库内置中英文案，与应用语言一一对应
 const viewerLocale = computed(() => (locale.value === "zh-CN" ? "zh-CN" : "en-US"));
 const viewerTheme = computed(() => (props.resolvedTheme === "dark" ? "dark" : "light"));
+const resourceError = ref("");
+
+watch(
+  () => props.file?.id,
+  () => {
+    resourceError.value = "";
+  },
+);
 
 function formatMtime(file) {
-  return file?.mtime ? new Date(file.mtime * 1000).toLocaleString() : "-";
+  return file?.mtime != null ? new Date(file.mtime * 1000).toLocaleString() : "-";
 }
 
 // 预览库内部下载链接（fallback 等）经 SftpOpenFileViewer 拦截后回调到这里
 function downloadCurrentFile() {
   if (props.file) props.downloadFile(props.file);
+}
+
+function showResourceError(error) {
+  resourceError.value = error
+    ? `${t("sftp.preview.saveFailed")}: ${String(error?.message || error)}`
+    : "";
+}
+
+// 保存异常由当前预览展示；Panel 返回 Promise，不再写入列表模式下不可见的错误区。
+async function saveResource(resource) {
+  resourceError.value = "";
+  await props.downloadResource(resource);
 }
 </script>
 
@@ -64,6 +84,7 @@ function downloadCurrentFile() {
       :loading="file.loading"
       :loading-label="t('sftp.editor.loading')"
       :path="file.path"
+      :readonly="!file.contentLoaded"
       :resolved-theme="resolvedEditorTheme"
       :save-label="t('actions.save')"
       :saving="file.saving"
@@ -101,7 +122,7 @@ function downloadCurrentFile() {
             v-if="canConvertToEdit"
             type="button"
             class="sftp-button"
-            :disabled="file.loading || !!file.error"
+            :disabled="file.loading"
             @click="convertToEdit()"
           >
             {{ t("sftp.preview.edit") }}
@@ -123,10 +144,15 @@ function downloadCurrentFile() {
         </div>
       </header>
       <div
-        v-if="file.error"
+        v-if="file.error || resourceError"
         class="sftp-editor-error"
       >
-        {{ file.error }}
+        <div v-if="file.error">
+          {{ file.error }}
+        </div>
+        <div v-if="resourceError">
+          {{ resourceError }}
+        </div>
       </div>
       <div
         v-if="file.loading"
@@ -135,7 +161,7 @@ function downloadCurrentFile() {
         {{ t("sftp.editor.loading") }}
       </div>
       <div class="sftp-preview-body">
-        <template v-if="!file.loading && !file.error">
+        <template v-if="!file.loading">
           <div
             v-if="file.tooLarge"
             class="sftp-preview-fallback"
@@ -161,12 +187,14 @@ function downloadCurrentFile() {
           </div>
           <OpenFileViewer
             v-else-if="file.blob"
+            :key="file.id"
             :file="file.blob"
             :file-name="file.name"
             :locale="viewerLocale"
             :mime-type="file.mime || undefined"
             :on-download="downloadCurrentFile"
-            :on-download-resource="downloadResource"
+            :on-download-resource="saveResource"
+            :on-resource-error="showResourceError"
             :theme="viewerTheme"
           />
         </template>

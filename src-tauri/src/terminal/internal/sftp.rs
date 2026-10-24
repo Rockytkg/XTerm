@@ -206,6 +206,8 @@ struct SftpTransferRecord {
     local_path: String,
     remote_path: String,
     upload_conflict_action: SftpUploadConflictAction,
+    // 零字节进度也可能已创建/截断目标；恢复时不能仅凭 transferred 重做首次准备。
+    target_initialized: bool,
     transferred: u64,
     total: u64,
     status: SftpTransferStatus,
@@ -423,11 +425,6 @@ impl TransferProgress {
         self.emit_if_due()
     }
 
-    pub(super) fn finish(&self) {
-        let total = self.total.max(self.transferred);
-        emit_sftp_transfer_progress(&self.app, &self.transfer_id, total, total, true, None);
-    }
-
     fn transferred(&self) -> u64 {
         self.transferred
     }
@@ -634,6 +631,7 @@ async fn prepare_sftp_transfer_record(
         local_path: local_path.to_string_lossy().to_string(),
         remote_path,
         upload_conflict_action,
+        target_initialized: false,
         transferred: 0,
         total,
         status: SftpTransferStatus::Queued,
@@ -836,7 +834,7 @@ async fn upload_resumable_file(
 ) -> Result<(), String> {
     record.total = local_len;
     record.transferred = record.transferred.min(local_len);
-    if record.transferred == 0 {
+    if !record.target_initialized {
         resolve_remote_upload_target(sftp, record, local_len).await?;
     }
     sftp_transfer_store().lock().update(record);
@@ -847,8 +845,7 @@ async fn upload_resumable_file(
         record.total,
         record.transferred,
     );
-    if record.transferred >= record.total {
-        progress.finish();
+    if record.total > 0 && record.transferred >= record.total {
         return Ok(());
     }
 
@@ -867,14 +864,18 @@ async fn upload_resumable_file(
                 local_path.display()
             )
         })?;
-    let open_flags = if record.transferred == 0
-        && record.upload_conflict_action == SftpUploadConflictAction::Overwrite
-    {
-        OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE
-    } else if record.transferred == 0 {
-        OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE
-    } else {
+    let open_flags = if record.target_initialized {
         OpenFlags::CREATE | OpenFlags::WRITE
+    } else {
+        match record.upload_conflict_action {
+            SftpUploadConflictAction::Create => {
+                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE
+            }
+            SftpUploadConflictAction::Overwrite => {
+                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE
+            }
+            SftpUploadConflictAction::Resume => OpenFlags::CREATE | OpenFlags::WRITE,
+        }
     };
     let mut output = sftp
         .open_with_flags(record.remote_path.clone(), open_flags)
@@ -885,6 +886,10 @@ async fn upload_resumable_file(
                 record.remote_path
             )
         })?;
+    if !record.target_initialized {
+        record.target_initialized = true;
+        sftp_transfer_store().lock().update(record);
+    }
     output
         .seek(SeekFrom::Start(record.transferred))
         .await
@@ -902,7 +907,6 @@ async fn upload_resumable_file(
             record.remote_path
         )
     })?;
-    progress.finish();
     Ok(())
 }
 
@@ -913,7 +917,11 @@ async fn upload_resumable_directory(
     control: &SftpTransferControl,
     local_root: &Path,
 ) -> Result<(), String> {
-    prepare_remote_directory_upload_target(sftp, record).await?;
+    if !record.target_initialized {
+        prepare_remote_directory_upload_target(sftp, record).await?;
+        record.target_initialized = true;
+        sftp_transfer_store().lock().update(record);
+    }
     record.total = record.total.max(record.transferred);
     sftp_transfer_store().lock().update(record);
 
@@ -925,7 +933,6 @@ async fn upload_resumable_directory(
     );
     upload_directory_streaming(sftp, record, control, &mut progress, local_root).await?;
 
-    progress.finish();
     Ok(())
 }
 
@@ -963,7 +970,7 @@ async fn upload_directory_streaming(
             update_streaming_total(record, progress, discovered_total);
 
             let next_completed = completed_before_file.saturating_add(file.size);
-            if record.transferred >= next_completed {
+            if file.size > 0 && record.transferred >= next_completed {
                 completed_before_file = next_completed;
                 continue;
             }
@@ -971,7 +978,7 @@ async fn upload_directory_streaming(
             let file_offset =
                 upload_file_resume_offset(sftp, record, progress, &file, completed_before_file)
                     .await?;
-            if record.transferred >= next_completed {
+            if file.size > 0 && record.transferred >= next_completed {
                 completed_before_file = next_completed;
                 continue;
             }
@@ -1083,7 +1090,6 @@ async fn download_resumable_file(
             local_path.display()
         )
     })?;
-    progress.finish();
     Ok(())
 }
 
@@ -1124,14 +1130,7 @@ async fn download_resumable_directory(
                 )
             })?;
     }
-    if record.total == 0 {
-        progress.finish();
-        return Ok(());
-    }
-
     download_planned_files(sftp, record, control, &mut progress, tree.files).await?;
-
-    progress.finish();
     Ok(())
 }
 
@@ -1146,7 +1145,7 @@ async fn download_planned_files(
     for file in files {
         control.checkpoint().map_err(stop_to_string)?;
         let next_completed = completed_before_file.saturating_add(file.size);
-        if record.transferred >= next_completed {
+        if file.size > 0 && record.transferred >= next_completed {
             completed_before_file = next_completed;
             continue;
         }
@@ -1430,6 +1429,20 @@ async fn read_sorted_local_directory(
     Ok(output)
 }
 
+fn local_child_path(local_directory: &Path, name: &str) -> Result<PathBuf, String> {
+    let mut components = Path::new(name).components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(component)), None)
+            if component == std::ffi::OsStr::new(name) =>
+        {
+            Ok(local_directory.join(name))
+        }
+        _ => Err(format!(
+            "remote entry name is not a safe local path component: {name:?}"
+        )),
+    }
+}
+
 async fn collect_remote_tree(
     sftp: &RusshSftpSession,
     remote_root: &str,
@@ -1445,13 +1458,13 @@ async fn collect_remote_tree(
                 format!("failed to read remote directory '{remote_directory}': {error}")
             })?;
         for entry in entries {
-            let name = entry.file_name().to_string();
+            let name = entry.file_name();
             if name == "." || name == ".." {
                 continue;
             }
+            let local_path = local_child_path(&local_directory, &name)?;
             let metadata = entry.metadata();
             let remote_path = join_remote_path(&remote_directory, &name);
-            let local_path = local_directory.join(&name);
             if metadata.file_type().is_dir() {
                 tree.directories.push(local_path.clone());
                 pending.push((remote_path, local_path));
@@ -1642,7 +1655,7 @@ pub(super) fn sftp_file_stat_result(
 
 const SFTP_SNIFF_MAX_BYTES: u64 = 8192;
 
-// 读取远端小文件到内存：resolve + stat + 目录/大小上限校验 + 全量读，
+// 读取远端小文件到内存：resolve + stat + 目录/大小上限校验 + 限长读，
 // 编辑（sftp_read_file）与预览（sftp_read_file_bytes / sftp_read_file_base64）命令共用，
 // purpose 仅用于报错文案。返回解析后的路径与字节内容，调用方自行做 UTF-8/base64 转换。
 pub(super) async fn read_remote_file_bytes(
@@ -1666,14 +1679,21 @@ pub(super) async fn read_remote_file_bytes(
         ));
     }
 
-    let mut file = sftp
+    let file = sftp
         .open(path.clone())
         .await
         .map_err(|error| format!("failed to open remote file '{path}': {error}"))?;
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.read_to_end(&mut bytes)
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
         .await
         .map_err(|error| format!("failed to read remote file '{path}': {error}"))?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(format!(
+            "remote file '{path}' is too large to {purpose} in memory ({} bytes)",
+            bytes.len()
+        ));
+    }
     Ok((path, bytes))
 }
 
@@ -1716,17 +1736,20 @@ pub(super) fn remote_modified_timestamp(
 }
 
 pub(super) fn normalize_remote_path(path: &str) -> String {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
+    if path.is_empty() {
         return ".".to_string();
     }
-    let mut parts = Vec::new();
-    let absolute = trimmed.starts_with('/');
-    for part in trimmed.split('/') {
+    let mut parts: Vec<&str> = Vec::new();
+    let absolute = path.starts_with('/');
+    for part in path.split('/') {
         match part {
             "" | "." => {}
             ".." => {
-                parts.pop();
+                if parts.last().is_some_and(|part| *part != "..") {
+                    parts.pop();
+                } else if !absolute {
+                    parts.push(part);
+                }
             }
             value => parts.push(value),
         }
@@ -1750,7 +1773,9 @@ pub(super) fn normalize_remote_path(path: &str) -> String {
 pub(super) fn join_remote_path(base: &str, name: &str) -> String {
     if base == "/" {
         format!("/{name}")
-    } else if base == "." || base.is_empty() {
+    } else if base == "." {
+        format!("./{name}")
+    } else if base.is_empty() {
         name.to_string()
     } else {
         format!("{}/{}", base.trim_end_matches('/'), name)
@@ -1774,39 +1799,49 @@ pub(super) fn resolve_remote_child_path(parent_path: &str, name: &str) -> Result
     Ok(normalize_remote_path(&join_remote_path(&parent, &name)))
 }
 
+fn preserve_literal_tilde_path(path: String) -> String {
+    if path == "~" || path.starts_with("~/") {
+        format!("./{path}")
+    } else {
+        path
+    }
+}
+
 /// 用户可自由输入的远端路径（路径栏、重命名等 IPC 入口）允许以 ~ 开头。
 /// 服务器支持 expand-path@openssh.com（russh-sftp 3.0 起可探测）时在服务端
-/// 展开——只有服务端才知道远端 home 的真实位置；不支持时按字面路径透传，
-/// 后续调用报 no such file，行为与旧版本一致。
+/// 展开——只有服务端才知道远端 home 的真实位置；不支持时按字面路径透传。
+/// 字面 ~ 路径保留 ./ 前缀，避免列表返回后在下一次 IPC 被误当用户输入再次展开。
 pub(super) async fn resolve_remote_input_path(
     sftp: &RusshSftpSession,
     path: &str,
 ) -> Result<String, String> {
-    let trimmed = path.trim();
-    if trimmed == "~" || trimmed.starts_with("~/") {
+    if path == "~" || path.starts_with("~/") {
         if let Some(expanded) = sftp
-            .expand_path(trimmed)
+            .expand_path(path)
             .await
-            .map_err(|error| format!("failed to expand remote path '{trimmed}': {error}"))?
+            .map_err(|error| format!("failed to expand remote path '{path}': {error}"))?
         {
             return Ok(normalize_remote_path(&expanded));
         }
     }
-    Ok(normalize_remote_path(trimmed))
+    Ok(preserve_literal_tilde_path(normalize_remote_path(path)))
 }
 
 pub(super) fn remote_parent_path(path: &str) -> Option<String> {
-    if path == "/" || path == "." {
+    let normalized = normalize_remote_path(path);
+    if normalized == "/" || normalized == "." {
         return None;
     }
-    let trimmed = path.trim_end_matches('/');
-    let Some(index) = trimmed.rfind('/') else {
+    if normalized.split('/').all(|part| part == "..") {
+        return Some(format!("{normalized}/.."));
+    }
+    let Some(index) = normalized.rfind('/') else {
         return Some(".".to_string());
     };
     if index == 0 {
         Some("/".to_string())
     } else {
-        Some(trimmed[..index].to_string())
+        Some(preserve_literal_tilde_path(normalized[..index].to_string()))
     }
 }
 
@@ -1814,7 +1849,10 @@ pub(super) async fn delete_remote_path(
     sftp: &RusshSftpSession,
     remote_path: &str,
 ) -> Result<(), String> {
-    let metadata = remote_metadata(sftp, remote_path).await?;
+    let metadata = sftp
+        .symlink_metadata(remote_path.to_string())
+        .await
+        .map_err(|error| format!("failed to stat remote path '{remote_path}': {error}"))?;
     if !metadata.file_type().is_dir() {
         return delete_remote_file(sftp, remote_path).await;
     }
@@ -1915,4 +1953,97 @@ pub(super) async fn rename_remote_path(
     sftp.rename(from_path.to_string(), to_path.to_string())
         .await
         .map_err(|error| format!("failed to rename remote path '{from_path}': {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{
+        join_remote_path, local_child_path, normalize_remote_path, preserve_literal_tilde_path,
+        remote_parent_path,
+    };
+
+    #[test]
+    fn normalize_remote_path_preserves_names_and_relative_parents() {
+        assert_eq!(normalize_remote_path(""), ".");
+        assert_eq!(normalize_remote_path("~"), "~");
+        assert_eq!(normalize_remote_path("  "), "  ");
+        assert_eq!(normalize_remote_path("  file  "), "  file  ");
+        assert_eq!(normalize_remote_path("../.."), "../..");
+        assert_eq!(normalize_remote_path("../../a"), "../../a");
+        assert_eq!(normalize_remote_path("a/../../b"), "../b");
+        assert_eq!(normalize_remote_path("../a/.."), "..");
+        assert_eq!(normalize_remote_path("/../../a"), "/a");
+    }
+
+    #[test]
+    fn join_remote_path_preserves_current_directory_prefix() {
+        assert_eq!(join_remote_path(".", "~"), "./~");
+        assert_eq!(join_remote_path(".", " name "), "./ name ");
+        assert_eq!(join_remote_path("/", "~"), "/~");
+        assert_eq!(join_remote_path("dir/", "file"), "dir/file");
+    }
+
+    #[test]
+    fn literal_tilde_paths_keep_their_relative_prefix() {
+        assert_eq!(preserve_literal_tilde_path("~".to_string()), "./~");
+        assert_eq!(
+            preserve_literal_tilde_path(normalize_remote_path("./~/child")),
+            "./~/child"
+        );
+        assert_eq!(
+            preserve_literal_tilde_path("regular/path".to_string()),
+            "regular/path"
+        );
+    }
+
+    #[test]
+    fn remote_parent_path_follows_normalized_relative_parents() {
+        assert_eq!(remote_parent_path("/"), None);
+        assert_eq!(remote_parent_path("."), None);
+        assert_eq!(remote_parent_path("file").as_deref(), Some("."));
+        assert_eq!(remote_parent_path("/file").as_deref(), Some("/"));
+        assert_eq!(remote_parent_path("../file").as_deref(), Some(".."));
+        assert_eq!(remote_parent_path("..").as_deref(), Some("../.."));
+        assert_eq!(remote_parent_path("../..").as_deref(), Some("../../.."));
+        assert_eq!(remote_parent_path("./~").as_deref(), Some("."));
+        assert_eq!(remote_parent_path("./~/child").as_deref(), Some("./~"));
+    }
+
+    #[test]
+    fn local_child_path_accepts_single_normal_components_only() {
+        let root = Path::new("local-root");
+        for name in ["file.txt", "~", " leading and trailing "] {
+            assert_eq!(local_child_path(root, name).unwrap(), root.join(name));
+        }
+        for name in [
+            "",
+            ".",
+            "..",
+            "../escape",
+            "nested/child",
+            "nested//child",
+            "/absolute",
+            "trailing/",
+        ] {
+            assert!(local_child_path(root, name).is_err(), "accepted {name:?}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_child_path_rejects_windows_traversal_and_prefixes() {
+        let root = Path::new("local-root");
+        for name in [
+            r"nested\child",
+            r"..\escape",
+            r"C:\absolute",
+            r"C:relative",
+            r"\rooted",
+            "trailing\\",
+        ] {
+            assert!(local_child_path(root, name).is_err(), "accepted {name:?}");
+        }
+    }
 }

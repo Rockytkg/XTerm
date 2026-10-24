@@ -40,7 +40,13 @@ defineProps({
 
 defineEmits(["cancel", "clearCompleted", "pause", "remove", "resume", "update:isCollapsed"]);
 
-const controllableStatuses = new Set(["running", "pausing", "paused"]);
+const activeStatuses = new Set(["queued", "running", "pausing"]);
+const controllableStatuses = new Set([...activeStatuses, "paused"]);
+const terminalStatuses = new Set(["done", "failed", "canceled"]);
+
+function isActive(status) {
+  return activeStatuses.has(status);
+}
 
 function isControllable(status) {
   return controllableStatuses.has(status);
@@ -79,7 +85,7 @@ function isControllable(status) {
       <button
         type="button"
         class="sftp-text-button"
-        :disabled="!transfers.length"
+        :disabled="!transfers.some((item) => terminalStatuses.has(item.status))"
         @click="$emit('clearCompleted')"
       >
         {{ clearCompletedLabel }}
@@ -129,7 +135,7 @@ function isControllable(status) {
             <span class="sftp-queue-name-wrap">
               <span class="sftp-queue-name">{{ item.name }}</span>
               <LoaderCircle
-                v-if="item.status === 'running' || item.status === 'pausing'"
+                v-if="isActive(item.status)"
                 :size="13"
                 stroke-width="1.9"
                 class="animate-spin"
@@ -152,7 +158,7 @@ function isControllable(status) {
             </span>
             <div class="sftp-queue-actions">
               <button
-                v-if="item.status === 'running'"
+                v-if="item.status === 'queued' || item.status === 'running'"
                 type="button"
                 class="sftp-queue-action"
                 :aria-label="pauseLabel"
@@ -221,7 +227,7 @@ function isControllable(status) {
               :class="{
                 'bg-success': item.status === 'done',
                 'bg-danger': item.status === 'failed',
-                'sftp-progress-bar-active': item.status === 'running' || item.status === 'pausing',
+                'sftp-progress-bar-active': isActive(item.status),
               }"
               :style="{
                 '--sftp-progress-scale': Math.max(

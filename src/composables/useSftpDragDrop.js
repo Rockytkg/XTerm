@@ -151,7 +151,7 @@ export function useSftpDragDrop({
   );
 
   onBeforeUnmount(() => {
-    detachDragDropListener();
+    resetUploadDrag();
     dragDropListener.dispose();
   });
 

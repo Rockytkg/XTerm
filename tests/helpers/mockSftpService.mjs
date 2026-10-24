@@ -1,72 +1,104 @@
-// 测试桩：替换 src/services/sftp.js，模拟后端 IPC 立即成功返回。
-// mockSftpState 允许单个测试覆盖响应，用后必须用 resetMockSftpState 恢复默认。
+// 测试桩：替换 src/services/sftp.js。默认立即成功；handlers 可按测试注入 deferred 或错误。
 const DEFAULT_STAT = { size: 5, modified: 1700000000, mime: "text/plain" };
 
 export const mockSftpState = {
   stat: { ...DEFAULT_STAT },
   statCalls: 0,
   readCalls: 0,
+  calls: [],
+  handlers: {},
 };
 
 export function resetMockSftpState() {
   mockSftpState.stat = { ...DEFAULT_STAT };
   mockSftpState.statCalls = 0;
   mockSftpState.readCalls = 0;
+  mockSftpState.calls.length = 0;
+  mockSftpState.handlers = {};
 }
 
-export function closeSftpSession() {
-  return Promise.resolve();
+function invokeMock(name, args, fallback) {
+  mockSftpState.calls.push({ name, args });
+  const handler = mockSftpState.handlers[name];
+  return handler ? handler(...args) : fallback(...args);
 }
-export function listRemoteSftp() {
-  return Promise.resolve({ entries: [], parentPath: null, path: "/" });
+
+export async function closeSftpSession(...args) {
+  return invokeMock("closeSftpSession", args, () => undefined);
 }
-export function transferSftp() {
-  return Promise.resolve();
+
+export async function listRemoteSftp(...args) {
+  return invokeMock("listRemoteSftp", args, () => ({ entries: [], parent: null, path: "/" }));
 }
-export function listSftpTransfers() {
-  return Promise.resolve([]);
+
+export async function transferSftp(...args) {
+  return invokeMock("transferSftp", args, (request) => request.transferId || null);
 }
-export function pauseSftpTransfer() {
-  return Promise.resolve();
+
+export async function listSftpTransfers(...args) {
+  return invokeMock("listSftpTransfers", args, () => []);
 }
-export function resumeSftpTransfer() {
-  return Promise.resolve();
+
+export async function pauseSftpTransfer(...args) {
+  return invokeMock("pauseSftpTransfer", args, () => undefined);
 }
-export function cancelSftpTransfer() {
-  return Promise.resolve();
+
+export async function resumeSftpTransfer(...args) {
+  return invokeMock("resumeSftpTransfer", args, () => undefined);
 }
-export function chooseSftpDownloadPath() {
-  return Promise.resolve(null);
+
+export async function cancelSftpTransfer(...args) {
+  return invokeMock("cancelSftpTransfer", args, () => undefined);
 }
-export function chooseSftpUploadFiles() {
-  return Promise.resolve([]);
+
+export async function chooseSftpDownloadPath(...args) {
+  return invokeMock("chooseSftpDownloadPath", args, () => null);
 }
-export function deleteRemoteSftp() {
-  return Promise.resolve();
+
+export async function saveSftpPreviewResource(...args) {
+  return invokeMock("saveSftpPreviewResource", args, () => undefined);
 }
-export function createRemoteSftpDir() {
-  return Promise.resolve();
+
+export async function chooseSftpUploadFiles(...args) {
+  return invokeMock("chooseSftpUploadFiles", args, () => []);
 }
-export function createRemoteSftpFile() {
-  return Promise.resolve();
+
+export async function deleteRemoteSftp(...args) {
+  return invokeMock("deleteRemoteSftp", args, () => undefined);
 }
-export function readRemoteSftpFile() {
+
+export async function createRemoteSftpDir(...args) {
+  return invokeMock("createRemoteSftpDir", args, () => undefined);
+}
+
+export async function createRemoteSftpFile(...args) {
+  return invokeMock("createRemoteSftpFile", args, () => undefined);
+}
+
+export async function readRemoteSftpFile(...args) {
   mockSftpState.readCalls += 1;
-  return Promise.resolve("hello text");
+  return invokeMock("readRemoteSftpFile", args, () => "hello text");
 }
-export function readRemoteSftpFileBase64() {
-  return Promise.resolve("aGVsbG8=");
+
+export async function readRemoteSftpFileBase64(...args) {
+  return invokeMock("readRemoteSftpFileBase64", args, () => "aGVsbG8=");
 }
-export function readRemoteSftpFileBytes() {
-  return Promise.resolve(Uint8Array.from("hello", (char) => char.charCodeAt(0)));
+
+export async function readRemoteSftpFileBytes(...args) {
+  return invokeMock("readRemoteSftpFileBytes", args, () =>
+    Uint8Array.from("hello", (char) => char.charCodeAt(0)),
+  );
 }
-export function writeRemoteSftpFile() {
-  return Promise.resolve({ modified: 1700000001 });
+
+export async function writeRemoteSftpFile(...args) {
+  return invokeMock("writeRemoteSftpFile", args, () => ({ modified: 1700000001 }));
 }
-export function statRemoteSftpFile() {
+
+export async function statRemoteSftpFile(...args) {
   mockSftpState.statCalls += 1;
-  return Promise.resolve(mockSftpState.stat);
+  return invokeMock("statRemoteSftpFile", args, () => mockSftpState.stat);
 }
-export function renameRemoteSftp() {
-  return Promise.resolve();
+
+export async function renameRemoteSftp(...args) {
+  return invokeMock("renameRemoteSftp", args, () => undefined);
 }

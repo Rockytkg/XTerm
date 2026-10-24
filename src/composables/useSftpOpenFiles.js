@@ -32,6 +32,7 @@ export function useSftpOpenFiles({
   // tab，所有异步结果都会被守卫静默丢弃（表现为永远"正在加载"）。
   const openFile = shallowRef(null);
   const { currentSession, isStaleSession, setDisposed } = createSftpSessionScope(props);
+  let nextTabId = 0;
 
   // 异步响应只在对应文件仍打开且会话未切换时生效，避免串文件/串会话写入
   function isCurrent(tab, session) {
@@ -43,9 +44,9 @@ export function useSftpOpenFiles({
     openFile.value = { ...tab, ...patch };
   }
 
-  // patchTab 会整体替换 openFile（新对象），关闭/保存后的同一性判断需按路径+模式识别同一文件
+  // patchTab 会保留稳定的打开实例 id；同路径关闭重开也是不同实例，旧异步结果不得落入新 tab。
   function isSameOpenFile(a, b) {
-    return !!a && !!b && a.path === b.path && a.mode === b.mode;
+    return !!a && !!b && a.id === b.id;
   }
 
   // modified/mtime 用 ?? 回退：mtime 为 0（epoch）是合法值，|| 会错误回退
@@ -63,12 +64,14 @@ export function useSftpOpenFiles({
       size: entry.size,
     });
     return {
+      id: ++nextTabId,
       path: entry.path,
       name: entry.name || remoteNameFromPath(entry.path),
       mode,
       editable,
       mime,
       content: "",
+      contentLoaded: false,
       blob: null,
       savedContent: "",
       modified: entry.modified ?? null,
@@ -82,11 +85,9 @@ export function useSftpOpenFiles({
   }
 
   async function loadTextContent(path, session, knownStat) {
-    const contentPromise = readRemoteSftpFile(session.connectionId, session.sessionId, path);
-    const statPromise = knownStat
-      ? Promise.resolve(knownStat)
-      : statRemoteSftpFile(session.connectionId, session.sessionId, path);
-    const [content, stat] = await Promise.all([contentPromise, statPromise]);
+    const stat =
+      knownStat ?? (await statRemoteSftpFile(session.connectionId, session.sessionId, path));
+    const content = await readRemoteSftpFile(session.connectionId, session.sessionId, path);
     return { content, stat };
   }
 
@@ -95,24 +96,33 @@ export function useSftpOpenFiles({
       const stat = await statRemoteSftpFile(session.connectionId, session.sessionId, tab.path);
       if (!isCurrent(tab, session)) return;
       const meta = statPatch(stat, tab);
-      const tooLarge = tab.tooLarge || Number(meta.size ?? 0) > PREVIEW_BINARY_MAX_BYTES;
-      if (tooLarge) {
-        patchTab(tab, { ...meta, tooLarge: true, loading: false });
-        return;
-      }
-
       // 类型判定以内容为准：魔数嗅探命中具体类型时 mime/editable 均以嗅探结果为准
       // （覆盖扩展名映射与"转编辑"入口）；否则维持扩展名判定并吸收无扩展名的嗅探结果。
       // 嗅探为文本时保持预览模式：内容包成文本 Blob 交给预览库的文本插件渲染，
       // editable 仅驱动"转编辑"入口，不再自动切换进编辑器。
       const sniffed = resolveSniffedPreview(tab.name, meta.size, stat?.mime);
+      const mime = sniffed.mime || tab.mime;
+      const weakTextMime = stat?.mime === "text/plain" ? stat.mime : "";
+      const blobType = mime || weakTextMime;
+      const tooLarge = Number(meta.size ?? 0) > PREVIEW_BINARY_MAX_BYTES;
+      if (tooLarge) {
+        patchTab(tab, {
+          ...meta,
+          mime,
+          editable: sniffed.editable,
+          tooLarge: true,
+          loading: false,
+        });
+        return;
+      }
+
       if (sniffed.editable) {
         const { content, stat: textStat } = await loadTextContent(tab.path, session, stat);
         if (!isCurrent(tab, session)) return;
         patchTab(tab, {
           ...statPatch(textStat, meta),
-          blob: new Blob([content], { type: sniffed.mime || tab.mime || "text/plain" }),
-          mime: sniffed.mime || tab.mime,
+          blob: new Blob([content], { type: blobType || "text/plain" }),
+          mime,
           editable: true,
           tooLarge: false,
           loading: false,
@@ -129,9 +139,9 @@ export function useSftpOpenFiles({
       patchTab(tab, {
         ...meta,
         tooLarge: false,
-        mime: sniffed.mime,
-        editable: sniffed.mime ? sniffed.editable : tab.editable || sniffed.editable,
-        blob: new Blob([bytes], { type: sniffed.mime || tab.mime }),
+        mime,
+        editable: sniffed.editable,
+        blob: new Blob([bytes], { type: blobType }),
         loading: false,
         error: "",
       });
@@ -173,12 +183,9 @@ export function useSftpOpenFiles({
     const session = currentSession();
     if (!session || isStaleSession(session)) return;
 
-    // 多选传入时逐个替换，最后一个生效
-    for (const entry of files) {
-      const tab = await replaceOpenFile(entry, "preview", session);
-      if (!tab) return;
-      await loadPreviewTab(tab, session);
-    }
+    const tab = await replaceOpenFile(files[files.length - 1], "preview", session);
+    if (!tab) return;
+    await loadPreviewTab(tab, session);
   }
 
   async function openEditor(entry) {
@@ -186,8 +193,11 @@ export function useSftpOpenFiles({
 
     const existing = openFile.value;
     if (existing?.path === entry.path) {
-      if (existing.mode !== "edit") await convertToEdit();
-      return;
+      if (existing.mode !== "edit") {
+        await convertToEdit();
+        return;
+      }
+      if (existing.contentLoaded || existing.loading) return;
     }
 
     const session = currentSession();
@@ -201,6 +211,7 @@ export function useSftpOpenFiles({
       if (!isCurrent(tab, session)) return;
       patchTab(tab, {
         content,
+        contentLoaded: true,
         savedContent: content,
         ...statPatch(stat, { modified: entry.modified, mtime: entry.modified }),
         loading: false,
@@ -209,6 +220,7 @@ export function useSftpOpenFiles({
     } catch (error) {
       if (!isCurrent(tab, session)) return;
       patchTab(tab, {
+        contentLoaded: false,
         loading: false,
         error: `${t("sftp.editor.openFailed")}: ${safeMessage(error)}`,
       });
@@ -216,8 +228,8 @@ export function useSftpOpenFiles({
   }
 
   // saveEditor/convertToEdit 自身会先 patchTab（saving/loading 置位）替换 openFile，
-  // 之后的守卫不能再按对象同一性判断——按路径+模式识别同一文件的最新版本，
-  // 同时仍能拦住"被替换成别的文件"和会话切换。
+  // 之后的守卫不能再按对象同一性判断——按稳定 id 识别同一打开实例的最新版本，
+  // 同时仍能拦住"被替换成别的文件"、同路径重开和会话切换。
   function currentTab(tab, session) {
     const current = openFile.value;
     return isSameOpenFile(current, tab) && !isStaleSession(session) ? current : null;
@@ -225,7 +237,7 @@ export function useSftpOpenFiles({
 
   async function convertToEdit() {
     const tab = openFile.value;
-    if (!tab || tab.mode === "edit" || !tab.editable || tab.tooLarge) {
+    if (!tab || tab.mode === "edit" || !tab.editable || tab.tooLarge || tab.loading) {
       return false;
     }
 
@@ -239,6 +251,7 @@ export function useSftpOpenFiles({
       patchTab(current, {
         mode: "edit",
         content,
+        contentLoaded: true,
         savedContent: content,
         blob: null,
         ...statPatch(stat, current),
@@ -250,6 +263,7 @@ export function useSftpOpenFiles({
       const current = currentTab(tab, session);
       if (!current) return false;
       patchTab(current, {
+        contentLoaded: false,
         loading: false,
         error: `${t("sftp.editor.openFailed")}: ${safeMessage(error)}`,
       });
@@ -258,7 +272,9 @@ export function useSftpOpenFiles({
   }
 
   async function saveEditor(tab = openFile.value) {
-    if (!tab || tab.mode !== "edit" || tab.loading || tab.saving) return false;
+    if (!tab || tab.mode !== "edit" || !tab.contentLoaded || tab.loading || tab.saving) {
+      return false;
+    }
 
     const session = currentSession();
     if (!session || isStaleSession(session)) return false;
@@ -269,8 +285,8 @@ export function useSftpOpenFiles({
       let current = currentTab(tab, session);
       if (!current) return false;
       if (
-        current.modified &&
-        latest?.modified &&
+        current.modified != null &&
+        latest?.modified != null &&
         latest.modified !== current.modified &&
         !(await requestOverwriteAction({ kind: "overwrite", tab: current }))
       ) {
@@ -280,11 +296,14 @@ export function useSftpOpenFiles({
         return false;
       }
 
+      current = currentTab(tab, session);
+      if (!current) return false;
+      const content = current.content;
       const saved = await writeRemoteSftpFile(
         session.connectionId,
         session.sessionId,
         current.path,
-        current.content,
+        content,
       );
       current = currentTab(tab, session);
       if (!current) return false;
@@ -293,7 +312,7 @@ export function useSftpOpenFiles({
       if (!current) return false;
       const modified = saved?.modified ?? latest?.modified ?? current.modified;
       patchTab(current, {
-        savedContent: current.content,
+        savedContent: content,
         modified,
         mtime: modified,
         saving: false,
@@ -314,15 +333,14 @@ export function useSftpOpenFiles({
   async function closeEditor(tab = openFile.value) {
     if (!tab) return false;
     if (!(await confirmReplace(tab))) return false;
-    // 脏检查里选择"保存"时 saveEditor 已经 patchTab 替换过 openFile（新对象 !== tab），
-    // 不能再按对象同一性判断，否则保存后文件关不掉
+    // 保存会经 patchTab 替换对象，因此按稳定 id 关闭；同路径已重开时不得关闭新实例。
     if (isSameOpenFile(openFile.value, tab)) openFile.value = null;
     return true;
   }
 
   function updateEditorContent(content) {
     const tab = openFile.value;
-    if (!tab || tab.mode !== "edit") return;
+    if (!tab || tab.mode !== "edit" || !tab.contentLoaded) return;
     patchTab(tab, { content });
   }
 
@@ -332,12 +350,19 @@ export function useSftpOpenFiles({
     });
   }
 
-  // 重连（sessionId 变化）或换连接后，打开的文件属于已失效的旧会话：继续保留会让
+  // 重连、换连接或 SFTP 能力失效后，打开的文件属于已失效的旧会话：继续保留会让
   // 保存经 currentSession() 写入新会话的同路径文件（跨会话写），且加载中的 tab 永远
   // 停在加载态。直接丢弃；在途的加载/保存由 isCurrent 守卫自然失效。
-  watch([() => props.connection?.id, () => props.sessionId], () => {
-    openFile.value = null;
-  });
+  watch(
+    [
+      () => props.connection?.id,
+      () => props.sessionId,
+      () => Boolean(props.connection?.capabilities?.sftp),
+    ],
+    () => {
+      openFile.value = null;
+    },
+  );
 
   return {
     closeEditor,

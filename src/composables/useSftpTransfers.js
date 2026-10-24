@@ -14,17 +14,18 @@ import {
   NAME_CONFLICT_ACTION,
   resolveNameConflict,
 } from "./sftpRemoteOperations";
+import { createSftpSessionScope } from "./sftpSessionScope";
 import { createLogger } from "../utils/logger";
 import { createDebounced, createRafThrottle } from "../utils/schedulers";
 import { formatRate } from "../utils/formatBytes";
+import { createRuntimeId } from "../utils/runtimeIds.js";
 import { showToast } from "./useToasts";
 
 const logger = createLogger("frontend.sftp.transfers");
 
-const ACTIVE_TRANSFER_STATUSES = new Set(["running", "pausing", "paused"]);
+const ACTIVE_TRANSFER_STATUSES = new Set(["queued", "running", "pausing", "paused"]);
 const TERMINAL_TRANSFER_STATUSES = new Set(["done", "failed", "canceled"]);
 const MAX_TERMINAL_TRANSFERS = 50;
-const MAX_PENDING_PROGRESS_PAYLOADS = 64;
 
 function localFileName(path) {
   return (
@@ -37,7 +38,7 @@ function localFileName(path) {
 
 function makeTransferItem({ name, direction }) {
   return {
-    id: "",
+    id: createRuntimeId(),
     name,
     direction,
     progress: 0,
@@ -56,6 +57,25 @@ function transferProgress(status, transferred, total) {
   return total > 0 ? Math.min(99.8, (transferred / total) * 100) : 0;
 }
 
+function transferStatusLabel(status, t) {
+  switch (status) {
+    case "queued":
+      return t("sftp.queued");
+    case "pausing":
+      return t("sftp.pausing");
+    case "paused":
+      return t("sftp.paused");
+    case "done":
+      return t("sftp.transferDone");
+    case "canceled":
+      return t("sftp.canceled");
+    case "failed":
+      return t("sftp.failed");
+    default:
+      return "";
+  }
+}
+
 export function useSftpTransfers({
   props,
   remotePath,
@@ -67,6 +87,7 @@ export function useSftpTransfers({
   refreshCurrentDirectoryIncremental = () => {},
   t,
 }) {
+  const { currentSession, isStaleSession, setDisposed } = createSftpSessionScope(props);
   const transfers = ref([]);
   const activeTransfers = computed(
     () => transfers.value.filter((item) => ACTIVE_TRANSFER_STATUSES.has(item.status)).length,
@@ -77,19 +98,15 @@ export function useSftpTransfers({
 
   let unlistenProgress;
   let disposed = false;
-  // Progress events can arrive before runTransfer registers its transfer id;
-  // only re-queue unmatched payloads while such a registration is in flight,
-  // otherwise they are trailing/cross-session noise and must be dropped.
-  let pendingTransferRegistrations = 0;
+  let pendingTransferListRequests = 0;
+  let progressEventRevision = 0;
+  // 新任务在启动前已入列；只有恢复任务在列表快照前到达的事件需要暂存。
   const pendingProgressPayloads = new Map();
   const flushProgressPayloads = createRafThrottle(() => {
     const payloads = [...pendingProgressPayloads.values()];
     pendingProgressPayloads.clear();
     payloads.forEach((payload) => {
-      if (applyTransferProgress(payload) || pendingTransferRegistrations === 0) return;
-      if (pendingProgressPayloads.size >= MAX_PENDING_PROGRESS_PAYLOADS) {
-        pendingProgressPayloads.delete(pendingProgressPayloads.keys().next().value);
-      }
+      if (applyTransferProgress(payload) || pendingTransferListRequests === 0) return;
       pendingProgressPayloads.set(payload.transferId, payload);
     });
   });
@@ -135,11 +152,21 @@ export function useSftpTransfers({
   }
 
   function removeTransferItem(id) {
+    pendingProgressPayloads.delete(id);
     const index = transfers.value.findIndex((t) => t.id === id);
     if (index < 0) return;
     const next = [...transfers.value];
     next.splice(index, 1);
     transfers.value = next;
+  }
+
+  function showTransferError(error, name = "") {
+    const message = error?.message || String(error);
+    showToast({
+      type: "error",
+      title: t("sftp.failed"),
+      message: name ? `${name}: ${message}` : message,
+    });
   }
 
   async function runTransfer({
@@ -150,7 +177,8 @@ export function useSftpTransfers({
     remoteName,
     uploadConflictAction = NAME_CONFLICT_ACTION.CREATE,
   }) {
-    if (disposed || !props.connection?.id || !props.sessionId) return;
+    const session = currentSession();
+    if (disposed || !session) return;
     logger.info(
       "transfer.run.started",
       item.direction,
@@ -158,58 +186,48 @@ export function useSftpTransfers({
       "->",
       targetRemotePath || `${remoteParentPath}/${remoteName}`,
     );
+    const request = {
+      connectionId: session.connectionId,
+      sessionId: session.sessionId,
+      transferId: item.id,
+      direction: item.direction,
+      localPath,
+    };
+    if (item.direction === "upload") {
+      request.remoteParentPath = remoteParentPath;
+      request.remoteName = remoteName;
+      request.uploadConflictAction = uploadConflictAction;
+    } else {
+      request.remotePath = targetRemotePath;
+    }
+    transfers.value = [item, ...transfers.value];
     try {
-      const request = {
-        connectionId: props.connection.id,
-        sessionId: props.sessionId,
-        direction: item.direction,
-        localPath,
-      };
-      if (item.direction === "upload") {
-        request.remoteParentPath = remoteParentPath;
-        request.remoteName = remoteName;
-        request.uploadConflictAction = uploadConflictAction;
-      } else {
-        request.remotePath = targetRemotePath;
-      }
-      pendingTransferRegistrations += 1;
-      const transferId = await transferSftp(request).finally(() => {
-        pendingTransferRegistrations -= 1;
-      });
-      if (disposed) return;
-      if (!transferId) {
-        throw new Error("SFTP transfer did not return a transfer id.");
-      }
-      transfers.value = [{ ...item, id: transferId }, ...transfers.value];
-      const pending = pendingProgressPayloads.get(transferId);
-      if (pending) {
-        pendingProgressPayloads.delete(transferId);
-        applyTransferProgress(pending);
-      }
+      await transferSftp(request);
     } catch (error) {
-      // 启动失败时条目从未入列，仅写日志用户毫无感知；补一条错误 toast。
+      if (disposed) return;
+      const current = transfers.value.find((transfer) => transfer.id === item.id);
+      if (current && !TERMINAL_TRANSFER_STATUSES.has(current.status)) {
+        removeTransferItem(item.id);
+      }
       logger.error("transfer.run.failed", error);
-      showToast({
-        type: "error",
-        title: t("sftp.failed"),
-        message: `${item.name}: ${error?.message || String(error)}`,
-      });
+      showTransferError(error, item.name);
     }
   }
 
   function transferItemFromBackend(item) {
     const total = Number(item.total || 0);
     const transferred = Number(item.transferred || 0);
+    const status = item.status || "paused";
     return {
       id: item.transferId,
       name: item.name,
       direction: item.direction,
-      progress: transferProgress(item.status, transferred, total),
-      status: item.status || "paused",
+      progress: transferProgress(status, transferred, total),
+      status,
       transferred,
       total,
-      speed: item.status === "done" ? t("sftp.transferDone") : "0 B/s",
-      error: item.error || "",
+      speed: transferStatusLabel(status, t) || "0 B/s",
+      error: status === "canceled" ? "" : item.error || "",
       lastBytes: transferred,
       lastAt: Date.now(),
     };
@@ -217,19 +235,58 @@ export function useSftpTransfers({
 
   async function refreshTransferList() {
     if (!props.connection?.id || !props.sessionId) return;
+    const connectionId = props.connection.id;
+    const sessionId = props.sessionId;
+    const eventRevisionAtRequest = progressEventRevision;
+    const itemsAtRequest = new Map(transfers.value.map((item) => [item.id, item]));
+    pendingTransferListRequests += 1;
     try {
-      const backendTransfers = await listSftpTransfers(props.connection.id, props.sessionId);
-      if (disposed) return;
+      const backendTransfers = await listSftpTransfers(connectionId, sessionId);
+      if (disposed || props.connection?.id !== connectionId || props.sessionId !== sessionId) {
+        return;
+      }
+      flushProgressPayloads.flush();
       const merged = new Map(transfers.value.map((item) => [item.id, item]));
       for (const backendItem of backendTransfers || []) {
         const next = transferItemFromBackend(backendItem);
-        merged.set(next.id, { ...(merged.get(next.id) || {}), ...next });
+        const current = merged.get(next.id);
+        const previous = itemsAtRequest.get(next.id);
+        if (previous && !current) continue;
+        const changedSinceRequest = previous && current !== previous;
+        const receivedNewerEvent = current && (current.eventRevision || 0) > eventRevisionAtRequest;
+        const snapshotIsOlder =
+          current &&
+          (TERMINAL_TRANSFER_STATUSES.has(current.status) ||
+            next.transferred < current.transferred ||
+            next.total < current.total);
+        if (current && (changedSinceRequest || receivedNewerEvent || snapshotIsOlder)) continue;
+        merged.set(next.id, { ...(current || {}), ...next });
       }
       transfers.value = [...merged.values()];
+      for (const payload of pendingProgressPayloads.values()) {
+        if (applyTransferProgress(payload)) pendingProgressPayloads.delete(payload.transferId);
+      }
       pruneTerminalTransfers();
     } catch (error) {
       logger.debug("transfer-list.refresh.failed", error);
+    } finally {
+      pendingTransferListRequests -= 1;
+      if (pendingTransferListRequests === 0) {
+        flushProgressPayloads.cancel();
+        pendingProgressPayloads.clear();
+      }
     }
+  }
+
+  function restoreTransferControl(id, pendingItem, restorePatch, error) {
+    const current = transfers.value.find((transfer) => transfer.id === id);
+    if (current && !TERMINAL_TRANSFER_STATUSES.has(current.status)) {
+      updateTransferItem(id, {
+        ...(current === pendingItem ? restorePatch : {}),
+        error: String(error?.message || error),
+      });
+    }
+    showTransferError(error, current?.name || pendingItem?.name);
   }
 
   async function pauseTransfer(id) {
@@ -237,16 +294,12 @@ export function useSftpTransfers({
     const item = transfers.value.find((transfer) => transfer.id === id);
     if (!item || !ACTIVE_TRANSFER_STATUSES.has(item.status)) return;
     updateTransferItem(id, { status: "pausing", speed: t("sftp.pausing") });
+    const pendingItem = transfers.value.find((transfer) => transfer.id === id);
     try {
       await pauseSftpTransfer(id);
-      if (disposed) return;
     } catch (error) {
       if (disposed) return;
-      updateTransferItem(id, {
-        status: "failed",
-        error: String(error?.message || error),
-        speed: t("sftp.failed"),
-      });
+      restoreTransferControl(id, pendingItem, { status: item.status, speed: item.speed }, error);
     }
   }
 
@@ -261,50 +314,53 @@ export function useSftpTransfers({
       lastBytes: item.transferred,
       lastAt: Date.now(),
     });
+    const pendingItem = transfers.value.find((transfer) => transfer.id === id);
     try {
       await resumeSftpTransfer(id);
-      if (disposed) return;
     } catch (error) {
       if (disposed) return;
-      updateTransferItem(id, {
-        status: "failed",
-        error: String(error?.message || error),
-        speed: t("sftp.failed"),
-      });
+      restoreTransferControl(
+        id,
+        pendingItem,
+        {
+          status: item.status,
+          speed: item.speed,
+          lastBytes: item.lastBytes,
+          lastAt: item.lastAt,
+        },
+        error,
+      );
     }
   }
 
   async function cancelTransfer(id) {
     if (disposed) return;
     const item = transfers.value.find((transfer) => transfer.id === id);
-    if (!item || TERMINAL_TRANSFER_STATUSES.has(item.status)) {
-      removeTransfer(id);
-      return;
-    }
+    if (!item || TERMINAL_TRANSFER_STATUSES.has(item.status)) return;
     try {
       await cancelSftpTransfer(id);
-      if (disposed) return;
-      removeTransferItem(id);
     } catch (error) {
       if (disposed) return;
-      updateTransferItem(id, {
-        status: "failed",
-        error: String(error?.message || error),
-        speed: t("sftp.failed"),
-      });
+      restoreTransferControl(id, item, { status: item.status, speed: item.speed }, error);
     }
   }
 
-  async function startDownload() {
-    const entry = selectedEntry.value;
-    if (!entry || !props.connection) return;
+  async function startDownload(entry = selectedEntry.value) {
+    const session = currentSession();
+    if (!entry || !session) return;
 
-    const localPath = await chooseSftpDownloadPath({
-      defaultFileName: entry.name,
-      kind: entry.kind,
-      title: t("sftp.chooseDownloadTitle"),
-    });
-    if (disposed || !localPath) return;
+    let localPath;
+    try {
+      localPath = await chooseSftpDownloadPath({
+        defaultFileName: entry.name,
+        kind: entry.kind,
+        title: t("sftp.chooseDownloadTitle"),
+      });
+    } catch (error) {
+      if (!disposed && !isStaleSession(session)) showTransferError(error, entry.name);
+      return;
+    }
+    if (disposed || !localPath || isStaleSession(session)) return;
 
     await runTransfer({
       item: makeTransferItem({ name: entry.name, direction: "download" }),
@@ -313,24 +369,36 @@ export function useSftpTransfers({
     });
   }
 
-  async function uploadLocalPaths(paths, targetDirectory = remotePath.value) {
-    if (!props.connection) return;
+  async function uploadLocalPaths(
+    paths,
+    targetDirectory = remotePath.value,
+    session = currentSession(),
+  ) {
     const normalized = (Array.isArray(paths) ? paths : []).filter(Boolean);
-    if (!normalized.length) return;
+    if (!session || !normalized.length) return;
+    if (disposed || isStaleSession(session)) {
+      clearDropTarget();
+      return;
+    }
 
     const currentDirectory = remotePath.value;
     const canCheckTargetDirectory = targetDirectory === currentDirectory;
     const targetFileByName = await remoteFileMapForUploadTarget(
       targetDirectory,
       canCheckTargetDirectory,
+      session,
     );
-    if (disposed) return;
+    if (isStaleSession(session)) {
+      clearDropTarget();
+      return;
+    }
     const uploads = [];
+    const uploadTargetNames = new Set();
     for (const localPath of normalized) {
       const name = localFileName(localPath);
       const existing = targetFileByName.get(name);
       let uploadConflictAction = NAME_CONFLICT_ACTION.CREATE;
-      if (existing && existing.kind !== "dir") {
+      if (existing) {
         const conflict = await resolveNameConflict({
           sourcePath: "",
           targetFileByName,
@@ -339,10 +407,22 @@ export function useSftpTransfers({
           defaultAction: NAME_CONFLICT_ACTION.CREATE,
           skipAction: NAME_CONFLICT_ACTION.SKIP,
         });
-        if (disposed) return;
+        if (isStaleSession(session)) {
+          clearDropTarget();
+          return;
+        }
         uploadConflictAction = conflict.action;
         if (conflict.skipped) continue;
       }
+      if (uploadTargetNames.has(name)) {
+        showToast({
+          type: "error",
+          title: t("sftp.failed"),
+          message: t("sftp.uploadDuplicateTarget", { name }),
+        });
+        continue;
+      }
+      uploadTargetNames.add(name);
       uploads.push({
         localPath,
         name,
@@ -366,18 +446,17 @@ export function useSftpTransfers({
         });
       }),
     );
-    if (disposed) return;
-    clearDropTarget();
+    if (!disposed) clearDropTarget();
   }
 
-  async function remoteFileMapForUploadTarget(targetDirectory, canUseCurrentDirectory) {
+  async function remoteFileMapForUploadTarget(targetDirectory, canUseCurrentDirectory, session) {
     if (canUseCurrentDirectory) {
       return remoteFileByName.value || new Map();
     }
     try {
       return await loadRemoteEntriesByName({
-        connectionId: props.connection?.id,
-        sessionId: props.sessionId,
+        connectionId: session.connectionId,
+        sessionId: session.sessionId,
         path: targetDirectory,
       });
     } catch (error) {
@@ -388,11 +467,20 @@ export function useSftpTransfers({
 
   async function chooseAndUpload() {
     clearDropTarget();
-    const paths = await chooseSftpUploadFiles({
-      title: t("sftp.chooseUploadTitle"),
-      allFilesLabel: t("recordingDialog.allFiles"),
-    });
-    await uploadLocalPaths(paths, remotePath.value);
+    const session = currentSession();
+    const targetDirectory = remotePath.value;
+    if (!session) return;
+    let paths;
+    try {
+      paths = await chooseSftpUploadFiles({
+        title: t("sftp.chooseUploadTitle"),
+        allFilesLabel: t("recordingDialog.allFiles"),
+      });
+    } catch (error) {
+      if (!disposed && !isStaleSession(session)) showTransferError(error);
+      return;
+    }
+    await uploadLocalPaths(paths, targetDirectory, session);
   }
 
   async function downloadEntry(entry = selectedEntry.value, closeContextMenu = () => {}) {
@@ -401,7 +489,7 @@ export function useSftpTransfers({
       selectedNames.value = new Set([entry.name]);
     }
     closeContextMenu();
-    await startDownload();
+    await startDownload(entry);
   }
 
   function applyTransferProgress(payload) {
@@ -418,81 +506,68 @@ export function useSftpTransfers({
       payload?.done,
     );
 
-    if (payload.error) {
-      const canceled = payload.status === "canceled" || payload.error === "canceled";
-      // 失败/取消不标 100%：进度保留实际值，避免误显示为已完成。
-      updateTransferItem(item.id, {
-        status: canceled ? "canceled" : "failed",
-        error: payload.error,
-        speed: canceled ? t("sftp.canceled") : t("sftp.failed"),
-      });
-      return true;
-    }
-
     const now = Date.now();
     const total = Number(payload.total ?? 0);
     const transferred = Number(payload.transferred ?? 0);
-    const done = !!payload.done;
+    const canceled = payload.status === "canceled" || payload.error === "canceled";
+    const status = canceled
+      ? "canceled"
+      : payload.error
+        ? "failed"
+        : payload.status || (payload.done ? "done" : "running");
+    const done = status === "done";
+    const finalTotal = done ? Math.max(total, transferred) : total;
+    const finalTransferred = done ? Math.max(total, transferred) : transferred;
     const elapsed = Math.max(1, now - item.lastAt);
     const delta = Math.max(0, transferred - item.lastBytes);
-    const progress = transferProgress(done ? "done" : payload.status, transferred, total);
 
     updateTransferItem(item.id, {
-      total: done ? Math.max(total, transferred) : total,
-      transferred: done ? Math.max(total, transferred) : transferred,
-      progress,
-      speed:
-        payload.status === "paused"
-          ? t("sftp.paused")
-          : done
-            ? t("sftp.transferDone")
-            : formatRate(Math.round((delta * 1000) / elapsed)),
-      status: payload.status || (done ? "done" : "running"),
-      lastBytes: transferred,
+      total: finalTotal,
+      transferred: finalTransferred,
+      progress: transferProgress(status, finalTransferred, finalTotal),
+      speed: transferStatusLabel(status, t) || formatRate(Math.round((delta * 1000) / elapsed)),
+      status,
+      error: canceled ? "" : payload.error || "",
+      eventRevision: payload.eventRevision || item.eventRevision || 0,
+      lastBytes: finalTransferred,
       lastAt: now,
     });
-    if (done && !payload.error) {
-      if (item.direction === "upload") scheduleIncrementalRefresh();
-    }
+    if (done && item.direction === "upload") scheduleIncrementalRefresh();
     return true;
   }
 
   function updateTransferProgress(payload) {
     if (!payload?.transferId) return;
-    pendingProgressPayloads.set(payload.transferId, payload);
+    progressEventRevision += 1;
+    pendingProgressPayloads.set(payload.transferId, {
+      ...payload,
+      eventRevision: progressEventRevision,
+    });
     flushProgressPayloads();
   }
 
   async function removeTransfer(id) {
     if (disposed) return;
-    if (!transfers.value.some((item) => item.id === id)) return;
-    try {
-      await cancelSftpTransfer(id);
-    } catch (error) {
-      logger.debug("transfer.remove.cleanup.failed", error);
+    const item = transfers.value.find((transfer) => transfer.id === id);
+    if (!item) return;
+    if (!TERMINAL_TRANSFER_STATUSES.has(item.status)) {
+      await cancelTransfer(id);
+      return;
     }
     removeTransferItem(id);
   }
 
-  async function clearCompletedTransfers() {
+  function clearCompletedTransfers() {
     if (disposed) return;
-    const removable = transfers.value.filter((item) => !ACTIVE_TRANSFER_STATUSES.has(item.status));
-    await Promise.all(
-      removable.map((item) =>
-        cancelSftpTransfer(item.id).catch((error) => {
-          logger.debug("transfer.clear-completed.cleanup.failed", error);
-        }),
-      ),
-    );
-    if (disposed) return;
-    const next = transfers.value.filter((item) => ACTIVE_TRANSFER_STATUSES.has(item.status));
+    const next = transfers.value.filter((item) => !TERMINAL_TRANSFER_STATUSES.has(item.status));
     if (next.length === transfers.value.length) return;
+    for (const item of transfers.value) {
+      if (TERMINAL_TRANSFER_STATUSES.has(item.status)) pendingProgressPayloads.delete(item.id);
+    }
     transfers.value = next;
   }
 
   onMounted(async () => {
-    await refreshTransferList();
-    if (disposed) return;
     const unlisten = await observeTerminalEvent(
       TERMINAL_EVENTS.SFTP_TRANSFER_PROGRESS,
       updateTransferProgress,
@@ -500,12 +575,12 @@ export function useSftpTransfers({
       logger.debug("transfer-progress.observe.failed", error);
       return null;
     });
-    if (!unlisten) return;
     if (disposed) {
-      unlisten();
+      unlisten?.();
       return;
     }
-    unlistenProgress = unlisten;
+    unlistenProgress = unlisten || undefined;
+    await refreshTransferList();
   });
 
   watch(
@@ -517,6 +592,7 @@ export function useSftpTransfers({
 
   onBeforeUnmount(() => {
     disposed = true;
+    setDisposed(true);
     flushProgressPayloads.cancel();
     scheduleIncrementalRefresh.cancel();
     pendingProgressPayloads.clear();

@@ -96,6 +96,7 @@ export function createSftpDragNavigator({
       queuedEnter = { path, session };
       return;
     }
+    if (normalizeRemotePath(path) === normalizeRemotePath(remotePath.value)) return;
     navigating = true;
     try {
       const loaded = await refreshRemote(path, {
