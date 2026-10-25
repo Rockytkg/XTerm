@@ -208,8 +208,14 @@ export class LocalTrzszFilter {
     this._sendToServer(hasDirectory ? "trz -d\r" : "trz\r");
     setTimeout(() => {
       if (uploadToken !== this._uploadToken || !this._uploadFiles) return;
-      this._finishWaitingUpload(new Error("Upload does not start"));
-      this._onTransferModeChange?.(false);
+      const reject = this._uploadReject;
+      this._finishWaitingUpload();
+      const rejectUpload = () => {
+        reject?.(new Error("Upload does not start"));
+      };
+      Promise.resolve()
+        .then(() => this._onTransferModeChange?.(false))
+        .then(rejectUpload, rejectUpload);
     }, this._dragInitTimeout);
     return new Promise((resolve, reject) => {
       this._uploadResolve = resolve;
@@ -239,28 +245,36 @@ export class LocalTrzszFilter {
       uniqueId === ":1" || (uniqueId.length === 14 && uniqueId.endsWith("10"));
     this._uploadToken += 1;
     this._aborted = false;
+    const uploadResolve = this._uploadResolve;
+    const uploadReject = this._uploadReject;
     this._transfer = new TrzszTransfer({
       sendToServer: this._sendToServer,
       maxDataChunkSize: this._maxDataChunkSize,
     });
     this._onTransferModeChange?.(true);
+    let transferError = null;
     try {
       if (this._aborted) return;
       if (mode === "S") await this._download(remoteIsWindows);
       if (mode === "R") await this._upload(false, remoteIsWindows);
       if (mode === "D") await this._upload(true, remoteIsWindows);
-      if (!this._aborted) this._uploadResolve?.();
     } catch (error) {
-      if (!this._aborted) await this._transfer.clientError(error);
-      this._uploadReject?.(error);
+      if (!this._aborted) {
+        transferError = error;
+        await this._transfer.clientError(error);
+      }
     } finally {
-      this._uploadResolve = null;
-      this._uploadReject = null;
       await this._transfer.cleanup();
       this._progress?.showCursor?.();
       this._progress = null;
       this._transfer = null;
-      this._onTransferModeChange?.(false);
+      await this._onTransferModeChange?.(false);
+      if (!this._aborted) {
+        if (transferError) uploadReject?.(transferError);
+        else uploadResolve?.();
+      }
+      this._uploadResolve = null;
+      this._uploadReject = null;
     }
   }
 
