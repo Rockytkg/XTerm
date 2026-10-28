@@ -6,7 +6,8 @@ use memchr::memchr;
 
 use crate::terminal::internal::core::{
     CodecState, ConnectionReadResult, CODEC_RAW_BUFFER_CAPACITY, DETECTION_ERROR_UNLOCK_THRESHOLD,
-    DETECTION_HISTORY_MAX_BYTES, DETECTION_SAMPLE_MAX_BYTES, SERIAL_MIN_DETECT_BYTES,
+    DETECTION_HISTORY_MAX_BYTES, DETECTION_SAMPLE_MAX_BYTES, SERIAL_BARE_PROMPT_SAMPLE_SCORE,
+    SERIAL_MIN_DETECT_BYTES,
 };
 
 /// Confidence reported for a buffer that is valid UTF-8 except for a
@@ -1138,10 +1139,29 @@ pub(super) fn encode_for_backend(text: &str, codec: &CodecState) -> Vec<u8> {
     bytes.into_owned()
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum SerialPromptKind {
+    None,
+    /// The prompt line contains only marker characters (`>`, `#`, `$`, `%`,
+    /// `=>`, `>>>`, `<>`). A wrong-baud UART can occasionally emit a lone
+    /// printable byte, so one occurrence is weak evidence; the probe layer
+    /// confirms it with repeated wake-up rounds.
+    Bare,
+    /// The prompt line carries a hostname or login label (`P>`, `router#`,
+    /// `login:`). The surrounding text makes it distinctive enough to stand
+    /// on its own.
+    Named,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SerialSampleQuality {
     pub(super) confidence: f32,
     pub(super) strong_evidence: bool,
+    /// Prompt evidence stays separate from `strong_evidence`: a two-byte
+    /// hostname prompt (`P>`) is meaningful on its own even though it is
+    /// below every length-based text heuristic, while a bare marker is only
+    /// weak evidence that needs repeated confirmation.
+    pub(super) prompt: SerialPromptKind,
 }
 
 pub(super) fn analyze_serial_sample(sample: &[u8], encoding: Option<&str>) -> SerialSampleQuality {
@@ -1149,6 +1169,7 @@ pub(super) fn analyze_serial_sample(sample: &[u8], encoding: Option<&str>) -> Se
         return SerialSampleQuality {
             confidence: 0.0,
             strong_evidence: false,
+            prompt: SerialPromptKind::None,
         };
     }
 
@@ -1208,13 +1229,20 @@ pub(super) fn analyze_serial_sample(sample: &[u8], encoding: Option<&str>) -> Se
         }
     }
 
-    let prompt_evidence = looks_like_serial_prompt(text) || looks_like_login_prompt(&lower);
+    let mut prompt = classify_serial_prompt(text);
+    if prompt == SerialPromptKind::None && looks_like_login_prompt(&lower) {
+        prompt = SerialPromptKind::Named;
+    }
+    let prompt_evidence = prompt != SerialPromptKind::None;
     let device_evidence = looks_like_network_device_console(&lower);
     let ansi_evidence = sample.len() >= SERIAL_MIN_DETECT_BYTES && decoded.data.contains("\x1b[");
     let newline_evidence = decoded.data.contains('\n') || decoded.data.contains('\r');
     let meaningful_chars = chars.saturating_sub(replacement + bad_control);
     let printable_ratio = printable as f32 / chars as f32;
-    let strong_evidence = prompt_evidence
+    // A bare marker is deliberately not strong evidence: on its own it is
+    // indistinguishable from a stray printable byte at a wrong baud. It only
+    // becomes conclusive after several causal wake-up rounds.
+    let strong_evidence = prompt == SerialPromptKind::Named
         || device_evidence
         || ansi_evidence
         || (newline_evidence
@@ -1243,7 +1271,17 @@ pub(super) fn analyze_serial_sample(sample: &[u8], encoding: Option<&str>) -> Se
         - (bad_control as f32 / chars as f32) * 0.55
         - (bad_bytes as f32 / sample.len() as f32) * 0.55;
 
-    if sample.len() < SERIAL_MIN_DETECT_BYTES && !prompt_evidence {
+    // A sample that is nothing but the marker (possibly wrapped in line
+    // breaks or one pair of angle brackets) is weak evidence: cap it below
+    // the standalone reliability threshold and let the probe layer confirm
+    // it with repeated wake-ups.
+    let bare_prompt_only = prompt == SerialPromptKind::Bare
+        && decoded.data.chars().all(|ch| {
+            ch.is_whitespace() || is_bare_prompt_char(ch) || matches!(ch, '\u{0}' | '\u{7}' | '<')
+        });
+    if bare_prompt_only {
+        score = score.min(SERIAL_BARE_PROMPT_SAMPLE_SCORE);
+    } else if sample.len() < SERIAL_MIN_DETECT_BYTES && !prompt_evidence {
         score = score.min(0.35);
     } else if !has_text_structure && sample.len() < 32 {
         // A short run of printable bytes is common at a wrong baud. Require
@@ -1254,6 +1292,7 @@ pub(super) fn analyze_serial_sample(sample: &[u8], encoding: Option<&str>) -> Se
     SerialSampleQuality {
         confidence: score.clamp(0.0, 1.0),
         strong_evidence,
+        prompt,
     }
 }
 
@@ -1282,22 +1321,66 @@ fn is_terminal_byte(byte: u8) -> bool {
     )
 }
 
-fn looks_like_serial_prompt(text: &str) -> bool {
-    let line = text.lines().next_back().unwrap_or(text).trim_end();
+fn classify_serial_prompt(text: &str) -> SerialPromptKind {
+    let line = text
+        .lines()
+        .next_back()
+        .unwrap_or(text)
+        .trim_matches(['\u{0}', '\u{7}'])
+        .trim();
+    if line.is_empty() {
+        return SerialPromptKind::None;
+    }
+    if is_bare_prompt_line(line) {
+        return SerialPromptKind::Bare;
+    }
     if line.len() < 2 {
-        return false;
+        return SerialPromptKind::None;
     }
-    let body = line.trim_end_matches(['>', '#', '$', ':', ']', ')']);
+    let body = line.trim_end_matches(['>', '#', '$', '%', ':', ']', ')']);
     let body_chars = body.chars().filter(|ch| ch.is_alphanumeric()).count();
-    if line.starts_with('<') && line.ends_with('>') {
-        return body_chars >= 2;
+    let body_ascii_chars = body.chars().filter(|ch| ch.is_ascii_alphanumeric()).count();
+    let named = if line.starts_with('<') && line.ends_with('>') {
+        body_ascii_chars >= 1
+    } else {
+        match line.chars().next_back() {
+            // A one-character hostname ("P>", "p#") is a valid console
+            // prompt. The body must contain ASCII: a lone decoded CJK
+            // character followed by `>` is far more likely to be wrong-baud
+            // byte noise than a hostname.
+            Some('>' | '#' | '$' | '%') => {
+                if body.chars().count() == 1 {
+                    body_ascii_chars == 1
+                } else {
+                    body_chars >= 2 && body_ascii_chars >= 1
+                }
+            }
+            Some(']' | ')') => body_chars >= 2 && (line.contains('[') || line.contains('(')),
+            Some(':') => body_chars >= 3,
+            _ => false,
+        }
+    };
+    if named {
+        SerialPromptKind::Named
+    } else {
+        SerialPromptKind::None
     }
-    match line.chars().next_back() {
-        Some('>' | '#' | '$') => body_chars >= 2,
-        Some(']' | ')') => body_chars >= 2 && (line.contains('[') || line.contains('(')),
-        Some(':') => body_chars >= 3,
-        _ => false,
+}
+
+fn is_bare_prompt_line(line: &str) -> bool {
+    // `<>`-wrapped lines belong to the `<host>` prompt family; a bare `<>`
+    // is an empty hostname. Strip one wrapper before checking marker content.
+    if let Some(inner) = line
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        return inner.is_empty() || inner.chars().all(is_bare_prompt_char);
     }
+    !line.is_empty() && line.chars().all(is_bare_prompt_char)
+}
+
+fn is_bare_prompt_char(ch: char) -> bool {
+    matches!(ch, '>' | '#' | '$' | '%' | '=')
 }
 
 fn looks_like_login_prompt(lower: &str) -> bool {
@@ -1331,7 +1414,7 @@ fn looks_like_network_device_console(lower: &str) -> bool {
 mod tests {
     use super::{
         analyze_serial_sample, decode_backend_bytes, decode_backend_bytes_with_raw,
-        flush_decoded_backend_bytes, select_detected_encoding, RawBytesMode,
+        flush_decoded_backend_bytes, select_detected_encoding, RawBytesMode, SerialPromptKind,
     };
     use encoding_rs::Encoding;
 
@@ -1588,6 +1671,7 @@ mod tests {
     fn serial_sample_scoring_accepts_real_prompts() {
         let quality = analyze_serial_sample(b"router#\r\n", None);
 
+        assert_eq!(quality.prompt, SerialPromptKind::Named);
         assert!(quality.strong_evidence);
         assert!(quality.confidence >= 0.52);
     }
@@ -1598,6 +1682,131 @@ mod tests {
 
         assert!(!quality.strong_evidence);
         assert!(quality.confidence < 0.52);
+    }
+
+    #[test]
+    fn single_letter_hostname_prompts_are_strong_evidence() {
+        for sample in [
+            b"P>".as_slice(),
+            b"p#",
+            b"p$",
+            b"<P>",
+            b"\r\nP>",
+            b"P>\r\n",
+            b"P> ",
+        ] {
+            let quality = analyze_serial_sample(sample, None);
+            assert_eq!(
+                quality.prompt,
+                SerialPromptKind::Named,
+                "expected named prompt for {sample:?}"
+            );
+            assert!(
+                quality.strong_evidence,
+                "expected strong evidence for {sample:?}"
+            );
+            // Two-byte prompts must clear the reliability threshold without
+            // being capped like unstructured short printable noise.
+            assert!(
+                quality.confidence >= 0.52,
+                "expected reliable confidence for {sample:?}, got {}",
+                quality.confidence
+            );
+        }
+    }
+
+    #[test]
+    fn bare_prompt_markers_are_weak_prompt_evidence() {
+        for sample in [
+            b">".as_slice(),
+            b"#",
+            b"$",
+            b"%",
+            b"=>",
+            b">>>",
+            b"<>",
+            b"\r\n>",
+            b"\r\n<>",
+            b">\r\n",
+            b"# ",
+        ] {
+            let quality = analyze_serial_sample(sample, None);
+            assert_eq!(
+                quality.prompt,
+                SerialPromptKind::Bare,
+                "expected bare prompt for {sample:?}"
+            );
+            assert!(
+                !quality.strong_evidence,
+                "a bare marker must not be strong evidence for {sample:?}"
+            );
+            assert!(
+                quality.confidence < 0.52,
+                "a bare marker must stay below the reliability threshold for {sample:?}, got {}",
+                quality.confidence
+            );
+        }
+    }
+
+    #[test]
+    fn decoded_cjk_noise_is_not_a_prompt_body() {
+        // GBK "你" + '>' decodes to one CJK alphanumeric followed by the
+        // marker. Hostnames are ASCII, so this must not pass as a one-letter
+        // hostname prompt produced by wrong-baud byte noise.
+        let quality = analyze_serial_sample(&[0xc4, 0xe3, b'>'], Some("gbk"));
+        assert_eq!(quality.prompt, SerialPromptKind::None);
+        assert!(!quality.strong_evidence);
+        assert!(quality.confidence < 0.52);
+    }
+
+    #[test]
+    fn prompt_padding_is_ignored_but_noise_stays_unreliable() {
+        // Leading padding must not hide a real prompt, but the noise penalty
+        // keeps it below the standalone reliability threshold; the probe layer
+        // then asks for a clean confirmation round.
+        let padded = analyze_serial_sample(b"\x00\x00P>", None);
+        assert_eq!(padded.prompt, SerialPromptKind::Named);
+        assert!(padded.confidence < 0.52);
+
+        for sample in [b"\x00P\x00>".as_slice(), b">\x00>"] {
+            let quality = analyze_serial_sample(sample, None);
+            assert_eq!(
+                quality.prompt,
+                SerialPromptKind::None,
+                "unexpected prompt evidence for {sample:?}"
+            );
+            assert!(!quality.strong_evidence);
+            assert!(quality.confidence < 0.52);
+        }
+    }
+
+    #[test]
+    fn short_promptless_printable_runs_stay_below_the_reliability_threshold() {
+        for sample in [b"ab".as_slice(), b"12", b"ok"] {
+            let quality = analyze_serial_sample(sample, None);
+            assert_eq!(quality.prompt, SerialPromptKind::None);
+            assert!(!quality.strong_evidence);
+            assert!(quality.confidence < 0.52);
+        }
+    }
+
+    #[test]
+    fn duplicated_bit_garbage_from_mismatched_baud_is_not_prompt_evidence() {
+        // `P>` on the wire decoded at 2x/4x baud yields bytes with duplicated
+        // bit pairs (0xfe/0xfc/0xa0...). None of them form a prompt or
+        // structured text, so a wrong rate must not be accepted.
+        for sample in [[0xfe_u8, 0xfc], [0xa0, 0xfe], [0x00, 0xff], [0x80, 0xfc]] {
+            let quality = analyze_serial_sample(&sample, None);
+            assert_eq!(
+                quality.prompt,
+                SerialPromptKind::None,
+                "unexpected prompt evidence for {sample:?}"
+            );
+            assert!(
+                !quality.strong_evidence,
+                "unexpected evidence for {sample:?}"
+            );
+        }
     }
 
     #[test]

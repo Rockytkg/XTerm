@@ -33,6 +33,15 @@ pub(super) const SERIAL_PASSIVE_BAUD_SAMPLE_MS: u64 = 80;
 pub(super) const SERIAL_DEEP_PASSIVE_BAUD_SAMPLE_MS: u64 = 420;
 pub(super) const SERIAL_SAMPLE_MAX_BYTES: usize = 8192;
 pub(super) const SERIAL_MIN_DETECT_BYTES: usize = 4;
+/// 只有提示符标记（`>`/`#`，主机名为空）的样本单独不足以确认波特率：错误
+/// 波特率下的单字节可打印噪声也可能长这样。评分封顶后由探测层用多次回车
+/// 的因果响应重复确认。
+pub(super) const SERIAL_BARE_PROMPT_SAMPLE_SCORE: f32 = 0.45;
+/// 裸提示符需要连续观测到的次数（首轮探测 + 后续回车确认）。
+pub(super) const SERIAL_BARE_PROMPT_OBSERVATIONS: usize = 3;
+/// 已确认的提示符证据（连续裸提示符，或提示符与结构化文本的组合）的置信度；
+/// 高于早停阈值，命中后无需再扫其它波特率。
+pub(super) const SERIAL_CONFIRMED_PROMPT_CONFIDENCE: f32 = 0.88;
 pub(super) const SERIAL_PROBE_SETTLE_MS: u64 = 15;
 pub(super) const SERIAL_PROBE_INTER_BYTE_TIMEOUT_MS: u64 = 90;
 pub(super) const SERIAL_PROBE_MAX_SAMPLE_MS: u64 = 520;

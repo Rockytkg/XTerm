@@ -9,12 +9,13 @@ use tokio_serial::SerialPort;
 use crate::{
     state::AppState,
     terminal::internal::{
-        codec::analyze_serial_sample,
+        codec::{analyze_serial_sample, SerialPromptKind},
         core::{
             compare_serial_port_names, open_serial_port, ConnectionError, ConnectionOpenResult,
             ConnectionResult, ResolvedConnection, SerialLineSettings, SerialRedetectResult,
             SessionCommand, SessionTransportRuntime, SessionWorkerEvent, TerminalSession,
             TerminalSessionResources, TerminalSize, TransportCommand, BAUD_CANDIDATES,
+            SERIAL_BARE_PROMPT_OBSERVATIONS, SERIAL_CONFIRMED_PROMPT_CONFIDENCE,
             SERIAL_DEEP_PASSIVE_BAUD_SAMPLE_MS, SERIAL_DEEP_SLEEP_SAMPLE_MS,
             SERIAL_EARLY_ACCEPT_BAUD_SCORE, SERIAL_FALLBACK_BAUD_RATE, SERIAL_FAST_BAUD_SAMPLE_MS,
             SERIAL_MIN_DETECT_BYTES, SERIAL_PASSIVE_BAUD_SAMPLE_MS,
@@ -84,6 +85,10 @@ struct SerialProbeScore {
     can_open: bool,
     sample: Vec<u8>,
     strong_evidence: bool,
+    /// Prompt evidence carried by the sample. `Bare` (`>`, `#`) is weak on its
+    /// own and needs repeated wake-up confirmation; `Named` (`P>`, `login:`)
+    /// is strong by itself.
+    prompt: SerialPromptKind,
     /// The sample came from the device's own output, without a wake-up CR.
     /// Such a sample is real console text at the right baud, so it can be
     /// accepted without a confirmation round.
@@ -404,15 +409,15 @@ fn normalized_serial_port_name(port: &str) -> String {
     port.trim().to_ascii_lowercase()
 }
 
-#[cfg(test)]
-fn has_reliable_serial_probe(scores: &[SerialProbeScore]) -> bool {
-    scores.iter().any(is_reliable_serial_probe)
-}
-
 fn is_reliable_serial_probe(score: &SerialProbeScore) -> bool {
     score.can_open
         && score.strong_evidence
-        && score.bytes_read >= 2
+        // Prompt evidence can legitimately ride on a one-byte sample (`>`,
+        // `#`) after repeated wake-up rounds confirmed it; a merged pair also
+        // carries the stronger round's prompt kind while keeping the second
+        // round's byte count. Single-round probes cannot abuse the exemption:
+        // one byte never produces strong evidence on its own.
+        && (score.bytes_read >= 2 || score.prompt != SerialPromptKind::None)
         && score.score >= SERIAL_RELIABLE_BAUD_SCORE
 }
 
@@ -791,12 +796,18 @@ async fn detect_serial_baud(
         scores.push(probe.clone());
         let candidate = if probe.passive {
             Some(probe)
-        } else if is_reliable_serial_probe(&probe) {
+        } else if is_reliable_serial_probe(&probe) || probe.prompt == SerialPromptKind::Named {
+            // A named prompt earns a second round even when noise keeps the
+            // first sample just below the reliability threshold; two prompt
+            // responses are conclusive on their own.
             let confirmation =
                 confirm_serial_baud(port, port_name, *baud_rate, encoding, phase).await;
             let merged = merge_serial_probe_confirmation(&probe, &confirmation);
             scores.push(confirmation);
             merged
+        } else if probe.prompt == SerialPromptKind::Bare {
+            confirm_bare_serial_prompt(port, port_name, *baud_rate, encoding, phase, probe, scores)
+                .await
         } else {
             None
         };
@@ -886,12 +897,25 @@ fn merge_serial_probe_confirmation(
     probe: &SerialProbeScore,
     confirmation: &SerialProbeScore,
 ) -> Option<SerialProbeScore> {
-    if !is_reliable_serial_probe(confirmation) {
+    // A prompt in both rounds means the wake-up CR was understood twice. The
+    // second prompt may be a bare marker that is unreliable on its own (for
+    // example a banner-style first response followed by `>`), so give the pair
+    // a confidence floor instead of demanding two independently reliable
+    // samples.
+    let prompt_pair =
+        probe.prompt != SerialPromptKind::None && confirmation.prompt != SerialPromptKind::None;
+    if !prompt_pair && !is_reliable_serial_probe(confirmation) {
         return None;
     }
     let mut merged = confirmation.clone();
-    merged.score = (probe.score * 0.35 + confirmation.score * 0.65).clamp(0.0, 1.0);
-    merged.strong_evidence = probe.strong_evidence && confirmation.strong_evidence;
+    let weighted = (probe.score * 0.35 + confirmation.score * 0.65).clamp(0.0, 1.0);
+    merged.score = if prompt_pair {
+        weighted.max(SERIAL_CONFIRMED_PROMPT_CONFIDENCE)
+    } else {
+        weighted
+    };
+    merged.strong_evidence = prompt_pair || (probe.strong_evidence && confirmation.strong_evidence);
+    merged.prompt = probe.prompt.max(confirmation.prompt);
     is_reliable_serial_probe(&merged).then_some(merged)
 }
 
@@ -903,6 +927,9 @@ fn is_better_serial_probe(candidate: &SerialProbeScore, current: &SerialProbeSco
     candidate
         .score
         .total_cmp(&current.score)
+        // Scores saturate at 1.0 for clean prompts; a prompt-shaped sample is
+        // stronger evidence than equally-scored generic text.
+        .then_with(|| candidate.prompt.cmp(&current.prompt))
         .then_with(|| candidate.bytes_read.cmp(&current.bytes_read))
         .is_gt()
 }
@@ -988,9 +1015,14 @@ async fn probe_open_serial_port(
     // receive one controlled CR for this candidate instead of repeated wakeups.
     let passive_sample = read_serial_sample_async(port, phase.passive_sample_for()).await;
     let passive_quality = analyze_serial_sample(&passive_sample, encoding);
-    let passive = passive_sample.len() >= SERIAL_MIN_DETECT_BYTES
+    // A hostname prompt is structural evidence even at two bytes (`P>`), so it
+    // does not need the minimum length that guards unstructured printable
+    // noise. A bare marker never qualifies here: it is confirmed later by
+    // repeated wake-up rounds instead.
+    let passive = passive_quality.strong_evidence
         && passive_quality.confidence >= SERIAL_RELIABLE_BAUD_SCORE
-        && passive_quality.strong_evidence;
+        && (passive_sample.len() >= SERIAL_MIN_DETECT_BYTES
+            || passive_quality.prompt == SerialPromptKind::Named);
     let (sample, quality) = if passive {
         (passive_sample, passive_quality)
     } else {
@@ -1007,7 +1039,8 @@ async fn probe_open_serial_port(
     let bytes_read = sample.len();
     log::debug!(
         target: "terminal.serial",
-        "serial probe port='{port_name}' baud={baud_rate} phase={phase:?} score={score:.3} bytes={bytes_read} elapsed_ms={}",
+        "serial probe port='{port_name}' baud={baud_rate} phase={phase:?} score={score:.3} bytes={bytes_read} prompt={:?} passive={passive} elapsed_ms={}",
+        quality.prompt,
         started_at.elapsed().as_millis()
     );
     Ok(SerialProbeScore {
@@ -1018,6 +1051,7 @@ async fn probe_open_serial_port(
         can_open: true,
         sample,
         strong_evidence: quality.strong_evidence,
+        prompt: quality.prompt,
         passive,
     })
 }
@@ -1052,6 +1086,7 @@ fn failed_serial_probe_score(port_name: &str, baud_rate: u32, can_open: bool) ->
         can_open,
         sample: Vec::new(),
         strong_evidence: false,
+        prompt: SerialPromptKind::None,
         passive: false,
     }
 }
@@ -1186,8 +1221,44 @@ async fn confirm_serial_baud(
         can_open: true,
         sample,
         strong_evidence: quality.strong_evidence,
+        prompt: quality.prompt,
         passive: false,
     }
+}
+
+/// Confirm a bare prompt (`>`, `#`, `<>`) that carries no hostname. A single
+/// marker is too weak to identify a rate, but each wake-up CR that draws
+/// another marker is causal evidence that the device decoded our write at
+/// this baud. A richer response (hostname prompt or structured text)
+/// confirms at once.
+async fn confirm_bare_serial_prompt(
+    port: &mut tokio_serial::SerialStream,
+    port_name: &str,
+    baud_rate: u32,
+    encoding: Option<&str>,
+    phase: SerialProbePhase,
+    first: SerialProbeScore,
+    scores: &mut Vec<SerialProbeScore>,
+) -> Option<SerialProbeScore> {
+    let mut accepted = first;
+    // The probe round already observed one marker; the remaining wake-up CRs
+    // bring the total to SERIAL_BARE_PROMPT_OBSERVATIONS.
+    for _ in 1..SERIAL_BARE_PROMPT_OBSERVATIONS {
+        let confirmation = confirm_serial_baud(port, port_name, baud_rate, encoding, phase).await;
+        scores.push(confirmation.clone());
+        if confirmation.prompt == SerialPromptKind::None && !is_reliable_serial_probe(&confirmation)
+        {
+            return None;
+        }
+        accepted = confirmation;
+        if is_reliable_serial_probe(&accepted) {
+            break;
+        }
+    }
+    accepted.prompt = accepted.prompt.max(SerialPromptKind::Bare);
+    accepted.score = accepted.score.max(SERIAL_CONFIRMED_PROMPT_CONFIDENCE);
+    accepted.strong_evidence = true;
+    Some(accepted)
 }
 
 async fn read_serial_sample_async(
@@ -1387,13 +1458,14 @@ pub(super) fn serial_error_looks_unavailable(detail: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        additional_serial_baud_candidates, has_reliable_serial_probe, is_reliable_serial_probe,
-        redetect_quick_baud_candidates, serial_error_is_unavailable,
-        serial_error_looks_unavailable, serial_port_error_is_busy,
+        additional_serial_baud_candidates, is_decisive_serial_probe, is_reliable_serial_probe,
+        merge_serial_probe_confirmation, redetect_quick_baud_candidates,
+        serial_error_is_unavailable, serial_error_looks_unavailable, serial_port_error_is_busy,
         should_expand_serial_baud_search, sorted_serial_port_candidates, SerialPortCandidate,
         SerialProbePhase, SerialProbeScore,
     };
-    use crate::terminal::internal::core::BAUD_CANDIDATES;
+    use crate::terminal::internal::codec::SerialPromptKind;
+    use crate::terminal::internal::core::{BAUD_CANDIDATES, SERIAL_CONFIRMED_PROMPT_CONFIDENCE};
     use std::collections::HashSet;
 
     fn score(baud_rate: u32, value: f32, bytes_read: usize) -> SerialProbeScore {
@@ -1405,6 +1477,7 @@ mod tests {
             can_open: true,
             sample: vec![b'x'; bytes_read],
             strong_evidence: bytes_read >= 4,
+            prompt: SerialPromptKind::None,
             passive: false,
         }
     }
@@ -1412,12 +1485,12 @@ mod tests {
     #[test]
     fn low_confidence_noise_is_not_a_baud_candidate() {
         let scores = [score(9_600, 0.45, 4), score(115_200, 0.20, 32)];
-        assert!(!has_reliable_serial_probe(&scores));
+        assert!(!scores.iter().any(is_reliable_serial_probe));
     }
 
     #[test]
     fn reliable_baud_requires_enough_data_and_strong_evidence() {
-        assert!(has_reliable_serial_probe(&[score(115_200, 0.82, 12)]));
+        assert!(is_reliable_serial_probe(&score(115_200, 0.82, 12)));
         assert!(!is_reliable_serial_probe(&score(9_600, 0.90, 3)));
         assert!(!is_reliable_serial_probe(&score(38_400, 0.10, 64)));
     }
@@ -1429,6 +1502,55 @@ mod tests {
 
         short_prompt.strong_evidence = true;
         assert!(is_reliable_serial_probe(&short_prompt));
+    }
+
+    #[test]
+    fn two_byte_hostname_prompt_is_reliable_and_decisive() {
+        // `P>` carries no line structure; the prompt shape itself is the
+        // evidence, so it must not be filtered by the four-byte text minimum.
+        let mut prompt = score(115_200, 0.97, 2);
+        prompt.strong_evidence = true;
+        prompt.prompt = SerialPromptKind::Named;
+
+        assert!(is_reliable_serial_probe(&prompt));
+        assert!(is_decisive_serial_probe(&prompt));
+    }
+
+    #[test]
+    fn bare_prompt_needs_repeated_rounds_before_it_is_accepted() {
+        let mut bare = score(115_200, 0.45, 1);
+        bare.strong_evidence = false;
+        bare.prompt = SerialPromptKind::Bare;
+
+        // A single `>`/`#` is weak: it must not confirm a rate on its own.
+        assert!(!is_reliable_serial_probe(&bare));
+        assert!(!is_decisive_serial_probe(&bare));
+
+        // After the configured number of causal wake-up rounds the probe
+        // layer raises the confidence to a decisive level.
+        bare.score = bare.score.max(SERIAL_CONFIRMED_PROMPT_CONFIDENCE);
+        bare.strong_evidence = true;
+        assert!(is_reliable_serial_probe(&bare));
+        assert!(is_decisive_serial_probe(&bare));
+    }
+
+    #[test]
+    fn named_probe_confirmed_by_one_byte_marker_stays_reliable() {
+        // The confirmation round may shrink to a lone marker (a banner-style
+        // first response followed by `>`). The prompt pair is conclusive even
+        // though the merged sample keeps the second round's one-byte length
+        // while carrying the stronger round's prompt kind.
+        let mut probe = score(115_200, 0.97, 2);
+        probe.strong_evidence = true;
+        probe.prompt = SerialPromptKind::Named;
+        let mut confirmation = score(115_200, 0.45, 1);
+        confirmation.prompt = SerialPromptKind::Bare;
+
+        let merged = merge_serial_probe_confirmation(&probe, &confirmation)
+            .expect("a prompt pair must merge");
+
+        assert!(is_reliable_serial_probe(&merged));
+        assert!(is_decisive_serial_probe(&merged));
     }
 
     #[test]
