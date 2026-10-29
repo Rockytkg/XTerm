@@ -98,6 +98,15 @@ impl CodecState {
         clear_detected_encoding(self);
     }
 
+    /// 串口波特率重检改变字节流的物理含义：旧波特率下（往往是乱码）提交的
+    /// 检测锁定、历史证据与错误计数对新波特率的字节流全部无效。若不清零，
+    /// 重检后的干净数据仍按旧锁定编码解码，而错误的 legacy 锁定常常解码"无
+    /// 错误"，"连续 3 块错误解锁"可能长期不触发，表现为重检后输出依旧乱码。
+    pub(super) fn reset_detection_for_baud_redetect(&mut self) {
+        self.consecutive_errors = 0;
+        clear_detected_encoding(self);
+    }
+
     pub(super) fn set_backend_encoding(&mut self, encoding: impl Into<String>) {
         let encoding = encoding.into();
         let Some(encoding_handle) = Encoding::for_label(encoding.as_bytes()) else {
@@ -2070,5 +2079,32 @@ mod tests {
             codec.detected_encoding.is_none(),
             "3 consecutive error chunks should unlock the committed encoding"
         );
+    }
+
+    #[test]
+    fn baud_redetect_reset_drops_stale_detection_state() {
+        // 错误波特率下的乱码往往已提交某个 legacy 锁定，而错锁常见"无解码
+        // 错误"（legacy 编码几乎什么字节都能解），3 块错误解锁可能长期不
+        // 触发。重检必须先无条件清零，重检后的干净流才能重新检测。
+        let mut codec = CodecState::new(None, true);
+        let sample = "中文命令提示> 中文命令提示# 中文命令提示$ 中文命令提示: 中文命令提示> 中文命令提示# 中文命令提示$ 中文命令提示: 中文命令提示> 中文命令提示# 中文命令提示$ 中文命令提示:";
+        let (encoded, _, _) = Encoding::for_label(b"gbk").expect("gbk").encode(sample);
+        decode_backend_bytes(encoded.as_ref(), &mut codec);
+        assert_eq!(codec.detected_encoding.as_deref(), Some("gbk"));
+
+        decode_backend_bytes(&[0xff, 0xff], &mut codec);
+        assert_eq!(codec.consecutive_errors, 1);
+
+        codec.reset_detection_for_baud_redetect();
+        assert!(codec.detected_encoding.is_none());
+        assert!(codec.detected_encoding_handle.is_none());
+        assert_eq!(codec.detected_confidence, 0.0);
+        assert_eq!(codec.consecutive_errors, 0);
+        assert!(codec.detection_history.is_empty());
+
+        // 重检后的干净流按自身内容重新检测并提交，不受旧锁定影响。
+        let again = decode_backend_bytes(encoded.as_ref(), &mut codec);
+        assert_eq!(again.encoding, "gbk");
+        assert_eq!(codec.detected_encoding.as_deref(), Some("gbk"));
     }
 }

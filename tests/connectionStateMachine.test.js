@@ -22,6 +22,32 @@ test("serial baud detection blocks only for the duration of redetection", () => 
   assert.equal(connected.detectedBaudConfirmed, true);
 });
 
+test("stale serial redetect events cannot revive or overwrite another lifecycle", () => {
+  const closed = reduceConnectionState(
+    { status: "closed", phase: null, error: null },
+    { type: CONNECTION_EVENT.SERIAL_REDETECT_REQUESTED },
+  );
+  assert.equal(closed.status, "closed");
+
+  const reconnecting = { status: "connecting", phase: "connecting", error: null };
+  assert.strictEqual(
+    reduceConnectionState(reconnecting, {
+      type: CONNECTION_EVENT.SERIAL_REDETECT_SUCCEEDED,
+      payload: { baudRate: 115200, confirmed: true },
+    }),
+    reconnecting,
+  );
+
+  const connected = { status: "connected", phase: null, error: null };
+  assert.strictEqual(
+    reduceConnectionState(connected, {
+      type: CONNECTION_EVENT.SERIAL_REDETECT_FAILED,
+      payload: { errorMessage: "late probe failure" },
+    }),
+    connected,
+  );
+});
+
 test("a Telnet negotiation failure is not downgraded by a later close event", () => {
   const failed = reduceConnectionState(
     { status: "connected", phase: null, error: null },

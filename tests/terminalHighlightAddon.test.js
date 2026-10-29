@@ -9,7 +9,7 @@ function createDisposable(dispose) {
 
 function createTerminalHarness(initialText = "ERROR") {
   let lines = Array.isArray(initialText) ? [...initialText] : [initialText];
-  let writeParsed;
+  let render;
   let scroll;
   let decorationDisposeCount = 0;
   const registeredDecorations = [];
@@ -32,18 +32,17 @@ function createTerminalHarness(initialText = "ERROR") {
         }),
       },
     },
-    onRender: () => createDisposable(() => {}),
+    onRender: (handler) => {
+      render = handler;
+      return createDisposable(() => {
+        if (render === handler) render = null;
+      });
+    },
     onResize: () => createDisposable(() => {}),
     onScroll: (handler) => {
       scroll = handler;
       return createDisposable(() => {
         if (scroll === handler) scroll = null;
-      });
-    },
-    onWriteParsed: (handler) => {
-      writeParsed = handler;
-      return createDisposable(() => {
-        if (writeParsed === handler) writeParsed = null;
       });
     },
     registerDecoration: (options) => {
@@ -74,7 +73,7 @@ function createTerminalHarness(initialText = "ERROR") {
 
   return {
     emitScroll: () => scroll?.(),
-    emitWriteParsed: () => writeParsed?.(),
+    emitRender: (event = { start: 0, end: 0 }) => render?.(event),
     get decorationDisposeCount() {
       return decorationDisposeCount;
     },
@@ -129,7 +128,7 @@ const RULE_SET = {
   ],
 };
 
-test("parsed output refreshes highlights without an external flush notification", () => {
+test("rendered rows refresh highlights without a parser notification", () => {
   const frames = installAnimationFrameHarness();
   try {
     const harness = createTerminalHarness("ERROR one");
@@ -139,7 +138,10 @@ test("parsed output refreshes highlights without an external flush notification"
     frames.flush();
 
     harness.setText("prefix ERROR two");
-    harness.emitWriteParsed();
+    // xterm emits onRender after the dirty rows have been committed. The addon
+    // intentionally does not scan onWriteParsed because parser slices are not
+    // renderer dirty ranges.
+    harness.emitRender?.({ start: 0, end: 0 });
     frames.flush();
 
     assert.equal(harness.decorationDisposeCount, 1);
@@ -149,7 +151,30 @@ test("parsed output refreshes highlights without an external flush notification"
   }
 });
 
-test("scrolling offscreen preserves highlights until their buffer content is removed", () => {
+test("scrolling within the overscan window keeps existing decorations", () => {
+  const frames = installAnimationFrameHarness();
+  try {
+    const harness = createTerminalHarness(["ERROR first", ...Array(9).fill("plain")]);
+    const addon = new TerminalHighlightAddon({ getEnabled: () => true });
+    addon.activate(harness.terminal);
+    addon.setRules(RULE_SET);
+    frames.flush();
+
+    harness.terminal.buffer.active.viewportY = 1;
+    harness.emitScroll();
+    frames.flush();
+
+    assert.equal(harness.decorationDisposeCount, 0);
+    assert.equal(harness.registeredDecorations.length, 1);
+    addon.dispose();
+  } finally {
+    frames.restore();
+  }
+});
+
+test("scrolling far outside the scan window releases decorations and restores them on scroll back", () => {
+  // decoration 注册后本会一直存活到 scrollback 裁剪；只在扫描窗口内保留可避免
+  // 长会话里无界累积（增删会触发按行刷新，装饰层还会遍历全部条目）。
   const frames = installAnimationFrameHarness();
   try {
     const harness = createTerminalHarness(["ERROR first", ...Array(9).fill("plain"), "ERROR last"]);
@@ -158,15 +183,21 @@ test("scrolling offscreen preserves highlights until their buffer content is rem
     addon.setRules(RULE_SET);
     frames.flush();
 
+    // 滚到远端：窗口外的 row 0 释放，窗口内的 row 10 新建。
     harness.terminal.buffer.active.viewportY = 10;
     harness.emitScroll();
     frames.flush();
 
-    assert.equal(harness.decorationDisposeCount, 0);
+    assert.equal(harness.decorationDisposeCount, 1);
     assert.equal(harness.registeredDecorations.length, 2);
 
-    harness.registeredMarkers[0].dispose();
-    assert.equal(harness.decorationDisposeCount, 1);
+    // 滚回来：row 0 按行文本重建，row 10 释放。
+    harness.terminal.buffer.active.viewportY = 0;
+    harness.emitScroll();
+    frames.flush();
+
+    assert.equal(harness.registeredDecorations.length, 3);
+    assert.equal(harness.decorationDisposeCount, 2);
     addon.dispose();
   } finally {
     frames.restore();

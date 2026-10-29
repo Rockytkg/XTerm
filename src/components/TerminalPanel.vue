@@ -148,9 +148,8 @@ let serialBaudPresentation = { sessionId: "", promise: null, resolve: null };
 let unregisterScriptBridge = null;
 const terminalOutputByteDecoder = createTerminalOutputByteDecoder();
 
-function refreshTerminalViewport({ clearTextureAtlas = false } = {}) {
+function refreshTerminalViewport() {
   if (!terminal) return;
-  if (clearTextureAtlas) terminal.clearTextureAtlas?.();
   terminal.refresh(0, Math.max(0, terminal.rows - 1));
 }
 
@@ -828,6 +827,7 @@ registerTerminalOptionWatchers({
   props,
   refitTerminalAfterFontMetricsChange,
   refreshTerminalViewport,
+  reloadWebglRenderer: () => terminalOptionalAddons.reloadWebglRenderer(setupGeneration),
   syncTerminalRenderer: () => terminalOptionalAddons.syncTerminalRenderer(setupGeneration),
   isForegroundRuntime,
 });
@@ -990,6 +990,7 @@ function handleTerminalData(payload) {
 
 function waitForSerialBaudPresentation() {
   const connection = props.activeConnection;
+  const connectionState = props.connectionState;
   if (
     !connectionCan(connection, "serialBaudDetection") ||
     String(connection.baudRate).toLowerCase() !== "auto"
@@ -998,7 +999,7 @@ function waitForSerialBaudPresentation() {
   }
 
   const sessionId = props.sessionId || connection.id || "";
-  if (serialBaudPresentation.sessionId !== sessionId) {
+  if (serialBaudPresentation.sessionId !== sessionId || !serialBaudPresentation.promise) {
     let resolve;
     const promise = new Promise((done) => {
       resolve = done;
@@ -1006,13 +1007,21 @@ function waitForSerialBaudPresentation() {
     serialBaudPresentation = { sessionId, promise, resolve };
   }
 
-  const baudRate = Number(props.connectionState?.detectedBaudRate);
+  // A redetection keeps the old rate in state for display, but the physical
+  // port is being probed and queued input must stay behind the probe.
+  if (connectionState?.phase === "serialBaudDetection") {
+    return serialBaudPresentation.promise;
+  }
+
+  const baudRate = Number(connectionState?.detectedBaudRate);
+  const redetectFailed = typeof connectionState?.serialBaudError === "string" &&
+    connectionState.serialBaudError.length > 0;
   if (
-    baudRate > 0 &&
-    props.connectionState?.status === "connected" &&
+    (baudRate > 0 || redetectFailed) &&
+    connectionState?.status === "connected" &&
     serialBaudPresentation.resolve
   ) {
-    terminalStatusAddon.write("connected");
+    if (!redetectFailed) terminalStatusAddon.write("connected");
     const resolve = serialBaudPresentation.resolve;
     serialBaudPresentation.resolve = null;
     void terminalOutputAddon

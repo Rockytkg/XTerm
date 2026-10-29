@@ -175,6 +175,9 @@ export function reduceConnectionState(previous = IDLE_CONNECTION_STATE, event) {
       if (isFinalLifecycleState(previous)) return previous;
       return closedConnectionState(previous, payload.detail);
     case CONNECTION_EVENT.SERIAL_REDETECT_REQUESTED:
+      if (isFinalLifecycleState(previous) || previous?.status !== CONNECTION_STATUS.CONNECTED) {
+        return previous;
+      }
       return {
         ...previous,
         status: CONNECTION_STATUS.CONNECTED,
@@ -183,6 +186,13 @@ export function reduceConnectionState(previous = IDLE_CONNECTION_STATE, event) {
         serialBaudError: null,
       };
     case CONNECTION_EVENT.SERIAL_REDETECT_SUCCEEDED:
+      if (
+        isFinalLifecycleState(previous) ||
+        previous?.status !== CONNECTION_STATUS.CONNECTED ||
+        previous?.phase !== CONNECTION_PHASE.SERIAL_BAUD_DETECTION
+      ) {
+        return previous;
+      }
       return {
         ...previous,
         status: CONNECTION_STATUS.CONNECTED,
@@ -193,6 +203,13 @@ export function reduceConnectionState(previous = IDLE_CONNECTION_STATE, event) {
         serialBaudError: null,
       };
     case CONNECTION_EVENT.SERIAL_REDETECT_FAILED:
+      if (
+        isFinalLifecycleState(previous) ||
+        previous?.status !== CONNECTION_STATUS.CONNECTED ||
+        previous?.phase !== CONNECTION_PHASE.SERIAL_BAUD_DETECTION
+      ) {
+        return previous;
+      }
       return {
         ...previous,
         status: CONNECTION_STATUS.CONNECTED,

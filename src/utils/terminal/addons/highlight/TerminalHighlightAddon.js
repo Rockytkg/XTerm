@@ -74,8 +74,12 @@ export class TerminalHighlightAddon {
     if (this._subscriptions.length > 0) return;
 
     const terminal = this._terminal;
+    // onRender is the renderer's authoritative dirty-row signal. Listening to
+    // onWriteParsed as well re-queued the whole viewport for every parser time
+    // slice, even when xterm had only rendered a smaller range. With decoration
+    // based highlights that redundant queueing also caused avoidable decoration
+    // churn and, in WebGL, repeated full render-model rebuilds.
     this._subscriptions = [
-      terminal.onWriteParsed(() => this._handleWrite()),
       terminal.onRender((event) => this._enqueueRenderedRows(event)),
       terminal.onResize(() => this.invalidate()),
       terminal.onScroll(() => this._replacePendingWithViewport()),
@@ -90,17 +94,6 @@ export class TerminalHighlightAddon {
     if (this._frameId === undefined) return;
     cancelAnimationFrame(this._frameId);
     this._frameId = undefined;
-  }
-
-  _handleWrite() {
-    // 负缓存按 (规则 hash, 行文本) 自校验：_refreshRow 总是先重读行当前文本再
-    // 比较，滚动/修剪导致的行号漂移只会让文本比较失配而触发重扫，不会误用
-    // 陈旧结论。因此这里不能清 _analysisCache——流式输出期间每次 write 都清空
-    // 会把全视口行重新跑一遍规则匹配，形成与数据量无关的恒定 CPU 烧耗
-    // （低波特率大块输出卡顿的主要来源）。只有正高亮依赖 marker 跟随行号，
-    // 需要在扫描前同步。
-    this._synchronizeDecoratedRows();
-    this._enqueueViewport();
   }
 
   _replacePendingWithViewport() {
@@ -157,7 +150,7 @@ export class TerminalHighlightAddon {
       if (++processed >= ROWS_PER_FRAME) break;
     }
 
-    this._pruneAnalysisCache();
+    this._pruneCache();
     this._scheduleFrame();
   }
 
@@ -259,14 +252,21 @@ export class TerminalHighlightAddon {
     this._decoratedRows = synchronized;
   }
 
-  _pruneAnalysisCache() {
+  _pruneCache() {
     const terminal = this._terminal;
-    if (!terminal || this._analysisCache.size === 0) return;
+    if (!terminal) return;
+    if (this._analysisCache.size === 0 && this._decoratedRows.size === 0) return;
     const viewportY = terminal.buffer.active.viewportY;
     const firstRow = Math.max(0, viewportY - OVERSCAN_ROWS);
     const lastRow = viewportY + terminal.rows + OVERSCAN_ROWS;
     for (const row of this._analysisCache.keys()) {
       if (row < firstRow || row > lastRow) this._analysisCache.delete(row);
+    }
+    // 已装饰行也只在扫描窗口内保留：decoration 一经注册会一直存活到 scrollback
+    // 裁剪。增删会触发按行刷新，装饰层还会遍历全部 decoration，长会话里无界
+    // 累积仍会持续拖慢每一帧。滚回窗口时由 _refreshRow 按行文本重建，视觉结果不变。
+    for (const entry of this._decoratedRows.values()) {
+      if (entry.row < firstRow || entry.row > lastRow) this._disposeDecoratedRow(entry);
     }
   }
 

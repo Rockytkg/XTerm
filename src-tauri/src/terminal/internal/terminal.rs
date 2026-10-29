@@ -455,6 +455,9 @@ fn handle_session_capability_command(
                 session_loop.codec,
                 &mut session_loop.delivery,
             );
+            // 旧波特率的缓冲字节必须先用旧编码交付（上面 flush），之后检测
+            // 状态清零：重检一旦改变波特率，旧锁定/历史对新的字节流全部无效。
+            session_loop.codec.reset_detection_for_baud_redetect();
             forward_transport_command(
                 &session_loop.app,
                 &session_loop.session_id,
