@@ -66,3 +66,25 @@ test("backspace sends BS by default; only explicit DEL passes through", () => {
     false,
   );
 });
+
+test("backspace is not remapped while an IME composition is active", () => {
+  // xterm 6 先调 customKeyEventHandler 再处理 composition：没有守卫时，
+  // 中文输入法用退格编辑拼音串会同时破坏组合串并向后端发一次删除。
+  const connection = { backspaceSends: BACKSPACE_SENDS.BS };
+  assert.equal(
+    shouldSendBackspaceAsBs(
+      { type: "keydown", key: "Backspace", isComposing: true },
+      connection,
+      "session-1",
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSendBackspaceAsBs(
+      { type: "keydown", key: "Backspace", keyCode: 229 },
+      connection,
+      "session-1",
+    ),
+    false,
+  );
+});

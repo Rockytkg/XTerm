@@ -1,4 +1,4 @@
-import { watch } from "vue";
+import { getCurrentScope, onScopeDispose, watch } from "vue";
 import {
   TERMINAL_CURSOR_WIDTH_MAX,
   TERMINAL_CURSOR_WIDTH_MIN,
@@ -65,6 +65,23 @@ export function registerTerminalOptionWatchers({
   syncTerminalRenderer,
   isForegroundRuntime,
 }) {
+  // 字体变化触发的图集重建 + refit 会产生完整重排；滚轮缩放时 fontSize 每个
+  // tick 都变，逐次执行会明显卡顿。选项本身立即生效，这里只把重建尾随防抖
+  // 到手势停止后做一次。
+  const FONT_METRICS_SETTLE_MS = 100;
+  let fontMetricsTimer = null;
+  function scheduleFontMetricsSettle(terminal) {
+    clearTimeout(fontMetricsTimer);
+    fontMetricsTimer = setTimeout(() => {
+      fontMetricsTimer = null;
+      terminal.clearTextureAtlas?.();
+      refitTerminalAfterFontMetricsChange();
+    }, FONT_METRICS_SETTLE_MS);
+  }
+  if (getCurrentScope()) {
+    onScopeDispose(() => clearTimeout(fontMetricsTimer));
+  }
+
   watch(
     () => props.terminalTheme,
     () => {
@@ -90,8 +107,7 @@ export function registerTerminalOptionWatchers({
       );
       terminal.options.fontFamily = terminalFontFamily(fontFamily);
       terminal.options.lineHeight = normalizeNumberOption(lineHeight, 1, 1, 2);
-      terminal.clearTextureAtlas?.();
-      refitTerminalAfterFontMetricsChange();
+      scheduleFontMetricsSettle(terminal);
     },
   );
 
@@ -121,7 +137,11 @@ export function registerTerminalOptionWatchers({
         ([_propName, optionName, normalize, refresh, foregroundOnly], index) => {
           const value = normalize ? normalize(values[index]) : values[index];
           options[optionName] = foregroundOnly ? value && isForegroundRuntime() : value;
-          shouldRefresh ||= !!refresh && values[index] !== previousValues[index];
+          // 用归一化后的值比较：越界值被 clamp 到同一值时不应触发重绘。
+          const previousValue = normalize
+            ? normalize(previousValues[index])
+            : previousValues[index];
+          shouldRefresh ||= !!refresh && value !== previousValue;
         },
       );
       terminal.options = options;

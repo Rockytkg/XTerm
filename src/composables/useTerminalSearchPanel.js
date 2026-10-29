@@ -1,4 +1,4 @@
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
 const SEARCH_DECORATIONS = Object.freeze({
   matchBackground: "oklch(0.82 0.14 82)",
@@ -15,6 +15,7 @@ export function useTerminalSearchPanel({
   props,
   t,
   focusTerminal,
+  focusSearchInput,
   isForegroundRuntime,
   getSearchAddon,
   clearTerminalSelection,
@@ -51,9 +52,8 @@ export function useTerminalSearchPanel({
 
   // 清除搜索在终端上留下的全部视觉痕迹：匹配高亮 decoration，以及 addon 为
   // 当前命中项设置的终端选区（clearDecorations 不清选区，不清就会残留一处
-  // “高亮”）。addon 内部已排队的增量重排定时器无法从外部取消，但它触发时会
-  // 重新读取缓存词；此处缓存词已被 clearDecorations 清空，定时器只会落入
-  // 空词分支自我清理，不会重新绘制高亮。
+  // “高亮”）。addon-search 的补丁让 clearDecorations 同时取消内部增量重排
+  // 定时器，关闭后不会再有一次迟到的重排把旧词高亮画回来。
   function clearSearchPaint() {
     getSearchAddon()?.clearDecorations();
     clearTerminalSelection();
@@ -87,12 +87,19 @@ export function useTerminalSearchPanel({
   function openSearchPanel() {
     const searchAddon = getSearchAddon();
     if (!searchAddon || !isForegroundRuntime()) return false;
+    if (searchOpen.value) {
+      // 面板已打开时重复触发（再次 Ctrl+F / 菜单）：只把焦点带回输入框，
+      // 不清空用户正在使用的查询词。
+      focusSearchInput?.();
+      return true;
+    }
     // 只清 decoration：用户在打开搜索前手动选择的文本不应被清掉。
     searchAddon.clearDecorations();
     searchOpen.value = true;
     searchTerm.value = "";
     searchQueryActive = false;
     resetSearchResult();
+    nextTick(() => focusSearchInput?.());
     return true;
   }
 
@@ -127,7 +134,13 @@ export function useTerminalSearchPanel({
 
   function syncSearchOpenRequest() {
     const token = Number(props.searchOpenToken) || 0;
-    if (!token || token === handledSearchOpenToken || !props.visible) return false;
+    if (!token || token === handledSearchOpenToken) return false;
+    if (!props.visible) {
+      // 打开请求是一次性广播，只应由当前可见的终端消费；隐藏面板若延后
+      // 消费，之后每切换到一个 tab 都会各弹一次搜索框。
+      handledSearchOpenToken = token;
+      return false;
+    }
     if (!openSearchPanel()) return false;
     handledSearchOpenToken = token;
     return true;

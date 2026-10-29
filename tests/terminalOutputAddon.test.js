@@ -35,6 +35,20 @@ function settleWrites() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+test("output queued before the terminal is activated is dropped", async () => {
+  const addon = createAddon();
+  addon.queue("before-activate");
+
+  // 无终端时 flush 提前返回；若继续缓存，缓冲区会无界增长。
+  assert.equal(addon._buffer, "");
+
+  const terminal = createTerminal();
+  addon.activate(terminal);
+  await addon.waitForFlush();
+
+  assert.deepEqual(terminal.writes, []);
+});
+
 test("queued output is written through immediately without any scheduler", async () => {
   const terminal = createTerminal();
   const addon = createAddon();

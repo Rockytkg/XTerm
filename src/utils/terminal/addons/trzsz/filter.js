@@ -251,9 +251,11 @@ export class LocalTrzszFilter {
       sendToServer: this._sendToServer,
       maxDataChunkSize: this._maxDataChunkSize,
     });
-    this._onTransferModeChange?.(true);
     let transferError = null;
     try {
+      // 开启 raw 输出可能失败（如后端拒绝）；必须等它落地再开始传输，
+      // 否则协议数据会被当成普通终端输出解析，传输内容损坏。
+      await this._onTransferModeChange?.(true);
       if (this._aborted) return;
       if (mode === "S") await this._download(remoteIsWindows);
       if (mode === "R") await this._upload(false, remoteIsWindows);

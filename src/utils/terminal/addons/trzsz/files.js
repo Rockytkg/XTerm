@@ -135,6 +135,9 @@ class TauriFileWriter {
   }
 
   async deleteFile() {
+    // 标记关闭，保证随后 cleanup() 里的 closeFile 不会对同一个 transfer
+    // 再走一次 finishDownload（后端当前幂等，但语义上必须只完成一次）。
+    this._closed = true;
     if (this._transfer?.transferId) {
       await finishDownload({ transferId: this._transfer.transferId, aborted: true });
     }

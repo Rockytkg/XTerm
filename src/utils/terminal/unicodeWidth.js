@@ -18,6 +18,10 @@ function createUnicode11Provider() {
 
 const unicode11Provider = createUnicode11Provider();
 
+// 注意：上面的伪 activate 依赖 @xterm/addon-unicode11 的 activate 只调用
+// terminal.unicode.register(...) 这一内部形状；升级该 addon 时必须复核，
+// 否则会在模块加载期直接抛错。
+
 export function getTerminalCodePointWidth(codePoint) {
   return unicode11Provider.wcwidth(codePoint);
 }

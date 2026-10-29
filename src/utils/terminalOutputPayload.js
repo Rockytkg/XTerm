@@ -5,6 +5,10 @@ const logger = createLogger("frontend.terminal.output-payload");
 function isTerminalOutputChannelAccepted(payload, state = {}) {
   const payloadChannelId = payload?.channelId;
   if (!Number.isSafeInteger(payloadChannelId)) return false;
+  // 会话身份必须先一致：A→B 直切时旧 channel 的在途 payload 既不属于新会话，
+  // 也不能让 A 的 offset 记到 B 名下（否则 B 的回放会被 isStaleRange 整批吞掉）。
+  // closing channel 的尾部输出属于同一会话，sessionId 校验不影响该豁免路径。
+  if (!state.sessionId || payload?.sessionId !== state.sessionId) return false;
   if (state.sessionChannelId && payloadChannelId === state.sessionChannelId) return true;
   return (
     !!state.closingSessionId &&

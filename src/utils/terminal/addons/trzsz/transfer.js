@@ -143,6 +143,15 @@ export class TrzszTransfer {
         (async () => {
           if (!binary) return this._recvBinary("DATA");
           const size = await this._recvInteger("DATA");
+          // 二进制模式下 #DATA 的长度由远端声明；不做上限校验时一行
+          // `#DATA:4000000000` 就能触发数 GB 分配。转义最坏情况把每个字节
+          // 写成两个字符，因此上限取协商 chunk 上限的 2 倍。
+          const maxChunkSize = this._config.bufsize
+            ? Math.min(this._config.bufsize, this._maxDataChunkSize)
+            : this._maxDataChunkSize;
+          if (!Number.isSafeInteger(size) || size < 0 || size > maxChunkSize * 2) {
+            throw protocolParseError(`#DATA:${size}`);
+          }
           return unescapeData(await this._buffer.readBinary(size), codes);
         })(),
       ]);

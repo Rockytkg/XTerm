@@ -113,6 +113,46 @@ test("terminal output channel rejects control-plane payloads", () => {
   }
 });
 
+test("payloads from another session are rejected to protect the output cursor", () => {
+  // A→B 直切期间旧 channel 的在途 payload：写入会污染新会话屏幕，且会把
+  // 旧会话的 endOffset 记到新会话名下，令后续回放被整批吞掉。
+  const decision = classifyTerminalOutputPayload(
+    {
+      kind: "text",
+      sessionId: "session-2",
+      channelId: 7,
+      data: "leak",
+      startOffset: 0,
+      endOffset: 4,
+    },
+    outputState(),
+  );
+
+  assert.equal(decision.kind, "ignore");
+  assert.equal(decision.normalized, null);
+});
+
+test("closing channel tail output of the same session is still accepted", () => {
+  const decision = classifyTerminalOutputPayload(
+    {
+      kind: "text",
+      sessionId: "session-1",
+      channelId: 11,
+      data: "bye",
+      startOffset: 5,
+      endOffset: 8,
+    },
+    outputState({
+      sessionChannelId: null,
+      closingSessionId: "session-1",
+      closingSessionChannelId: 11,
+    }),
+  );
+
+  assert.equal(decision.kind, "text");
+  assert.equal(decision.normalized.data, "bye");
+});
+
 test("raw output without trimming passes the base64 payload through unchanged", () => {
   const dataBase64 = toBase64(Uint8Array.from([65, 66, 67, 68]));
   const decision = classifyTerminalOutputPayload(

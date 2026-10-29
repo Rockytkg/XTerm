@@ -407,9 +407,11 @@ class TerminalSessionRuntimeController {
         }
         // 无论是否发了 detach，都本地丢弃本次 attach 注册的订阅；
         // 否则其闭包 channelReady 恒为 false，pendingOutputPayloads 会无限增长。
+        // 按 subscriptionId 精确丢弃，避免误伤同会话的活跃订阅。
         this.transport.dropSubscription?.(
           sessionId,
           Number.isFinite(nextChannelId) ? nextChannelId : null,
+          lease?.subscriptionId ?? null,
         );
         return false;
       }

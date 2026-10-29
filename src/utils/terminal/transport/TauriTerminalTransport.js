@@ -39,11 +39,17 @@ class TauriTerminalTransport {
         sessionId: response?.sessionId || sessionId,
         subscriptionId: response?.subscriptionId,
       });
+      const key = leaseKey(lease);
+      if (!key) {
+        // 无效 lease（后端未返回 channelId 等）不能作为订阅键：多个这样的
+        // 订阅会在 Map 中互相覆盖，被覆盖者的 onmessage 永不置空，成为残留。
+        throw new Error(`terminal_attach returned an invalid channel lease for '${sessionId}'`);
+      }
       const subscription = {
         channel,
         lease,
       };
-      this.outputSubscriptions.set(leaseKey(lease), subscription);
+      this.outputSubscriptions.set(key, subscription);
       return lease;
     } catch (error) {
       channel.onmessage = null;
@@ -106,11 +112,24 @@ class TauriTerminalTransport {
    * 被判 stale 等无需（或不应）再通知后端的场景，避免 outputSubscriptions
    * 残留到组件卸载才回收。
    */
-  dropSubscription(sessionId, channelId = null) {
-    const subscription = this.findSubscription(sessionId, channelId);
+  dropSubscription(sessionId, channelId = null, subscriptionId = null) {
+    // stale attach 场景下同一会话可能同时存在多个订阅（旧 channel 仍登记在
+    // Map 中），按 sessionId+channelId 首匹配会丢错对象；能拿到本次 attach
+    // 的 subscriptionId 时按它精确丢弃。
+    const subscription =
+      subscriptionId != null
+        ? this.findSubscriptionById(subscriptionId)
+        : this.findSubscription(sessionId, channelId);
     if (subscription) {
       this.detachOutputSubscription(subscription);
     }
+  }
+
+  findSubscriptionById(subscriptionId) {
+    for (const subscription of this.outputSubscriptions.values()) {
+      if (subscription.lease.subscriptionId === subscriptionId) return subscription;
+    }
+    return null;
   }
 
   /**

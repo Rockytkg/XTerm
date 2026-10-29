@@ -204,6 +204,55 @@ test("a connected banner released by device output stays idempotent", () => {
   assert.equal(writes.length, 1);
 });
 
+test("a locale replay does not re-append a released lifecycle banner", () => {
+  // lifecycle 横幅写的是"事件"：被终端输出 release 后，locale 切换导致
+  // 指纹失配时不能把它重新写到 shell 的当前光标处。
+  const writes = [];
+  const translations = { "terminal.connectionConnected": "Connected" };
+  const addon = new TerminalStatusAddon({
+    getConnection: () => ({ host: "example.com", port: 22, protocol: "ssh" }),
+    getDetectedBaudRate: () => 0,
+    getFailureDetail: () => "",
+    getFailureLabel: () => "",
+    getPalette: () => ({ success: "#000004", hint: "#000003", boot: "#000002", error: "#000001" }),
+    getStatusDetail: () => "",
+    queueWrite: (data) => writes.push(data),
+    t: (key) => translations[key] || key,
+  });
+  addon.activate({ buffer: { active: { cursorX: 0 } } });
+
+  addon.write("connected");
+  addon.release();
+  translations["terminal.connectionConnected"] = "已连接";
+  addon.write("connected");
+
+  assert.equal(writes.length, 1);
+});
+
+test("a reconnect progress banner still renders after a released lifecycle banner", () => {
+  const { addon, writes } = createStatusAddon(0);
+
+  addon.write("connected");
+  addon.release();
+  addon.write("connecting");
+
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1].includes("terminal.connectionConnectingSsh"), true);
+});
+
+test("a different lifecycle status still renders after a released banner", () => {
+  // 只跳过同一状态的本地化重放；connected 被输出消费后，断开时的 closed
+  // 提示仍必须出现。
+  const { addon, writes } = createStatusAddon(0);
+
+  addon.write("connected");
+  addon.release();
+  addon.write("closed", "bye");
+
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1].includes("terminal.connectionClosed"), true);
+});
+
 test("a localized connection error is followed by the raw backend detail on a separate line", () => {
   for (const protocol of ["ssh", "telnet", "serial"]) {
     const { addon, writes } = createStatusAddon(0, protocol);

@@ -6,6 +6,10 @@ import { createLogger } from "../../../logger";
 
 const logger = createLogger("frontend.terminal.clipboard-addon");
 
+// OSC 52 写入的应用层上限：解析器层允许约 10MB 的 base64，但剪贴板写入远超
+// 实用规模，超限内容直接丢弃，避免远端用大载荷覆盖本地剪贴板。
+const MAX_OSC52_WRITE_BYTES = 4 * 1024 * 1024;
+
 function stripBase64Padding(value) {
   return String(value || "").replace(/=+$/u, "");
 }
@@ -84,12 +88,20 @@ export class TauriClipboardAddon {
     if (!selection && !payload) return true;
 
     if (payload === "?") {
-      return readTauriClipboardText()
-        .then((text) => (this._reportClipboard(selection, selection === "c" ? text : ""), true))
-        .catch((error) => (logger.warn("osc52.clipboard.read.failed", error), true));
+      // OSC 52 读取默认拒绝：远端程序无需任何确认即可取走用户剪贴板，
+      // kitty / Windows Terminal 等终端同样默认禁止该方向。回空串让协议
+      // 正常收尾，同时留日志便于排查依赖该能力的程序。
+      logger.warn("osc52.clipboard.read.denied", { selection });
+      this._reportClipboard(selection, "");
+      return true;
     }
 
     if (selection !== "c") return true;
+    // 解码前按 base64 长度估算解码后大小，避免先分配再拒绝。
+    if (Math.ceil((payload.length * 3) / 4) > MAX_OSC52_WRITE_BYTES) {
+      logger.warn("osc52.clipboard.write.too_large", { base64Length: payload.length });
+      return true;
+    }
     return writeTauriClipboardText(decodeText(payload))
       .then(() => true)
       .catch((error) => (logger.warn("osc52.clipboard.write.failed", error), true));

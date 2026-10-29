@@ -124,6 +124,7 @@ const { t, te, locale } = useI18n();
 const { sessionRegistry } = useWorkspaceStore();
 const logger = createLogger("frontend.terminal.panel");
 const terminalMount = ref(null);
+const searchPopoverRef = ref(null);
 
 let terminal;
 let searchAddon;
@@ -270,6 +271,7 @@ const {
   isForegroundRuntime,
   getSearchAddon: () => searchAddon,
   clearTerminalSelection: () => terminal?.clearSelection(),
+  focusSearchInput: () => searchPopoverRef.value?.focusInput?.(),
 });
 
 const terminalDragDrop = useTerminalDragDrop({
@@ -466,8 +468,9 @@ terminalSessionRuntime = useTerminalSessionRuntime({
 });
 sessionRuntimeController = terminalSessionRuntime.controller;
 
-// 后台 30s 挂起（与 WebGL dispose 同节奏）：detach 后输出链路停止，
-// 会话录音自然暂停（无数据即无 chunk），恢复时增量追平的 chunk 照常录制。
+// 后台 30s 挂起：detach 后输出解析链路停止（终端不可见时渲染已由 xterm 的
+// IntersectionObserver 自动暂停，渲染层无需额外处置），会话录音自然暂停
+// （无数据即无 chunk），恢复时增量追平的 chunk 照常录制。
 // presentation gate 只在首绘路径生效，挂起/恢复不经过它，无需特殊处理。
 const backgroundSuspender = createBackgroundSessionSuspender({
   isBackground: () => !isForegroundRuntime(),
@@ -1091,6 +1094,7 @@ onBeforeUnmount(() => {
     >
       <TerminalSearchPopover
         v-if="searchOpen"
+        ref="searchPopoverRef"
         v-model:term="searchTerm"
         :result-label="searchResultLabel"
         :is-empty="searchEmpty"

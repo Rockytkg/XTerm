@@ -3,7 +3,12 @@ import test from "node:test";
 import { nextTick, reactive } from "vue";
 import { useTerminalSearchPanel } from "../src/composables/useTerminalSearchPanel.js";
 
-function createSearchHarness({ token = 0, visible = true, addon = null } = {}) {
+function createSearchHarness({
+  token = 0,
+  visible = true,
+  addon = null,
+  focusSearchInput = null,
+} = {}) {
   const props = reactive({ searchOpenToken: token, visible });
   const state = {
     clearCalls: 0,
@@ -31,6 +36,7 @@ function createSearchHarness({ token = 0, visible = true, addon = null } = {}) {
     props,
     t: (key) => key,
     focusTerminal: () => {},
+    focusSearchInput,
     isForegroundRuntime: () => props.visible,
     getSearchAddon: () => searchAddon,
     clearTerminalSelection: () => {
@@ -132,14 +138,33 @@ test("search preserves whitespace and reports when the addon result limit is rea
   assert.equal(harness.panel.searchEmpty.value, false);
 });
 
-test("a search request received while hidden is consumed when the terminal becomes visible", async () => {
+test("a search request received while hidden is consumed by the visible terminal only", async () => {
+  // 打开请求是一次性广播：隐藏面板直接消费掉 token，否则切换 tab 时每个
+  // 面板都会各弹一次搜索框。
   const harness = createSearchHarness({ token: 1, visible: false });
   assert.equal(harness.panel.searchOpen.value, false);
 
   harness.props.visible = true;
   await nextTick();
 
-  assert.equal(harness.panel.searchOpen.value, true);
+  assert.equal(harness.panel.searchOpen.value, false);
+});
+
+test("re-opening the search panel keeps the query and focuses the input", async () => {
+  let focusCalls = 0;
+  const harness = createSearchHarness({
+    focusSearchInput: () => {
+      focusCalls += 1;
+    },
+  });
+
+  harness.panel.openSearchPanel();
+  await nextTick();
+  harness.panel.searchTerm.value = "needle";
+
+  assert.equal(harness.panel.openSearchPanel(), true);
+  assert.equal(harness.panel.searchTerm.value, "needle");
+  assert.ok(focusCalls >= 2);
 });
 
 test("an initial search request can be synchronized after the addon is installed", () => {

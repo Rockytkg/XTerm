@@ -1,8 +1,9 @@
 /**
  * 后台 tab 挂起调度器（纯逻辑，可单测）。
  *
- * 与 WebGL 30s dispose 节奏对齐：tab 转入后台 delayMs 后触发 suspend
- * （detach channel，后端会话与 replay cache 继续运行）；回前台立即 resume。
+ * tab 转入后台 delayMs 后触发 suspend（detach channel，停止输出解析链路的
+ * CPU 消耗；后端会话与 replay cache 继续运行）；回前台立即 resume。渲染层
+ * 无需配套处置：xterm 的 IntersectionObserver 在终端不可见时已自动暂停渲染。
  * 快速来回切换时 suspend 计时会被取消；attach/detach 本身的串行化由
  * TerminalSessionRuntimeController 的 transitionChain 保证，这里只产生决策。
  */

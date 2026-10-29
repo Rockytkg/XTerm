@@ -10,6 +10,10 @@ export function shouldSendBackspaceAsBs(event, connection, sessionId) {
   return (
     event.type === "keydown" &&
     event.key === "Backspace" &&
+    // IME 组合期间的退格属于输入法（编辑拼音串），透传到终端会同时破坏
+    // 组合串与远端输入。keyCode 229 是 composition 键的旧式标记。
+    !event.isComposing &&
+    event.keyCode !== 229 &&
     !!sessionId &&
     // 默认 BS：只有显式选择 DEL(^?) 的会话才放行为 xterm 原生 \x7f。
     // 历史 profile 里的 "AUTO" 等未知值同样落到默认 BS。

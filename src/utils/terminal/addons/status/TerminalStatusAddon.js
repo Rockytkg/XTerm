@@ -86,6 +86,7 @@ export class TerminalStatusAddon {
       _terminal: null,
       _resizeDisposable: null,
       _fingerprint: "",
+      _releasedLifecycleStatus: null,
       _overlayLineCount: 0,
       _overlayAttached: false,
       _overlayPresentation: null,
@@ -112,6 +113,7 @@ export class TerminalStatusAddon {
 
   clear() {
     this._fingerprint = "";
+    this._releasedLifecycleStatus = null;
     this._overlayLineCount = 0;
     this._overlayAttached = false;
     this._overlayPresentation = null;
@@ -131,6 +133,12 @@ export class TerminalStatusAddon {
       this._queueWrite(erasePreviousBlock(this._overlayLineCount));
     }
     if (releasedProgress) this._fingerprint = "";
+    // lifecycle 横幅被终端输出"消费"后记住它的状态：同状态的本地化重放
+    // （locale 切换）不再写回光标处，但后续不同状态（如 closed）仍要呈现。
+    // 没有附着横幅的重复 release 不改写这个标记。
+    if (this._overlayAttached) {
+      this._releasedLifecycleStatus = releasedProgress ? null : this._overlayStatus;
+    }
     this._overlayLineCount = 0;
     this._overlayAttached = false;
     this._overlayPresentation = null;
@@ -166,6 +174,17 @@ export class TerminalStatusAddon {
     descriptor.lines = normalizeLines(descriptor.lines);
     const fingerprint = `${status}|${descriptor.presentation}|${descriptor.title}|${descriptor.lines.join("\n")}`;
     if (fingerprint === this._fingerprint) return;
+    // lifecycle 横幅是事件而非持续状态：同一状态被终端输出 release 后，
+    // 本地化重放（locale 切换等）不应再把它写进当前光标处，否则会污染
+    // 提示行与 scrollback。首写与仍附着时的原地替换不受影响；不同状态
+    // （如 connected 之后的 closed）仍正常呈现。
+    if (
+      descriptor.presentation === STATUS_PRESENTATION.LIFECYCLE &&
+      !this._overlayAttached &&
+      this._releasedLifecycleStatus === status
+    ) {
+      return;
+    }
     this._fingerprint = fingerprint;
     this._render({ ...descriptor, status });
   }
@@ -292,6 +311,7 @@ export class TerminalStatusAddon {
     this._overlayFirstColumn = firstColumn;
     this._overlayLineCount = this._countOverlayLines();
     this._overlayAttached = true;
+    this._releasedLifecycleStatus = null;
     this._overlayPresentation = presentation;
     this._overlayStatus = status;
     this._queueWrite(payload);

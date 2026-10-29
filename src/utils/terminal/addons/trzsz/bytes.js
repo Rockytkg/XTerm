@@ -1,6 +1,9 @@
-import { deflate, inflate } from "pako";
+import { Inflate, deflate } from "pako";
 
 const BASE64_CHUNK_SIZE = 0x8000;
+// 协议行（CFG/NAME/MD5/SUCC 等）解码后的合理上限。远端控制的 deflate 数据
+// 压缩比可以极高，必须在解压过程中按累计输出设限，不能等展开完再检查。
+const MAX_DECODED_LINE_BYTES = 16 * 1024 * 1024;
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
 
@@ -99,7 +102,29 @@ export function encodeBuffer(value) {
 }
 
 export function decodeBuffer(value) {
-  return inflate(base64ToBytes(value));
+  const inflator = new Inflate();
+  const chunks = [];
+  let total = 0;
+  // 覆盖默认 onData：pako 只在输出缓冲填满或流结束时交付数据，这里在每次
+  // 交付时累计长度并随时中止，解压炸弹不会先完整展开再被拒绝。
+  inflator.onData = (chunk) => {
+    total += chunk.length;
+    if (total > MAX_DECODED_LINE_BYTES) {
+      throw new Error("Decoded protocol payload is too large");
+    }
+    chunks.push(chunk);
+  };
+  inflator.push(base64ToBytes(value), true);
+  if (inflator.err) {
+    throw new Error(`Invalid protocol payload: ${inflator.msg || "inflate failed"}`);
+  }
+  const result = new Uint8Array(total);
+  let position = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, position);
+    position += chunk.length;
+  }
+  return result;
 }
 
 export function bytesEqual(left, right) {

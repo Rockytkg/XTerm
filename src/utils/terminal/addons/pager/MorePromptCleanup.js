@@ -4,6 +4,10 @@ const MORE_PROMPT_LINE_PATTERN = /----\s*More\s*----\s*$/u;
 const MORE_PROMPT_TEXT_PATTERN = /----\s*More\s*----/u;
 const MORE_PROMPT_ARTIFACT_PATTERN = /----\s*More\s*----[\t \0]*/u;
 const LEADING_FILL_PATTERN = /^[\t \0]+/u;
+// 预支的 credit 只在"远端即将重绘 pager"的有效窗口内成立；远端没画 pager
+// （用户按 q 退出后又敲空格等）时，过期 credit 会把后续正常输出里的
+// `---- More ----` 文本或前导填充误删。
+const CREDIT_TTL_MS = 10_000;
 
 export class MorePromptCleanup {
   constructor({ isEnabled, readCurrentLine, queueLocalClear }) {
@@ -16,6 +20,7 @@ export class MorePromptCleanup {
   reset() {
     this._promptCredits = 0;
     this._fillCredits = 0;
+    this._creditsExpireAt = 0;
   }
 
   observeInput(data) {
@@ -31,6 +36,7 @@ export class MorePromptCleanup {
       // single ordered stream instead of racing a direct terminal.write().
       this._queueLocalClear?.(LOCAL_CLEAR_PROMPT);
       this._fillCredits += 1;
+      this._creditsExpireAt = Date.now() + CREDIT_TTL_MS;
       return;
     }
 
@@ -40,6 +46,7 @@ export class MorePromptCleanup {
     // deterministic regardless of key repeat cadence.
     this._promptCredits += 1;
     this._fillCredits += 1;
+    this._creditsExpireAt = Date.now() + CREDIT_TTL_MS;
   }
 
   cleanOutput(data) {
@@ -68,6 +75,11 @@ export class MorePromptCleanup {
   }
 
   _hasCredits() {
+    if (this._creditsExpireAt && Date.now() > this._creditsExpireAt) {
+      this._promptCredits = 0;
+      this._fillCredits = 0;
+      this._creditsExpireAt = 0;
+    }
     return this._promptCredits > 0 || this._fillCredits > 0;
   }
 

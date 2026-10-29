@@ -74,5 +74,10 @@ export function createTerminalShortcutHandler({
     stopPropagation: true,
     run: openSearch,
   });
-  return (event) => registry.handleEvent(event);
+  return (event) => {
+    // IME 组合期间的按键属于输入法（例如用退格编辑拼音串），不能当作
+    // 终端快捷键消费；放行给 xterm 的组合输入处理。
+    if (event?.isComposing || event?.keyCode === 229) return true;
+    return registry.handleEvent(event);
+  };
 }

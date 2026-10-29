@@ -46,6 +46,9 @@ export class TerminalOutputAddon {
 
   queue(data, { recordable = false } = {}) {
     if (!data) return;
+    // 终端未激活/已销毁时直接丢弃：flush 在无终端时会提前返回，若仍缓存
+    // data，缓冲区只会无界增长。
+    if (!this._terminal) return;
     // 有录制消费者时必须为整批输出保留边界，才能在同一批内筛出可录制内容；
     // 录制未激活时入队的段 recordable 恒为 false，直接跳过可以避免每个输出包
     // 都产生一次分段分配。

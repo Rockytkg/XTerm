@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount } from "vue";
+import { onBeforeUnmount, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { PopoverAnchor, PopoverContent, PopoverRoot } from "reka-ui";
 import { ChevronDown, ChevronUp, Search, X } from "@lucide/vue";
@@ -14,6 +14,13 @@ const props = defineProps({
 const emit = defineEmits(["update:term", "run", "close"]);
 const { t } = useI18n();
 const debouncedRunSearch = createDebounced(() => run(false), 120);
+const inputRef = ref(null);
+
+// 面板已打开时重复触发搜索请求只把焦点带回输入框（autofocus 只在挂载时生效）。
+function focusInput() {
+  inputRef.value?.focus?.();
+}
+defineExpose({ focusInput });
 
 function run(previous = false) {
   emit("run", { previous });
@@ -75,6 +82,7 @@ onBeforeUnmount(() => {
             class="terminal-search-icon"
           />
           <input
+            ref="inputRef"
             :value="props.term"
             class="terminal-search-input"
             :placeholder="t('terminal.searchPlaceholder')"

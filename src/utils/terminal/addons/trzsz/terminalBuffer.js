@@ -157,6 +157,9 @@ export class TransferBuffer {
   }
 
   async readBinary(size) {
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new TransferError(`Invalid binary size: ${size}`);
+    }
     const result = new Uint8Array(size);
     let offset = 0;
     while (offset < size) {

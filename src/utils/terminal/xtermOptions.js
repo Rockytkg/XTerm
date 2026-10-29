@@ -78,8 +78,13 @@ export function createXtermOptions(props, isForegroundRuntime) {
 }
 
 export function terminalFontFamily(fontFamily) {
-  return [fontFamily, ...TERMINAL_FONT_FALLBACKS]
-    .filter(Boolean)
+  // 用户可填逗号分隔的字体列表；按逗号拆开后逐项加引号，否则整串会被当成
+  // 一个不存在的字体名。
+  const explicitNames = String(fontFamily || "")
+    .split(",")
+    .map((name) => name.trim().replace(/^["']|["']$/gu, ""))
+    .filter(Boolean);
+  return [...explicitNames, ...TERMINAL_FONT_FALLBACKS]
     .map((name) => (name === "monospace" ? name : `"${name}"`))
     .join(", ");
 }
