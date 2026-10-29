@@ -6,8 +6,7 @@ use tokio::io::AsyncWriteExt;
 use super::{
     core::{
         ConnectionError, SessionWorkerEvent, TransportCapabilityCommand, TransportCommand,
-        TransportCommandOutcome, SERIAL_READ_BATCH_MAX_BYTES, SERIAL_READ_COALESCE_TARGET_BYTES,
-        SERIAL_READ_COALESCE_WINDOW, SERIAL_WRITE_STALL_TIMEOUT_MS,
+        TransportCommandOutcome, SERIAL_READ_BATCH_MAX_BYTES, SERIAL_WRITE_STALL_TIMEOUT_MS,
     },
     serial::redetect_serial_baud_on_open_port,
     transport_events::{
@@ -85,25 +84,8 @@ async fn run_serial_transport_actor(
                     }
                 }
             }
-            // select! 只等首字节：分支 future 不持有已读数据，biased 的命令分支
-            // 抢占时不会随 future 取消而丢字节。聚合等待在分支体内进行，体内的
-            // await 不经过 select!，不存在取消点。
-            result = wait_serial_input(port, &mut buffer) => {
-                let arrived = match result {
-                    Ok(arrived) => arrived,
-                    Err(error) => {
-                        send_transport_failed(event_tx, error);
-                        return;
-                    }
-                };
-                match drain_and_coalesce_serial_input(
-                    port,
-                    &mut buffer,
-                    arrived,
-                    &mut aborted_read_recovery_available,
-                )
-                .await
-                {
+            result = read_serial_transport(port, &mut buffer, &mut aborted_read_recovery_available) => {
+                match result {
                     Ok(size) if size > 0 => {
                         // 一次成功读取说明重叠 IO 健康,重新武装 aborted 恢复名额。
                         aborted_read_recovery_available = true;
@@ -126,52 +108,9 @@ async fn run_serial_transport_actor(
     }
 }
 
-/// Drain bytes already queued, then coalesce trickle: while the chunk is still
-/// small, keep waiting (bounded by SERIAL_READ_COALESCE_WINDOW, see core.rs) for
-/// the next driver completion and drain again, so one wakeup delivers a whole
-/// chunk even when the driver completes reads per byte. Runs inside the select!
-/// arm body — its awaits are never cancelled while drained bytes sit in `buffer`.
-async fn drain_and_coalesce_serial_input(
-    port: &mut tokio_serial::SerialStream,
-    buffer: &mut [u8],
-    arrived: usize,
-    aborted_read_recovery_available: &mut bool,
-) -> Result<usize, String> {
-    let mut total =
-        drain_ready_serial_input(port, buffer, arrived, aborted_read_recovery_available)?;
-    let deadline = tokio::time::Instant::now() + SERIAL_READ_COALESCE_WINDOW;
-    while total < SERIAL_READ_COALESCE_TARGET_BYTES && total < buffer.len() {
-        let arrived = match tokio::time::timeout_at(
-            deadline,
-            wait_serial_input(port, &mut buffer[total..]),
-        )
-        .await
-        {
-            // 窗口关闭：交付已收集到的字节。
-            Err(_) => break,
-            // 已读到的数据先交付；错误留给下一轮等待时上报（与 drain 一致）。
-            Ok(Err(error)) if total > 0 => {
-                log::debug!(target: "serial.transport", "serial coalesce stopped after {total} byte(s): {error}");
-                break;
-            }
-            Ok(Err(error)) => return Err(error),
-            Ok(Ok(arrived)) => arrived,
-        };
-        let before = total;
-        total = drain_ready_serial_input(
-            port,
-            buffer,
-            total + arrived,
-            aborted_read_recovery_available,
-        )?;
-        // 假唤醒/EOF 没有带来新字节：不再等满窗口，直接交付。
-        if total == before {
-            break;
-        }
-    }
-    Ok(total)
-}
-
+/// Read one batch of serial input: wait for the first byte(s), then drain
+/// everything already queued so one wakeup delivers a whole chunk.
+///
 /// Waiting for the first byte is platform-specific:
 /// - Unix goes through `AsyncRead`, which drives the fd via `AsyncFd::try_io`
 ///   and therefore clears/waits epoll readiness correctly. tokio-serial's own
@@ -182,6 +121,15 @@ async fn drain_and_coalesce_serial_input(
 /// - Windows keeps `readable()` + `try_read`: the handle is driven by
 ///   overlapped IO, and starting (then cancelling) an `AsyncRead` future can
 ///   leave a stale ERROR_OPERATION_ABORTED completion queued.
+async fn read_serial_transport(
+    port: &mut tokio_serial::SerialStream,
+    buffer: &mut [u8],
+    aborted_read_recovery_available: &mut bool,
+) -> Result<usize, String> {
+    let arrived = wait_serial_input(port, buffer).await?;
+    drain_ready_serial_input(port, buffer, arrived, aborted_read_recovery_available)
+}
+
 #[cfg(unix)]
 async fn wait_serial_input(
     port: &mut tokio_serial::SerialStream,
