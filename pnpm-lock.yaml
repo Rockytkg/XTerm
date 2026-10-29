@@ -5,9 +5,6 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@xterm/addon-ligatures@0.11.0-beta.301':
-    hash: 0e70b2f88c5354275c947bcec62393e4f08aa70778832d5da207ed93374fbdc7
-    path: patches/@xterm__addon-ligatures@0.11.0-beta.301.patch
   '@xterm/addon-search@0.17.0-beta.301':
     hash: 81bc494ab34d82ce3274c522167893c991ed179dd2b6ed78a462786a1e44007b
     path: patches/@xterm__addon-search@0.17.0-beta.301.patch
@@ -85,9 +82,6 @@ importers:
       '@xterm/addon-image':
         specifier: 0.10.0-beta.301
         version: 0.10.0-beta.301(@xterm/xterm@6.1.0-beta.304(patch_hash=d64e6bc278fc8dd5ddac1e932630033b9fa300be2184638d1aaef948ab258e79))
-      '@xterm/addon-ligatures':
-        specifier: 0.11.0-beta.301
-        version: 0.11.0-beta.301(patch_hash=0e70b2f88c5354275c947bcec62393e4f08aa70778832d5da207ed93374fbdc7)(@xterm/xterm@6.1.0-beta.304(patch_hash=d64e6bc278fc8dd5ddac1e932630033b9fa300be2184638d1aaef948ab258e79))
       '@xterm/addon-progress':
         specifier: 0.3.0-beta.301
         version: 0.3.0-beta.301(@xterm/xterm@6.1.0-beta.304(patch_hash=d64e6bc278fc8dd5ddac1e932630033b9fa300be2184638d1aaef948ab258e79))
@@ -1397,12 +1391,6 @@ packages:
     peerDependencies:
       '@xterm/xterm': ^6.1.0-beta.304
 
-  '@xterm/addon-ligatures@0.11.0-beta.301':
-    resolution: {integrity: sha512-8F3D/DHbi3W+ool0xIV90paDGJYqUU/SQ9Pdltgx2nw9QFFgjtq+OscXANhrNhDzIU80p2GCnwV0jW+a6Dal0w==}
-    engines: {node: '>8.0.0'}
-    peerDependencies:
-      '@xterm/xterm': ^6.1.0-beta.304
-
   '@xterm/addon-progress@0.3.0-beta.301':
     resolution: {integrity: sha512-9V04P0yncSSOZTgNvlEo6D3xiaHxALqoxEgQqgGhf20mj2eOQE0sfVPRMtO6wJwi4uI2viORUkBuiYBObvif3g==}
     peerDependencies:
@@ -2313,10 +2301,6 @@ packages:
   lop@0.4.2:
     resolution: {integrity: sha512-RefILVDQ4DKoRZsJ4Pj22TxE3omDO47yFpkIBoDKzkqPRISs5U1cnAdg/5583YPkWPaLIYHOKRMQSvjFsO26cw==}
 
-  lru-cache@11.5.3:
-    resolution: {integrity: sha512-U4N8FgzmWxc8k1VH8Kr6lQg18U7Fjvby6wXHVRX/ZZ7IwWbRMgrRbP0Wrb5q5NVinryp4SQampHKdvtecItxUg==}
-    engines: {node: 20 || >=22}
-
   magic-regexp@0.10.0:
     resolution: {integrity: sha512-Uly1Bu4lO1hwHUW0CQeSWuRtzCMNO00CmXtS8N6fyvB3B979GOEEeAkiTUDsmbYLAbvpUS/Kt5c4ibosAzVyVg==}
 
@@ -2417,10 +2401,6 @@ packages:
 
   ohash@2.0.12:
     resolution: {integrity: sha512-65S/5gk9YSsaRjcyf7Nfa6h/d3E8/1gslpXfI4W7Dxn/oap8IKRuNT5VXkLQ1YFKIEg4apRY4Pj6aiwFzrDdmw==}
-
-  opentype.js@2.0.0:
-    resolution: {integrity: sha512-kCyjv6xdDY1W/jLWZ/L3QhhTlKUqDZMQ5+Jdlw12b3dXkKNpYBqqlMMj0YDQPShWFTMwgZI1hG14kN3XUDSg/A==}
-    hasBin: true
 
   option@0.2.4:
     resolution: {integrity: sha512-pkEqbDyl8ou5cpq+VsnQbe/WlEy5qS7xPzMS1U55OCG9KPvwFD46zDbxQIj3egJSFc3D+XhYOPUzz49zQAVy7A==}
@@ -4425,12 +4405,6 @@ snapshots:
     dependencies:
       '@xterm/xterm': 6.1.0-beta.304(patch_hash=d64e6bc278fc8dd5ddac1e932630033b9fa300be2184638d1aaef948ab258e79)
 
-  '@xterm/addon-ligatures@0.11.0-beta.301(patch_hash=0e70b2f88c5354275c947bcec62393e4f08aa70778832d5da207ed93374fbdc7)(@xterm/xterm@6.1.0-beta.304(patch_hash=d64e6bc278fc8dd5ddac1e932630033b9fa300be2184638d1aaef948ab258e79))':
-    dependencies:
-      '@xterm/xterm': 6.1.0-beta.304(patch_hash=d64e6bc278fc8dd5ddac1e932630033b9fa300be2184638d1aaef948ab258e79)
-      lru-cache: 11.5.3
-      opentype.js: 2.0.0
-
   '@xterm/addon-progress@0.3.0-beta.301(@xterm/xterm@6.1.0-beta.304(patch_hash=d64e6bc278fc8dd5ddac1e932630033b9fa300be2184638d1aaef948ab258e79))':
     dependencies:
       '@xterm/xterm': 6.1.0-beta.304(patch_hash=d64e6bc278fc8dd5ddac1e932630033b9fa300be2184638d1aaef948ab258e79)
@@ -5282,8 +5256,6 @@ snapshots:
       option: 0.2.4
       underscore: 1.13.8
 
-  lru-cache@11.5.3: {}
-
   magic-regexp@0.10.0:
     dependencies:
       estree-walker: 3.0.3
@@ -5404,8 +5376,6 @@ snapshots:
       ufo: 1.6.4
 
   ohash@2.0.12: {}
-
-  opentype.js@2.0.0: {}
 
   option@0.2.4: {}
 

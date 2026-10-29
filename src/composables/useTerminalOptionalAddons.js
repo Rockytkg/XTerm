@@ -102,12 +102,13 @@ export function useTerminalOptionalAddons({
     if (!terminal || ligaturesAddon || ligaturesLoadPromise) return ligaturesLoadPromise;
 
     ligaturesLoadPromise = (async () => {
-      const { LigaturesAddon } = await import("@xterm/addon-ligatures");
+      const { TauriLigaturesAddon } =
+        await import("../utils/terminal/addons/ligatures/TauriLigaturesAddon");
       const current = getContext();
       if (current.disposed || current.generation !== generation || !current.terminal) return;
       loadAddon(
         "ligatures",
-        () => new LigaturesAddon(),
+        () => new TauriLigaturesAddon(),
         (addon) => {
           ligaturesAddon = addon;
         },

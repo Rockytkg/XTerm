@@ -1,3 +1,5 @@
+pub mod ligatures;
+
 use std::{
     collections::{BTreeSet, HashMap},
     sync::OnceLock,

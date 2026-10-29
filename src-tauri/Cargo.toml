@@ -59,6 +59,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 infer = "0.22"
 content_inspector = "0.2"
 font-kit = "0.14"
+rustybuzz = "0.20"
 sanitise-file-name = "1.0.0"
 tokio-serial = { version = "5.4", features = ["libudev"] }
 socket2 = { version = "0.6", features = ["all"] }

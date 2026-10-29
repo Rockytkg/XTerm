@@ -39,7 +39,6 @@
     "@uiw/codemirror-theme-github": "^4.25.12",
     "@unocss/reset": "^66.10.5",
     "@xterm/addon-image": "0.10.0-beta.301",
-    "@xterm/addon-ligatures": "0.11.0-beta.301",
     "@xterm/addon-progress": "0.3.0-beta.301",
     "@xterm/addon-search": "0.17.0-beta.301",
     "@xterm/addon-unicode11": "0.10.0-beta.301",

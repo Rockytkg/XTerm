@@ -23,12 +23,6 @@ export default defineConfig({
     alias: {
       util: new URL("./src/shims/node-util.js", import.meta.url).pathname,
       buffer: new URL("./src/shims/node-buffer.js", import.meta.url).pathname,
-      // @xterm/addon-ligatures 依赖链（font-ligatures → lru-cache）静态导入的
-      // Node 内建模块；缺 shim 时 addon 在发布构建中激活即崩、连字整体失效。
-      "node:diagnostics_channel": new URL(
-        "./src/shims/node-diagnostics-channel.js",
-        import.meta.url,
-      ).pathname,
     },
   },
   plugins: [UnoCSS({ inspector: false }), vue()],
@@ -82,7 +76,11 @@ export default defineConfig({
           if (nid.includes("/node_modules/@xterm/xterm/")) return "xterm-core";
           // Split addons further so each optional capability can cache independently.
           if (nid.includes("/node_modules/@xterm/addon-webgl/")) return "xterm-addon-webgl";
-          if (nid.includes("/node_modules/@xterm/addon-ligatures/")) return "xterm-addon-ligatures";
+          if (
+            nid.includes("/src/utils/terminal/addons/ligatures/") ||
+            nid.includes("/src/services/terminalLigatures")
+          )
+            return "xterm-addon-ligatures";
           if (nid.includes("/node_modules/@xterm/addon-search/")) return "xterm-addon-search";
           if (nid.includes("/node_modules/@xterm/addon-web-links/")) return "xterm-addon-web-links";
           if (nid.includes("/node_modules/@xterm/addon-unicode11/")) return "xterm-addon-unicode11";

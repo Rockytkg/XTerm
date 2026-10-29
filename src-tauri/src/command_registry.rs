@@ -61,6 +61,7 @@ macro_rules! app_invoke_handler {
             crate::credentials::commands::credentials_update,
             crate::credentials::commands::credentials_usages,
             crate::app::open_devtools,
+            crate::fonts::ligatures::font_ligatures_resolve,
             crate::fonts::system_fonts_stream_cancel,
             crate::fonts::system_fonts_stream_next,
             crate::fonts::system_fonts_stream_start,
