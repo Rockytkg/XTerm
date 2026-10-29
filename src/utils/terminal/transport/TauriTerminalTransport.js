@@ -7,12 +7,9 @@ class TauriTerminalTransport {
   constructor({ logger } = {}) {
     this.logger = logger;
     this.outputSubscriptions = new Map();
-    this.queuedBatch = null;
-    this.batchChain = Promise.resolve();
   }
 
   async attach(sessionId, handler) {
-    await this.settleQueuedBatch();
     const channel = new Channel();
     channel.onmessage = (payload) => {
       handler(normalizeOutputFrame(payload));
@@ -55,7 +52,6 @@ class TauriTerminalTransport {
   }
 
   async detach(sessionId, channelId = null) {
-    await this.settleQueuedBatch();
     const subscription = this.findSubscription(sessionId, channelId);
     try {
       await this.invokeDetach({
@@ -90,16 +86,6 @@ class TauriTerminalTransport {
     );
   }
 
-  async settleQueuedBatch() {
-    const batch = this.queuedBatch;
-    if (!batch) return;
-    try {
-      await batch.promise;
-    } catch (error) {
-      this.logger?.warn("Pending terminal batch failed before channel transition:", error);
-    }
-  }
-
   findSubscription(sessionId, channelId = null) {
     for (const subscription of this.outputSubscriptions.values()) {
       if (subscription.lease.sessionId !== sessionId) continue;
@@ -127,48 +113,16 @@ class TauriTerminalTransport {
     }
   }
 
-  queueBatchFrame(frame) {
-    if (!frame) return Promise.resolve();
-    const batch = this.queuedBatch ?? this.createQueuedBatch();
-    batch.frames.push(frame);
-    if (!batch.scheduled) {
-      batch.scheduled = true;
-      queueMicrotask(() => this.flushQueuedBatch(batch));
-    }
-    return batch.promise;
-  }
-
-  createQueuedBatch() {
-    const batch = { frames: [], scheduled: false };
-    batch.promise = new Promise((resolve, reject) => {
-      batch.resolve = resolve;
-      batch.reject = reject;
-    });
-    this.queuedBatch = batch;
-    return batch;
-  }
-
-  async flushQueuedBatch(batch) {
-    if (this.queuedBatch === batch) this.queuedBatch = null;
-
-    try {
-      const send = () => this.sendBatch(batch.frames);
-      const sendPromise = this.batchChain.then(send, send);
-      this.batchChain = sendPromise.catch(() => {});
-      await sendPromise;
-      batch.resolve?.();
-    } catch (error) {
-      this.logger?.warn("terminal.batch.send.failed", error);
-      batch.reject?.(error);
-    }
-  }
-
-  sendBatch(frames) {
-    const normalized = (Array.isArray(frames) ? frames : []).filter(Boolean);
-    if (!normalized.length) return Promise.resolve();
-    // 热路径有意使用裸 invoke：终端输入/输出帧频率高，invokeDetailedIpc 的
-    // 逐条日志开销不可忽略；失败由 flushQueuedBatch 统一 warn
-    return invoke("terminal_send_batch", { frames: normalized });
+  /**
+   * 输入帧实时直发：一帧一次 invoke，不做微任务合帧/攒批。顺序由两点保证——
+   * webview IPC 消息按发起顺序投递，且 terminal_send_batch 是同步命令、在主
+   * 线程按投递顺序就地执行（与输出方向 Channel 消息保序同一前提）；帧内的
+   * inputSequence 作为单调去重守卫，丢弃 channel 失配或陈旧的帧。
+   * 热路径有意使用裸 invoke：终端输入帧频率高，invokeDetailedIpc 的逐条日志
+   * 开销不可忽略；失败由调用方捕获并记录。
+   */
+  sendFrame(frame) {
+    return invoke("terminal_send_batch", { frames: [frame] });
   }
 
   send(frame) {
@@ -181,7 +135,7 @@ class TauriTerminalTransport {
       case TERMINAL_FRAME_TYPES.INPUT_BYTES:
       case TERMINAL_FRAME_TYPES.RESIZE:
       case TERMINAL_FRAME_TYPES.RAW_OUTPUT:
-        return this.queueBatchFrame(frame);
+        return this.sendFrame(frame);
       default:
         this.logger?.warn("Unsupported terminal transport frame", frame);
         return Promise.reject(new Error(`Unsupported terminal transport frame '${frame?.type}'`));

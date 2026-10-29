@@ -18,6 +18,16 @@ pub(super) const CONNECT_TIMEOUT_MS: u64 = 8_000;
 pub(super) const STARTUP_AUTH_FOLLOWUP_TIMEOUT_MS: u64 = 5_000;
 pub(super) const SERIAL_WRITE_STALL_TIMEOUT_MS: u64 = 3_000;
 pub(super) const SERIAL_READ_BATCH_MAX_BYTES: usize = 32 * 1024;
+/// 串口细流聚合窗口。mio-serial 在 Windows 把 ReadIntervalTimeout 写死为 1ms，
+/// 而 9600 波特的字节间隔约 1.04ms，驱动几乎逐字节完成一次读取；每个碎块都是
+/// 一条 Channel 消息（小负载经 webview.eval 投递，单次 ExecuteScript 为数百微秒
+/// 级主线程开销），持续满线速输出时每秒数百次 eval 挤占 UI 线程，表现为卡顿。
+/// 首字节到达后仅在窗口内继续收集后续字节，最坏新增延迟即窗口长度——低于一帧，
+/// 也仅相当于 9600 线路上 10 个字节的传输时间。
+pub(super) const SERIAL_READ_COALESCE_WINDOW: Duration = Duration::from_millis(10);
+/// 首波 drain 已拿到不少于该值的数据时直接交付、不等聚合窗口：高波特率批量流
+/// 的首次读取通常已越过阈值，因此不受窗口影响。
+pub(super) const SERIAL_READ_COALESCE_TARGET_BYTES: usize = 64;
 pub(super) const OUTPUT_FLUSH_MAX_BYTES: usize = 128 * 1024;
 pub(super) const SFTP_TRANSFER_BUFFER_BYTES: usize = 256 * 1024;
 pub(super) const CODEC_RAW_BUFFER_CAPACITY: usize = 4 * 1024;
