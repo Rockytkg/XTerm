@@ -22,7 +22,8 @@
         "decorations": false,
         "shadow": true,
         "devtools": true,
-        "visible": false
+        "visible": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --ignore-gpu-blocklist --force_high_performance_gpu --disable-software-rasterizer"
       }
     ],
     "security": {

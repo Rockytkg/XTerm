@@ -7,7 +7,7 @@ import { useRemoteDesktopPane } from "../composables/useRemoteDesktopPane";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { createLogger } from "../utils/logger";
 import { scancodeForKeyEvent } from "../utils/rdpScancodeMap";
-import { createDebounced } from "../utils/schedulers";
+import { createDebounced, createRafThrottle } from "../utils/schedulers";
 import { createWheelAccumulator } from "../utils/wheelAccumulator";
 import {
   RDP_SERVER_MESSAGE,
@@ -54,10 +54,20 @@ let resizeObserver = null;
 const pressedKeys = new Map();
 const pressedButtons = new Set();
 
+// 指针移动按帧合并：高回报率鼠标（可达 1000Hz）不该每个 pointermove 都发一帧，
+// 远端只按自己的渲染节拍消费最新位置，中间样本无价值。按键与滚轮发送前先
+// flush，保证"移动 → 点击/滚轮"的先后顺序与坐标正确。
+const sendPointerMove = createRafThrottle((x, y) => {
+  sendFrame(encodePointerMove(x, y));
+});
+
 // 攒够一个滚轮刻度才发一次 Wheel 消息（单位"格"，正=向上）；浏览器 deltaY 向下
 // 为正，桥协议向上为正，发送时取反。
 const wheelAccumulator = createWheelAccumulator({
-  send: (direction) => sendFrame(encodeWheel(-direction)),
+  send: (direction) => {
+    sendPointerMove.flush();
+    sendFrame(encodeWheel(-direction));
+  },
   getPageHeightPx: () => desktopViewport.value?.clientHeight || 600,
 });
 
@@ -192,6 +202,7 @@ function destroyBridge() {
   ws = null;
   bridgeConnected.value = false;
   wheelAccumulator.reset();
+  sendPointerMove.cancel();
   if (socket) {
     // 销毁中不再关心 close/error 回调。
     socket.onclose = null;
@@ -297,7 +308,7 @@ function handlePointerMove(event) {
   if (!bridgeConnected.value) return;
   const point = desktopPointFromEvent(event);
   if (!point) return;
-  sendFrame(encodePointerMove(point.x, point.y));
+  sendPointerMove(point.x, point.y);
 }
 
 const RDP_BUTTON_BY_POINTER = { 0: 0, 1: 2, 2: 1 };
@@ -320,6 +331,7 @@ function handlePointerButton(event, pressed) {
     pressedButtons.delete(button);
   }
   desktopCanvas.value?.focus();
+  sendPointerMove.flush();
   sendFrame(encodePointerButton(button, pressed));
 }
 

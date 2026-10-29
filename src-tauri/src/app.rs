@@ -364,42 +364,9 @@ pub(crate) fn open_devtools(window: tauri::WebviewWindow) -> Result<(), String> 
     Ok(())
 }
 
-/// WebView2 的 Chromium 在 GPU 特性被 blocklist（新架构驱动）或显示适配器被
-/// 虚拟显示器驱动（向日葵/ToDesk IDD 等）干扰时，会把 WebGL 静默降级到
-/// SwiftShader 软件光栅化：上下文创建成功、无报错无日志，但 xterm WebGL 渲染器
-/// 每帧整视口拷贝/上传/绘制的固定成本全部落在 CPU 上，持续滚动输出时帧率崩落。
-/// 经 WebView2 加载器读取的 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 环境变量追加
-/// Chromium 参数（与 wry 默认的 AdditionalBrowserArguments 合并，同名参数后置
-/// 生效），必须在 webview 环境创建之前设置：
-/// - `--ignore-gpu-blocklist`：绕过特性 blocklist，尽力启用真实 GPU；
-/// - `--force_high_performance_gpu`：多适配器机器上把 ANGLE 固定到高性能 GPU；
-/// - `--disable-software-rasterizer`：禁止软件光栅化兜底——硬件路径确实不可用
-///   时 WebGL 上下文创建直接失败，由前端既有加载失败路径回退 DOM 渲染器，
-///   绝不落入慢速软件路径。
-#[cfg(windows)]
-fn configure_webview2_gpu_args() {
-    const ENV_KEY: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
-    const GPU_ARGS: &[&str] = &[
-        "--ignore-gpu-blocklist",
-        "--force_high_performance_gpu",
-        "--disable-software-rasterizer",
-    ];
-
-    let existing = std::env::var(ENV_KEY).unwrap_or_default();
-    // 用户/系统级可能已配置同名变量：按开关精确去重后追加缺失项。
-    let mut parts: Vec<&str> = existing.split_whitespace().collect();
-    for arg in GPU_ARGS {
-        if !parts.contains(arg) {
-            parts.push(arg);
-        }
-    }
-    std::env::set_var(ENV_KEY, parts.join(" "));
-}
-
 pub fn run() {
     #[cfg(windows)]
     {
-        configure_webview2_gpu_args();
         if single_instance::ensure_single_instance() {
             std::process::exit(0);
         }

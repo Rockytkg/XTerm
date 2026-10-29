@@ -66,7 +66,7 @@ XTerm 是一个 Tauri 2 桌面终端工作区应用：在一个本地客户端�
 - 连接、凭证、路径、日志、会话记录等跨边界功能，需要同时维护前端 service、Rust 命令和存储行为。
 - 大二进制内容过 IPC：优先 `tauri::ipc::Response` 原始字节响应（Windows/Linux 自定义协议），但 macOS/iOS 的 WKWebView 只走 postMessage+JSON 通道，Raw 会退化为数字数组（比 base64 更差）——必须保留 base64 变体命令并由前端按 `sftp_ipc_bytes_probe` 探测结果分流（参考 `sftp_read_file_bytes` / `readRemoteSftpFileBytes`）。事件推送只支持 JSON payload，终端输出等高频通道的 base64 不可省略。
 - 新增或删除会话选项开关（`ConnectionProfileOptions`）时必须同步整条链路：`storage/models.rs` 的 `ConnectionOptions` → `workspace/mod.rs` 的 `ConnectionListItem`/`ConnectionProfileOptions` 与双向映射 → 前端 `src/utils/connectionProfileOptions.js` 白名单 → 连接弹窗 `ConnectionSessionOptions.vue` → 工作区侧边栏 `WorkspaceSidebarSessionView.vue`。侧边栏开关必须实时生效（更新后端会话能力并立即启停对应功能，参考 `terminal_session_set_metrics_enabled`），不能只在下次连接时生效；会话实际能力经 open 响应的 `capabilities` 下发，不要用协议默认值代替。例外：`telnetEnterSends`（Telnet 回车编码）按用户决定只出现在连接弹窗，不进侧边栏；其输入重映射在前端按键时读取 profile 即生效，无需侧边栏实时通道。持久化数据不保留向前兼容：不接受旧格式记录，也不做启动迁移。
-- 终端附加能力（搜索、剪贴板 OSC 52、超链接、Unicode 11、连字、进度序列）默认通过 xterm addon 加载；WebGL 渲染器有独立开关。OSC 1337 CurrentDir 用于 SFTP 跟随 shell 目录（应用不自动注入 shell 集成脚本）。
+- 终端附加能力（搜索、剪贴板 OSC 52、超链接、Unicode 11、连字、进度序列）默认通过 xterm addon 加载；WebGL 渲染器有独立开关。Windows GPU 参数（`--ignore-gpu-blocklist`、`--force_high_performance_gpu`、`--disable-software-rasterizer`）经 `tauri.conf.json` 窗口配置的 `additionalBrowserArgs` 确定性注入 WebView2（环境变量方式在部分启动路径下不生效，勿回退）。OSC 1337 CurrentDir 用于 SFTP 跟随 shell 目录（应用不自动注入 shell 集成脚本）。
 
 ## 安全与权限
 

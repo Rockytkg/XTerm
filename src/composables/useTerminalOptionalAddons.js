@@ -1,6 +1,6 @@
 const WEBGL_INACTIVE_DISPOSE_DELAY_MS = 30_000;
 // WebGL context 丢失（GPU 重置、驱动崩溃）后的自动恢复退避。尝试耗尽后保持
-// canvas 渲染；返回前台时的常规 sync 也会重新尝试加载。
+// DOM 渲染器；返回前台时的常规 sync 也会重新尝试加载。
 const WEBGL_CONTEXT_RECOVERY_DELAYS_MS = [2_000, 5_000, 15_000];
 
 export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
@@ -174,7 +174,7 @@ export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
         customGlyphs: current.terminalCustomGlyphs,
       });
       addon.onContextLoss(() => {
-        logger.warn("WebGL context lost, falling back to canvas renderer");
+        logger.warn("WebGL context lost, falling back to DOM renderer");
         if (webglAddon === addon) {
           disposeWebglAddon();
           refreshTerminal(current.terminal);
@@ -185,7 +185,7 @@ export function useTerminalOptionalAddons({ logger, getContext, loadAddon }) {
       webglAddon = addon;
       webglRecoveryAttempt = 0;
       // WebGL is loaded after Terminal.open(). Rebuild the complete viewport so
-      // the new renderer does not inherit a stale canvas/atlas render state.
+      // the new renderer does not inherit a stale render state.
       refreshTerminal(current.terminal);
     })();
 
