@@ -12,14 +12,20 @@ XTerm 内置 JavaScript 终端自动化脚本引擎，可以模拟人工在终�
 
 "发送内容"支持转义序列与暂停标记，按从左到右的顺序逐段下发：
 
-| 写法 | 含义 |
-| ---- | ---- |
-| `\n` `\r` `\t` `\0` `\e` | 换行、回车、制表符、NUL、ESC 等控制字符 |
-| `\x1b` `\u0041` `\u{1f600}` | 十六进制 / Unicode 码点 |
-| `\\` | 字面反斜杠（`\\d500` 即发送字面 `\d500`，不暂停） |
-| `\d<毫秒>` | 暂停指定毫秒后再发送后续内容，如 `enable\n\d300\nconfig t\n` |
+| 写法                        | 含义                                                         |
+| --------------------------- | ------------------------------------------------------------ |
+| `\n` `\r` `\t` `\0` `\e`    | 换行、回车、制表符、NUL、ESC 等控制字符                      |
+| `\x1b` `\u0041` `\u{1f600}` | 十六进制 / Unicode 码点                                      |
+| `\\`                        | 字面反斜杠（`\\d500` 即发送字面 `\d500`，不暂停）            |
+| `\d<毫秒>`                  | 暂停指定毫秒后再发送后续内容，如 `enable\n\d300\nconfig t\n` |
 
 脚本在活动终端上以"模拟人工输入"的方式执行：输入内容会像真人键入一样在终端回显，并沿正常输入链路发送到后端设备。
+
+## 执行调度
+
+同一终端会话一次只运行一个脚本。后续请求按触发顺序进入 FIFO 队列，每个会话最多等待 20 个脚本；队列已满时，新请求会失败并提示稍后重试。不同终端会话互不阻塞。
+
+运行选择器会显示脚本的排队或运行状态。点击排队中的脚本可取消该队列项；点击运行中的脚本会停止当前运行。运行期间，状态栏中的脚本快捷按钮处于禁用状态。已停止或已完成的脚本不影响该会话后续队列。
 
 ## 脚本头（元数据）
 
@@ -36,14 +42,14 @@ XTerm 内置 JavaScript 终端自动化脚本引擎，可以模拟人工在终�
 // ==/XTermScript==
 ```
 
-| 字段 | 说明 |
-| --- | --- |
-| `@name` | 脚本名（必填，新建弹窗会写入） |
-| `@author` | 作者 |
-| `@homepage` | 作者主页（脚本库中可点击打开） |
-| `@description` | 备注/用途说明 |
-| `@version` | 版本号，点分数字（如 `1.2.0`），用于更新比较 |
-| `@updateURL` | 更新检测地址，指向同一份脚本的远程版本（可选） |
+| 字段           | 说明                                           |
+| -------------- | ---------------------------------------------- |
+| `@name`        | 脚本名（必填，新建弹窗会写入）                 |
+| `@author`      | 作者                                           |
+| `@homepage`    | 作者主页（脚本库中可点击打开）                 |
+| `@description` | 备注/用途说明                                  |
+| `@version`     | 版本号，点分数字（如 `1.2.0`），用于更新比较   |
+| `@updateURL`   | 更新检测地址，指向同一份脚本的远程版本（可选） |
 
 ### 更新检测
 
@@ -61,13 +67,13 @@ XTerm 内置 JavaScript 终端自动化脚本引擎，可以模拟人工在终�
 ### 发送输入
 
 ```js
-await xterm.send("system-view");      // 发送文本，不自动回车
-await xterm.sendLine("sysname SW1");  // 发送一行（自动追加回车 \r）
+await xterm.send("system-view"); // 发送文本，不自动回车
+await xterm.sendLine("sysname SW1"); // 发送一行（自动追加回车 \r）
 
 // 发送命名按键：中断命令、菜单导航等场景
-await xterm.press("ctrl+c");          // 中断正在运行的命令（\x03）
-await xterm.press("esc");             // 退出菜单
-await xterm.press("up");              // 方向键 ↑
+await xterm.press("ctrl+c"); // 中断正在运行的命令（\x03）
+await xterm.press("esc"); // 退出菜单
+await xterm.press("up"); // 方向键 ↑
 ```
 
 `press()` 支持的按键：`enter`、`tab`、`esc`（或 `escape`）、`backspace`、`space`、方向键 `up`/`down`/`left`/`right`、`home`/`end`、`pageup`/`pagedown`、`insert`/`delete`、`f1`-`f12`，以及 `ctrl+<字母>`（如 `ctrl+c`、`ctrl-z`，`+`/`-` 分隔均可，不区分大小写）。未知名称会抛出 `TypeError`，不会静默发送错误序列。
@@ -116,10 +122,55 @@ if (branch.index === 1) {
 
 `expectAny` 在多个模式同时可命中时，**输出中位置最早者胜出**；位置相同则数组中靠前的模式优先。超时与消费语义与 `waitFor` 完全一致（默认超时 10s，`timeout <= 0` 表示永不超时，第三参数可自定义超时错误信息）。
 
+### 超时重试
+
+`waitFor` / `waitForAny` / `expect` / `expectAny` 的第二参数也可以传选项对象。`retryDelays` 指定每轮超时后的等待间隔，`retryInput` 指定延迟后发送的探针（默认回车 `\r`，传 `null` 可只等待、不发送）：
+
+```js
+const hit = await xterm.expectAny([CONFIRM, /[#>][ \t]*$/], {
+  timeout: 5000,
+  retryDelays: [500, 1000, 2000],
+  retryInput: "\r",
+  message: "多次检测后仍未出现确认提示",
+});
+```
+
+上例最多进行 4 轮检测，并在前 3 轮超时后分别等待 500ms、1s、2s 再发送回车。中间轮次的超时由执行器内部处理，不会提前把脚本标记为失败；最后一轮仍超时才抛出 `SCRIPT_WAIT_TIMEOUT`。`timeout <= 0` 表示永不超时，因此不会触发重试。
+
+### 发送命令并捕获结果
+
+`sendAndExpect()` 适合“发一条命令，再等待一个或多个模式”：返回结构与 `expectAny` 相同。它在发送前清除尚未消费的旧输出，避免历史提示符抢在新命令结果前命中。
+
+```js
+const hit = await xterm.sendAndExpect("show version", /CS6200|DCWS-6028/, {
+  timeout: 5000,
+  retryDelays: [500, 1000, 2000],
+});
+xterm.log("型号输出", hit.before + hit.text);
+```
+
+`runCommand()` 进一步封装提示符等待、分页应答和输出合并：
+
+```js
+const result = await xterm.runCommand("dir", {
+  prompt: /[#>][ \t]*$/, // 必填：命令结束提示
+  more: /-+\s*more\s*-+/i, // 可选：分页提示
+  moreInput: " ", // 可选：分页应答，默认空格
+  maxPages: 100, // 可选：防止异常设备导致无限翻页
+  timeout: 10000,
+  retryDelays: [500, 1000, 2000],
+});
+xterm.log(result.output); // 命令回显 + 各页输出，不含最终提示符和分页提示
+xterm.log(result.pages); // 实际翻页次数
+// result 还包含最终匹配的 text / groups / before。
+```
+
+这些 API 仍共享同一条输出流；不要在同一脚本中并发执行多个等待或命令调用。
+
 ### 等待
 
 ```js
-await xterm.sleep(500);  // 毫秒
+await xterm.sleep(500); // 毫秒
 ```
 
 ### 交互弹窗
@@ -143,7 +194,7 @@ await xterm.alert("配置完成");
 - 传 `html: true` 时消息按 HTML 渲染，可输出富文本提示。渲染前会经严格白名单消毒：仅保留排版类标签（`p` / `br` / `b` / `strong` / `i` / `em` / `u` / `s` / `code` / `pre` / `span` / `div` / `ul` / `ol` / `li` / `blockquote` / `h1`-`h4` / `hr` / `table` 系列 / `a`），属性只保留安全协议（http/https/mailto）的 `a[href]`；`script` / `style` / `iframe` / 表单控件 / 事件属性等一律剥除，可防 XSS。
 
 ```js
-await xterm.alert("第一条\n第二条");  // 纯文本换行
+await xterm.alert("第一条\n第二条"); // 纯文本换行
 
 await xterm.alert(
   `<b>配置完成</b><ul><li>已下发 <code>${lines.length}</code> 行</li></ul><a href="https://example.com/runbook">查看手册</a>`,
@@ -158,12 +209,18 @@ await xterm.alert(
 ```js
 const values = await xterm.form({
   title: "开局配置",
-  message: "请填写本台设备参数",   // 可选，显示在标题下方
+  message: "请填写本台设备参数", // 可选，显示在标题下方
   fields: [
     { key: "hostname", label: "主机名", defaultValue: "SW1", required: true },
     { key: "vlanId", label: "管理 VLAN", type: "number", placeholder: "例如 100" },
     { key: "password", label: "Enable 密码", type: "password", required: true },
-    { key: "mode", label: "端口模式", type: "select", options: ["access", "trunk"], defaultValue: "access" },
+    {
+      key: "mode",
+      label: "端口模式",
+      type: "select",
+      options: ["access", "trunk"],
+      defaultValue: "access",
+    },
     { key: "save", label: "完成后保存配置", type: "switch", defaultValue: true },
   ],
 });
@@ -172,26 +229,26 @@ await xterm.sendLine(`sysname ${values.hostname}`);
 
 #### 字段属性
 
-| 属性 | 说明 |
-| --- | --- |
-| `key` | 字段键名（必填），提交后作为结果对象的属性名 |
-| `label` | 显示标签，缺省用 `key` |
-| `type` | `text`（默认）/ `password` / `select` / `switch` / `url` / `email` / `phone` / `number` |
-| `defaultValue` | 默认值 |
-| `placeholder` | 占位提示 |
-| `options` | `select` 的选项数组（字符串或 `{ label, value }`） |
-| `required` | 必填；未填点击确认会红字提醒并阻止提交 |
-| `pattern` | 自定义验证正则（`RegExp` 或正则源码字符串），不匹配时报错 |
-| `message` | 自定义错误文案，覆盖默认提示 |
+| 属性           | 说明                                                                                    |
+| -------------- | --------------------------------------------------------------------------------------- |
+| `key`          | 字段键名（必填），提交后作为结果对象的属性名                                            |
+| `label`        | 显示标签，缺省用 `key`                                                                  |
+| `type`         | `text`（默认）/ `password` / `select` / `switch` / `url` / `email` / `phone` / `number` |
+| `defaultValue` | 默认值                                                                                  |
+| `placeholder`  | 占位提示                                                                                |
+| `options`      | `select` 的选项数组（字符串或 `{ label, value }`）                                      |
+| `required`     | 必填；未填点击确认会红字提醒并阻止提交                                                  |
+| `pattern`      | 自定义验证正则（`RegExp` 或正则源码字符串），不匹配时报错                               |
+| `message`      | 自定义错误文案，覆盖默认提示                                                            |
 
 #### 内置验证规则
 
-| `type` | 规则 |
-| --- | --- |
-| `url` | 合法的 http/https URL |
-| `email` | 邮箱格式 |
-| `phone` | 中国大陆手机号（`1[3-9]` 开头 11 位） |
-| `number` | 有效数字 |
+| `type`   | 规则                                  |
+| -------- | ------------------------------------- |
+| `url`    | 合法的 http/https URL                 |
+| `email`  | 邮箱格式                              |
+| `phone`  | 中国大陆手机号（`1[3-9]` 开头 11 位） |
+| `number` | 有效数字                              |
 
 自定义正则示例：
 
@@ -202,7 +259,7 @@ await xterm.sendLine(`sysname ${values.hostname}`);
 ### 日志
 
 ```js
-xterm.log("开始配置", values);  // 写入运行日志（对象自动 JSON 序列化）
+xterm.log("开始配置", values); // 写入运行日志（对象自动 JSON 序列化）
 ```
 
 ### 本地文件读写
@@ -287,12 +344,12 @@ if (!detected.confirmed) {
 ### 会话信息
 
 ```js
-xterm.session.id;        // 目标会话 id
-xterm.session.label;     // 会话显示名
-xterm.session.protocol;  // 连接协议（ssh / telnet / serial 等）
-xterm.session.host;      // 目标地址（串口连接为空串）
-xterm.session.port;      // 端口（串口连接为串口名，如 "COM3"）
-xterm.session.username;  // 登录用户名
+xterm.session.id; // 目标会话 id
+xterm.session.label; // 会话显示名
+xterm.session.protocol; // 连接协议（ssh / telnet / serial 等）
+xterm.session.host; // 目标地址（串口连接为空串）
+xterm.session.port; // 端口（串口连接为串口名，如 "COM3"）
+xterm.session.username; // 登录用户名
 ```
 
 仅暴露非敏感连接信息，便于脚本按设备类型/协议分支；密码、私钥等凭证不会进入脚本作用域。典型用法——同一套巡检脚本按协议选择不同的提示符与分页退出方式：
@@ -311,6 +368,22 @@ try {
 }
 ```
 
+已被 `try/catch` 或 `.catch()` 消费的 API 错误不会误判为运行失败；未 `await` 且未处理的拒绝仍会终止脚本。等待超时、命令执行和脚本停止分别提供稳定错误码，Worker 与 Node 测试中的直连执行保持一致：
+
+```js
+try {
+  await xterm.expect(/[#>][ \t]*$/, 3000);
+} catch (error) {
+  if (error.code === "SCRIPT_WAIT_TIMEOUT") {
+    xterm.log("提示符超时，执行兜底流程");
+  } else {
+    throw error;
+  }
+}
+```
+
+可用错误码：`SCRIPT_WAIT_TIMEOUT`、`SCRIPT_COMMAND_ERROR`、`SCRIPT_STOPPED`。
+
 ## 完整示例：交换机批量开局
 
 ```js
@@ -325,7 +398,14 @@ const values = await xterm.form({
   title: "开局配置",
   fields: [
     { key: "hostname", label: "主机名", defaultValue: "SW1", required: true },
-    { key: "vlanId", label: "管理 VLAN", type: "number", required: true, pattern: /^\d{1,4}$/, message: "VLAN 必须是 1-4094 的数字" },
+    {
+      key: "vlanId",
+      label: "管理 VLAN",
+      type: "number",
+      required: true,
+      pattern: /^\d{1,4}$/,
+      message: "VLAN 必须是 1-4094 的数字",
+    },
     { key: "save", label: "完成后保存配置", type: "switch", defaultValue: true },
   ],
 });
@@ -355,6 +435,8 @@ xterm.log("开局配置完成", values);
 
 脚本主体在**独立的 Web Worker 线程**中执行：Worker 内天然没有 DOM、没有 `__TAURI__` 桥、没有本地存储；脚本只能通过 RPC 调用主线程提供的 `xterm.*` 能力，以及使用安全的标准 JS 功能（`JSON`、`Math`、`URL`、`TextEncoder`、`atob`、`structuredClone`、`Promise` 等）。
 
+浏览器中的 Worker 启动失败会将本次运行标记为失败，不会降级到主线程执行；只有 Node 测试环境（没有 Worker API）使用直连执行。
+
 这一架构带来三层硬性保护：
 
 - **死循环不再卡死界面**：`while (true) {}` 只会占用 Worker 线程，界面保持响应，点击"停止脚本"即 `terminate()` 强杀；Worker 退出后其全部内存被整体回收。
@@ -365,12 +447,12 @@ xterm.log("开局配置完成", values);
 
 **需要用户授权的能力**一律走专用函数，由系统原生对话框决定具体目标，脚本无法指定路径或静默执行：
 
-| 能力 | 函数 | 授权方式 |
-| --- | --- | --- |
-| 读取本地文件 | `xterm.readFile()` | 原生打开对话框选定文件 |
-| 保存数据到文件 | `xterm.saveFile()` | 原生保存对话框选定路径 |
-| 会话记录落盘 | `xterm.startRecording()` | 原生保存对话框选定记录文件 |
-| 收集用户输入 | `xterm.input()` / `xterm.form()` | 应用内弹窗 |
+| 能力           | 函数                             | 授权方式                   |
+| -------------- | -------------------------------- | -------------------------- |
+| 读取本地文件   | `xterm.readFile()`               | 原生打开对话框选定文件     |
+| 保存数据到文件 | `xterm.saveFile()`               | 原生保存对话框选定路径     |
+| 会话记录落盘   | `xterm.startRecording()`         | 原生保存对话框选定记录文件 |
+| 收集用户输入   | `xterm.input()` / `xterm.form()` | 应用内弹窗                 |
 
 所有授权对话框的**取消 = 停止脚本执行**。
 

@@ -3,11 +3,13 @@ import { sliceGraphemeSuffix } from "../../utils/grapheme.js";
 import { cancelScriptPrompts, requestScriptPrompt } from "./scriptPromptController.js";
 import { getRecordingBridge, getScriptBridge, getSessionControlBridge } from "./bridges.js";
 import { readDataFile, writeDataFile } from "./scriptFileLoader.js";
+import { ScriptCommandError, ScriptStoppedError, ScriptWaitTimeoutError } from "./scriptErrors.js";
 
 const MAX_OUTPUT_BUFFER_CHARS = 128 * 1024;
 // searchBuffer 最多带回的匹配行数（count 仍为总数），避免巨型缓冲区撑爆运行记录。
 const MAX_BUFFER_SEARCH_MATCHES = 100;
 const DEFAULT_WAIT_TIMEOUT_MS = 10000;
+const DEFAULT_MAX_PAGES = 100;
 
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
@@ -22,13 +24,6 @@ export function stripAnsi(data) {
     .replace(RE_CSI, "")
     .replace(RE_OSC, "")
     .replace(RE_ESC, "");
-}
-
-export class ScriptStoppedError extends Error {
-  constructor() {
-    super("script stopped");
-    this.name = "ScriptStoppedError";
-  }
 }
 
 function normalizeRegExp(pattern) {
@@ -60,6 +55,47 @@ function matchEarliest(buffer, patterns, apiName) {
     }
   });
   return best;
+}
+
+function normalizeWaitOptions(timeoutOrOptions, message) {
+  if (typeof timeoutOrOptions !== "object" || timeoutOrOptions === null) {
+    return {
+      timeoutMs: timeoutOrOptions,
+      message: String(message ?? ""),
+      retryDelays: [],
+      retryInput: "\r",
+    };
+  }
+
+  const options = timeoutOrOptions;
+  const retryDelays = options.retryDelays === undefined ? [] : options.retryDelays;
+  if (!Array.isArray(retryDelays)) {
+    throw new TypeError("retryDelays must be an array of non-negative millisecond values");
+  }
+  const delays = retryDelays.map((delay) => {
+    const value = Number(delay);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new TypeError("retryDelays must be an array of non-negative millisecond values");
+    }
+    return value;
+  });
+  return {
+    timeoutMs: options.timeout ?? options.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
+    message: String(message ?? options.message ?? ""),
+    retryDelays: delays,
+    retryInput: options.retryInput === undefined ? "\r" : options.retryInput,
+  };
+}
+
+function normalizePatterns(patterns, apiName) {
+  const list = Array.isArray(patterns) ? patterns : [patterns];
+  if (
+    !list.length ||
+    list.some((pattern) => typeof pattern !== "string" && !(pattern instanceof RegExp))
+  ) {
+    throw new TypeError(`${apiName} patterns must be strings or RegExps`);
+  }
+  return list;
 }
 
 // 命名按键 → 终端控制序列：菜单型设备与中断场景（Ctrl+C）常用；
@@ -223,12 +259,13 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
         : DEFAULT_WAIT_TIMEOUT_MS;
       addPending(entry, effectiveTimeout, () =>
         reject(
-          new Error(
+          new ScriptWaitTimeoutError(
             message ||
               i18n.global.t("scripts.errors.waitTimeout", {
                 timeout: effectiveTimeout ?? timeout,
                 pattern: entryBase.label,
               }),
+            { pattern: entryBase.label, timeout: effectiveTimeout ?? timeout },
           ),
         ),
       );
@@ -242,82 +279,129 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     });
   }
 
-  function waitFor(pattern, timeoutMs, message) {
-    throwIfStopped();
-    // 先校验类型，避免把 TypeError 延迟到异步路径。
-    if (typeof pattern !== "string" && !(pattern instanceof RegExp)) {
-      return Promise.reject(new TypeError("waitFor pattern must be a string or RegExp"));
+  async function waitWithOptions(entryBase, timeoutOrOptions, message) {
+    const options = normalizeWaitOptions(timeoutOrOptions, message);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await waitOnOutput(entryBase, options.timeoutMs, options.message);
+      } catch (error) {
+        if (!(error instanceof ScriptWaitTimeoutError)) throw error;
+        if (attempt >= options.retryDelays.length) throw error;
+      }
+
+      const delay = options.retryDelays[attempt];
+      await sleep(delay);
+      if (options.retryInput !== null) await send(options.retryInput);
     }
-    return waitOnOutput(
-      { apiName: "waitFor", pattern, label: String(pattern), mapMatch: (match) => match.text },
-      timeoutMs,
+  }
+
+  function waitForPattern(pattern, timeoutOrOptions, message, apiName, mapMatch) {
+    throwIfStopped();
+    if (typeof pattern !== "string" && !(pattern instanceof RegExp)) {
+      return Promise.reject(new TypeError(`${apiName} pattern must be a string or RegExp`));
+    }
+    return waitWithOptions(
+      { apiName, pattern, label: String(pattern), mapMatch },
+      timeoutOrOptions,
       message,
     );
+  }
+
+  function waitForPatterns(patterns, timeoutOrOptions, message, apiName, mapMatch) {
+    throwIfStopped();
+    let list;
+    try {
+      list = normalizePatterns(patterns, apiName);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return waitWithOptions(
+      { apiName, patterns: list, label: list.map(String).join(" | "), mapMatch },
+      timeoutOrOptions,
+      message,
+    );
+  }
+
+  function waitFor(pattern, timeoutOrOptions, message) {
+    return waitForPattern(pattern, timeoutOrOptions, message, "waitFor", (match) => match.text);
   }
 
   // expect：与 waitFor 相同的等待/超时/消费语义，但返回结构化结果
   // { text, groups, before }——groups 为正则捕获组，before 为匹配前收到的输出，
   // 让“发命令 → 等到提示符 → 解析中间输出”一条链路完成，无需事后翻缓冲区。
-  function expect(pattern, timeoutMs, message) {
-    throwIfStopped();
-    if (typeof pattern !== "string" && !(pattern instanceof RegExp)) {
-      return Promise.reject(new TypeError("expect pattern must be a string or RegExp"));
-    }
-    return waitOnOutput(
-      {
-        apiName: "expect",
-        pattern,
-        label: String(pattern),
-        mapMatch: (match, before) => ({ text: match.text, groups: match.groups, before }),
-      },
-      timeoutMs,
-      message,
-    );
+  function expect(pattern, timeoutOrOptions, message) {
+    return waitForPattern(pattern, timeoutOrOptions, message, "expect", (match, before) => ({
+      text: match.text,
+      groups: match.groups,
+      before,
+    }));
   }
 
   // expectAny：等待多个模式中的任意一个，返回 { index, text, groups, before }；
   // index 指明命中第几个模式，用于区分错误输出与正常提示符等分支。
-  function expectAny(patterns, timeoutMs, message) {
-    throwIfStopped();
-    const list = Array.isArray(patterns) ? patterns : [patterns];
-    if (!list.length || list.some((p) => typeof p !== "string" && !(p instanceof RegExp))) {
-      return Promise.reject(new TypeError("expectAny patterns must be strings or RegExps"));
-    }
-    return waitOnOutput(
-      {
-        apiName: "expectAny",
-        patterns: list,
-        label: list.map((pattern) => String(pattern)).join(" | "),
-        mapMatch: (match, before) => ({
-          index: match.patternIndex,
-          text: match.text,
-          groups: match.groups,
-          before,
-        }),
-      },
-      timeoutMs,
-      message,
-    );
+  function expectAny(patterns, timeoutOrOptions, message) {
+    return waitForPatterns(patterns, timeoutOrOptions, message, "expectAny", (match, before) => ({
+      index: match.patternIndex,
+      text: match.text,
+      groups: match.groups,
+      before,
+    }));
   }
 
   // waitForAny：与 expectAny 共用多模式竞争（matchEarliest 逐模式 exec，
   // 各自保留 i/m/s 等 flags），结果映射与 waitFor 一致只回匹配文本。
-  function waitForAny(patterns, timeoutMs, message) {
-    throwIfStopped();
-    const list = Array.isArray(patterns) ? patterns : [patterns];
-    if (!list.length || list.some((p) => typeof p !== "string" && !(p instanceof RegExp))) {
-      return Promise.reject(new TypeError("waitForAny patterns must be strings or RegExps"));
-    }
-    return waitOnOutput(
-      {
-        apiName: "waitForAny",
-        patterns: list,
-        label: list.map((pattern) => String(pattern)).join(" | "),
-        mapMatch: (match) => match.text,
-      },
-      timeoutMs,
+  function waitForAny(patterns, timeoutOrOptions, message) {
+    return waitForPatterns(
+      patterns,
+      timeoutOrOptions,
       message,
+      "waitForAny",
+      (match) => match.text,
     );
+  }
+
+  // 发送与等待共享同一个输出起点：清掉此前未消费的提示，避免旧提示抢在新命令结果前命中。
+  async function sendAndExpect(cmd, patterns, timeoutOrOptions, message) {
+    const list = normalizePatterns(patterns, "sendAndExpect");
+    outputBuffer = "";
+    await send(`${cmd}\r`);
+    return expectAny(list, timeoutOrOptions, message);
+  }
+
+  async function runCommand(cmd, options = {}) {
+    const prompt = normalizePatterns([options.prompt], "runCommand")[0];
+    const more =
+      options.more === undefined ? null : normalizePatterns([options.more], "runCommand")[0];
+    const maxPages = options.maxPages === undefined ? DEFAULT_MAX_PAGES : Number(options.maxPages);
+    if (!Number.isInteger(maxPages) || maxPages < 0) {
+      throw new TypeError("runCommand maxPages must be a non-negative integer");
+    }
+    const moreInput = String(options.moreInput ?? " ");
+    const patterns = more ? [prompt, more] : [prompt];
+    const chunks = [];
+    let pages = 0;
+
+    outputBuffer = "";
+    await send(`${cmd}\r`);
+    for (;;) {
+      const hit = await expectAny(patterns, options);
+      chunks.push(hit.before);
+      if (hit.index === 0) {
+        return {
+          output: chunks.join(""),
+          text: hit.text,
+          groups: hit.groups,
+          before: hit.before,
+          pages,
+        };
+      }
+
+      pages++;
+      if (pages > maxPages) {
+        throw new ScriptCommandError(`${cmd} exceeded maxPages (${maxPages})`, String(cmd));
+      }
+      await send(moreInput);
+    }
   }
 
   function sleep(ms) {
@@ -365,18 +449,24 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     }
     const regex = pattern instanceof RegExp ? normalizeRegExp(pattern) : null;
     const matches = [];
+    const buffer = bridge.getBufferText();
     let count = 0;
-    bridge
-      .getBufferText()
-      .split("\n")
-      .forEach((text, index) => {
-        const hit = regex ? regex.test(text) : text.includes(pattern);
-        if (!hit) return;
+    let lineStart = 0;
+    let lineNumber = 1;
+    while (lineStart <= buffer.length) {
+      const newlineIndex = buffer.indexOf("\n", lineStart);
+      const lineEnd = newlineIndex < 0 ? buffer.length : newlineIndex;
+      const text = buffer.slice(lineStart, lineEnd);
+      if (regex ? regex.test(text) : text.includes(pattern)) {
         count += 1;
         if (matches.length < MAX_BUFFER_SEARCH_MATCHES) {
-          matches.push({ line: index + 1, text });
+          matches.push({ line: lineNumber, text });
         }
-      });
+      }
+      if (newlineIndex < 0) break;
+      lineStart = newlineIndex + 1;
+      lineNumber += 1;
+    }
     return { count, matches };
   }
 
@@ -474,6 +564,8 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     waitFor: (...args) => trackTask(waitFor(...args)),
     expect: (...args) => trackTask(expect(...args)),
     expectAny: (...args) => trackTask(expectAny(...args)),
+    sendAndExpect: (...args) => trackTask(sendAndExpect(...args)),
+    runCommand: (...args) => trackTask(runCommand(...args)),
     // 命名按键（ctrl+c / enter / 方向键 / f1-f12 等）：等同人工按键发送控制序列。
     press: (key) => trackTask(send(keySequence(key, context.sessionInfo))),
     waitForAny: (...args) => trackTask(waitForAny(...args)),

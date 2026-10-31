@@ -1,3 +1,17 @@
+// await/then/catch 会消费子类 Promise 的 then；原生 Promise 的 await 则不会经过可覆写方法。
+// 利用这一差异，运行时只对脚本未消费的拒绝执行 fail，已捕获的 API 超时可以正常继续。
+class ScriptTaskPromise extends Promise {
+  constructor(executor) {
+    super(executor);
+    this.consumerHandled = false;
+  }
+
+  then(onFulfilled, onRejected) {
+    if (typeof onRejected === "function") this.consumerHandled = true;
+    return super.then(onFulfilled, onRejected);
+  }
+}
+
 // 脚本运行时作用域：托管定时器/微任务/后台 Promise 与 console，
 // 让脚本体内的"零散异步"也被追踪——后台工作未结束不算完成，回调抛错会终止运行。
 // 纯逻辑、无框架依赖：主线程（runner/直连执行）与 Web Worker（scriptWorker）共用。
@@ -39,13 +53,20 @@ export function createScriptRuntime(run, log) {
   }
 
   function trackTask(task) {
-    const promise = Promise.resolve(task);
+    const promise = new ScriptTaskPromise((resolve, reject) => {
+      Promise.resolve(task).then(resolve, reject);
+    });
     markBusy();
     backgroundTasks.add(promise);
-    promise.catch(fail).finally(() => {
+    // 绕过 consumerHandled 标记：这两个处理器只属于运行时自身，不代表脚本处理了错误。
+    Promise.prototype.then.call(promise, null, (error) => {
+      if (!promise.consumerHandled) fail(error);
+    });
+    const cleanup = () => {
       backgroundTasks.delete(promise);
       notifyIdle();
-    });
+    };
+    Promise.prototype.then.call(promise, cleanup, cleanup);
     return promise;
   }
 

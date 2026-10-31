@@ -11,14 +11,16 @@ import {
   DialogRoot,
   DialogTitle,
 } from "reka-ui";
-import { FileCode, Play, Square } from "@lucide/vue";
+import { Clock, FileCode, Play, Square } from "@lucide/vue";
 import { useScriptExecution } from "../composables/useScriptExecution";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useScriptsStore } from "../stores/scriptsStore";
 import { closeScriptRunPicker, scriptRunPickerOpen } from "../services/scripting/scriptRunPicker";
 import { SCRIPT_RUN_STATUS, scriptRuns } from "../services/scripting/scriptRunner";
 
 const { t } = useI18n();
 const router = useRouter();
+const workspace = useWorkspaceStore();
 const scriptsStore = useScriptsStore();
 const { scripts } = storeToRefs(scriptsStore);
 const { runScriptOnActiveSession, stopScriptRun } = useScriptExecution();
@@ -26,14 +28,20 @@ const { runScriptOnActiveSession, stopScriptRun } = useScriptExecution();
 const sortedScripts = computed(() =>
   [...scripts.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),
 );
-const runningScriptIds = computed(
-  () =>
-    new Set(
-      scriptRuns.value
-        .filter((run) => run.status === SCRIPT_RUN_STATUS.RUNNING)
-        .map((run) => run.scriptId),
-    ),
-);
+const activeSessionId = computed(() => workspace.activeConnection || "");
+const activeRunsByScriptId = computed(() => {
+  const activeRuns = new Map();
+  for (const run of scriptRuns.value) {
+    if (
+      (run.status === SCRIPT_RUN_STATUS.RUNNING || run.status === SCRIPT_RUN_STATUS.QUEUED) &&
+      run.targetSessionId === activeSessionId.value &&
+      !activeRuns.has(run.scriptId)
+    ) {
+      activeRuns.set(run.scriptId, run);
+    }
+  }
+  return activeRuns;
+});
 
 onMounted(() => {
   if (!scriptsStore.loaded) void scriptsStore.loadScripts();
@@ -44,13 +52,10 @@ function onOpenChange(open) {
 }
 
 function runScript(script) {
-  // 已在运行的脚本不允许重复启动，但仍需响应点击以关闭选择弹窗。
-  const runningRun = scriptRuns.value.find(
-    (run) => run.scriptId === script.id && run.status === SCRIPT_RUN_STATUS.RUNNING,
-  );
-  if (runningRun) {
+  const activeRun = activeRunsByScriptId.value.get(script.id);
+  if (activeRun) {
     closeScriptRunPicker();
-    void stopScriptRun(runningRun);
+    void stopScriptRun(activeRun);
     return;
   }
   closeScriptRunPicker();
@@ -104,10 +109,16 @@ function goManageScripts() {
             :key="script.id"
             type="button"
             class="script-picker-item"
-            :class="{ 'is-running': runningScriptIds.has(script.id) }"
+            :class="{
+              'is-running':
+                activeRunsByScriptId.get(script.id)?.status === SCRIPT_RUN_STATUS.RUNNING,
+              'is-queued': activeRunsByScriptId.get(script.id)?.status === SCRIPT_RUN_STATUS.QUEUED,
+            }"
             :title="
-              runningScriptIds.has(script.id)
-                ? t('scripts.picker.stopHint')
+              activeRunsByScriptId.has(script.id)
+                ? activeRunsByScriptId.get(script.id)?.status === SCRIPT_RUN_STATUS.QUEUED
+                  ? t('scripts.picker.cancelQueueHint')
+                  : t('scripts.picker.stopHint')
                 : t('scripts.picker.runHint')
             "
             @click="runScript(script)"
@@ -115,15 +126,26 @@ function goManageScripts() {
             <span class="script-picker-item-name">{{ script.name || t("scripts.untitled") }}</span>
             <span class="script-picker-item-action">
               <span
-                v-if="runningScriptIds.has(script.id)"
+                v-if="activeRunsByScriptId.get(script.id)?.status === SCRIPT_RUN_STATUS.RUNNING"
                 class="script-picker-item-status"
               >
                 {{ t("scripts.picker.running") }}
               </span>
+              <span
+                v-else-if="activeRunsByScriptId.get(script.id)?.status === SCRIPT_RUN_STATUS.QUEUED"
+                class="script-picker-item-status"
+              >
+                {{ t("scripts.picker.queued") }}
+              </span>
               <Square
-                v-if="runningScriptIds.has(script.id)"
+                v-if="activeRunsByScriptId.get(script.id)?.status === SCRIPT_RUN_STATUS.RUNNING"
                 :size="13"
                 stroke-width="2.2"
+              />
+              <Clock
+                v-else-if="activeRunsByScriptId.get(script.id)?.status === SCRIPT_RUN_STATUS.QUEUED"
+                :size="13"
+                stroke-width="2"
               />
               <Play
                 v-else
@@ -186,6 +208,11 @@ function goManageScripts() {
 .script-picker-item.is-running {
   border-color: color-mix(in srgb, var(--danger) 55%, var(--border-light));
   color: var(--danger);
+}
+
+.script-picker-item.is-queued {
+  border-color: color-mix(in srgb, var(--warning) 55%, var(--border-light));
+  color: var(--text-primary);
 }
 
 .script-picker-item.is-running:hover {

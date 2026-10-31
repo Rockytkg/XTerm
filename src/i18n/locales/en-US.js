@@ -41,6 +41,7 @@ export default {
     },
     scriptRunning: "Running script: {name}",
     scriptsRunning: "{count} scripts running",
+    scriptsQueued: "{count} scripts queued",
   },
   contextMenu: {
     copy: "Copy",
@@ -329,6 +330,7 @@ export default {
     },
     errors: {
       waitTimeout: "Timed out waiting for output ({timeout}ms): {pattern}",
+      queueFull: "This terminal's script queue is full. Try again shortly.",
       blockedApi:
         '"{api}" is blocked by the script sandbox; access network, local storage, and system resources only via the dedicated xterm.* APIs, which ask for user authorization',
       targetUnavailable: "Target session is not available (it may be closed or disconnected)",
@@ -363,7 +365,9 @@ export default {
       manage: "Manage scripts",
       runHint: "Click to run script",
       stopHint: "Click to stop the running script",
+      cancelQueueHint: "Click to remove the script from the queue",
       running: "Running · click to stop",
+      queued: "Queued · click to cancel",
     },
   },
   overview: {
@@ -823,6 +827,7 @@ export default {
     scriptNoTarget: "No target terminal session available",
     scriptFailed: 'Script "{name}" failed',
     scriptFinished: 'Script "{name}" finished',
+    scriptQueued: 'Script "{name}" queued',
     scriptRunning: 'Running script "{name}"',
     scriptStopping: 'Stopping script "{name}"',
     scriptStopped: 'Script "{name}" stopped',

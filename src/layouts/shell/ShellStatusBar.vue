@@ -39,9 +39,25 @@ const activeEndpoint = computed(() => {
   return connectionEndpointLabel(activeConnectionInfo.value);
 });
 
+const activeScriptSessionId = computed(() => workspace.activeConnection || "");
+
+const runningScriptSessionIds = computed(
+  () =>
+    new Set(
+      scriptRuns.value
+        .filter((run) => run.status === SCRIPT_RUN_STATUS.RUNNING)
+        .map((run) => run.targetSessionId),
+    ),
+);
+
+const isScriptRunning = (sessionId) => runningScriptSessionIds.value.has(sessionId);
+
 // 正在运行的脚本：状态栏右侧给出常驻指示，脚本结束后自动消失。
 const runningScripts = computed(() =>
   scriptRuns.value.filter((run) => run.status === SCRIPT_RUN_STATUS.RUNNING),
+);
+const queuedScripts = computed(() =>
+  scriptRuns.value.filter((run) => run.status === SCRIPT_RUN_STATUS.QUEUED),
 );
 
 const runningScriptNames = computed(() =>
@@ -56,6 +72,10 @@ const runningScriptsText = computed(() => {
   }
   return t("statusBar.scriptsRunning", { count: runningScripts.value.length });
 });
+
+const queuedScriptsText = computed(() =>
+  t("statusBar.scriptsQueued", { count: queuedScripts.value.length }),
+);
 
 const activeLatencyText = computed(() => {
   const latency = Number(activeRuntimeMetrics.value?.latencyMs);
@@ -142,6 +162,7 @@ function runButton(button) {
   const sessionId = activeConnectionInfo.value?.id || workspace.activeConnection;
   if (!sessionId) return;
   if (button.type === "script") {
+    if (isScriptRunning(activeScriptSessionId.value)) return;
     const script = scriptsStore.scripts.find((item) => item.id === button.value);
     if (script) void runScriptOnActiveSession(script);
   } else void sendButtonContent(sessionId, button.value);
@@ -187,6 +208,7 @@ function runButton(button) {
         :key="button.id"
         type="button"
         class="shell-status-quick-button"
+        :disabled="button.type === 'script' && isScriptRunning(activeScriptSessionId)"
         :title="button.name"
         @mousedown.prevent
         @click="runButton(button)"
@@ -211,6 +233,15 @@ function runButton(button) {
           :title="runningScriptNames"
         >
           {{ runningScriptsText }}
+        </span>
+        <span class="h-[10px] w-[1px] bg-border-light" />
+      </template>
+      <template v-if="queuedScripts.length">
+        <span
+          class="text-[0.7857em] text-text-secondary"
+          :title="queuedScripts.map((run) => run.scriptName || t('scripts.untitled')).join(', ')"
+        >
+          {{ queuedScriptsText }}
         </span>
         <span class="h-[10px] w-[1px] bg-border-light" />
       </template>
@@ -288,6 +319,11 @@ function runButton(button) {
 .shell-status-quick-button:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+.shell-status-quick-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .shell-status-quick-button-dot {

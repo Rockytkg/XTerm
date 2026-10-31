@@ -5,10 +5,12 @@ export const DEFAULT_SCRIPT_BODY = `// 终端 API（异步函数请使用 await�
 // await xterm.waitFor("[SW1]", 5000, "超时提示") — 等待文本或正则匹配，可设置超时和错误信息。
 // await xterm.waitForAny(["[SW1]", /SW2/], 5000) — 等待多个文本或正则模式中的任意一个。
 // const hit = await xterm.expect(/vlan (\\d+)/, 5000) — 等待匹配并返回 { text, groups, before }（捕获组 + 匹配前的输出）。
-// const branch = await xterm.expectAny(["[SW1]", /Error/], 5000) — 返回 { index, text, groups, before }，index 为命中的模式序号。
+// const branch = await xterm.expectAny(["[SW1]", /Error/], { timeout: 5000, retryDelays: [500, 1000, 2000] }) — 等待多模式，超时后按间隔回车重试。
+// const hit = await xterm.sendAndExpect("show version", /#/, 5000) — 清除旧输出、发送命令并等待匹配。
+// const result = await xterm.runCommand("dir", { prompt: /#/, more: /More/ }) — 等待提示符、自动翻页并返回 { output, pages, ... }。
 // await xterm.press("ctrl+c") — 发送命名按键（enter/esc/tab/方向键/f1-f12/ctrl+<字母>）。
 // const output = await xterm.read(1000) — 收集指定时间内的终端输出。
-// const screen = xterm.getScreen() — 读取终端当前可视区域文本。
+// const screen = await xterm.getScreen() — 读取终端当前可视区域文本。
 // await xterm.sleep(500) — 等待指定毫秒数。
 // const value = await xterm.input("请输入主机名", { defaultValue: "SW1", required: true }) — 显示输入框，取消会停止脚本。
 // const confirmed = await xterm.confirm("确认下发配置？") — 显示确认框并返回 true 或 false。

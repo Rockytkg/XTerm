@@ -1,13 +1,14 @@
 import { executeScript } from "./scriptExecutor.js";
+import { deserializeScriptError, serializeScriptError } from "./scriptErrors.js";
 
 // 脚本 Worker 入口：用户代码在本线程内编译执行，主线程只承担 xterm.* 的 RPC 服务。
 // Worker 天然没有 DOM / __TAURI__ 桥，且可被主线程 terminate() 强制结束——
 // 恶意死循环不再冻结界面；沙盒屏蔽清单在 Worker 内依然生效，网络由 CSP 兜底。
 // 协议：
 //   main → worker: { type: "start", code, methods, session, blockedTemplate }
-//                  { type: "result", id, ok, value | name, message }
+//                  { type: "result", id, ok, value | name, message, code }
 //   worker → main: { type: "call", id, method, args } | { type: "log", args }
-//                  { type: "done" } | { type: "error", name, message }
+//                  { type: "done" } | { type: "error", name, message, code }
 
 const pendingCalls = new Map();
 let nextCallId = 0;
@@ -20,16 +21,17 @@ function callRemote(method, args) {
   const id = (nextCallId += 1);
   return new Promise((resolve, reject) => {
     pendingCalls.set(id, { resolve, reject });
-    self.postMessage({ type: "call", id, method, args });
+    try {
+      self.postMessage({ type: "call", id, method, args });
+    } catch (error) {
+      pendingCalls.delete(id);
+      reject(error);
+    }
   });
 }
 
 function reportError(error) {
-  self.postMessage({
-    type: "error",
-    name: error?.name || "Error",
-    message: String(error?.message || error || "script failed"),
-  });
+  self.postMessage({ type: "error", ...serializeScriptError(error) });
 }
 
 function startRun(message) {
@@ -70,9 +72,7 @@ self.onmessage = (event) => {
     if (message.ok) {
       entry.resolve(message.value);
     } else {
-      const error = new Error(message.message || "script api call failed");
-      error.name = message.name || "Error";
-      entry.reject(error);
+      entry.reject(deserializeScriptError(message));
     }
     return;
   }

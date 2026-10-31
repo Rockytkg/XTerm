@@ -268,6 +268,28 @@ test("waitFor timeout supports a custom error message", async () => {
   assert.equal(run.error, "未等到登录提示符");
 });
 
+test("caught API timeouts expose an error code and do not fail the run", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "s5-timeout-caught",
+      name: "caught-timeout",
+      code: `
+        const hit = await xterm.expect(/never/, 20, "catchable timeout").catch((error) => {
+          xterm.log(error.name, error.code);
+          return null;
+        });
+        xterm.log("continued", hit === null);
+      `,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.equal(run.logs[0].text, "ScriptWaitTimeoutError SCRIPT_WAIT_TIMEOUT");
+  assert.equal(run.logs[1].text, "continued true");
+});
+
 test("an unawaited terminal promise remains managed and reports its rejection", async () => {
   setup();
   const run = await runScript(
@@ -697,4 +719,154 @@ test("session control api fails fast when no session control bridge is registere
   teardown();
   assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
   assert.match(run.error, new RegExp(i18n.global.t("scripts.errors.sessionControlUnavailable")));
+});
+
+test("active runs stay in history when the run limit is exceeded", async () => {
+  const unregisterBridges = [];
+  const runPromises = [];
+  const scriptIds = new Set();
+  try {
+    for (let index = 0; index < 51; index += 1) {
+      const sessionId = `history-session-${index}`;
+      const scriptId = `history-script-${index}`;
+      scriptIds.add(scriptId);
+      unregisterBridges.push(registerScriptBridge(sessionId, createFakeBridge()));
+      runPromises.push(
+        runScript(
+          { id: scriptId, name: scriptId, code: `await xterm.sleep(10000);` },
+          { targetSessionId: sessionId, targetLabel: sessionId },
+        ),
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const activeRuns = scriptRuns.value.filter(
+      (run) => scriptIds.has(run.scriptId) && run.status === SCRIPT_RUN_STATUS.RUNNING,
+    );
+    assert.equal(activeRuns.length, 51);
+  } finally {
+    for (const run of scriptRuns.value) {
+      if (scriptIds.has(run.scriptId)) stopScript(run.runId);
+    }
+    await Promise.allSettled(runPromises);
+    for (const unregister of unregisterBridges) unregister();
+  }
+});
+
+test("searchBuffer scans lines without changing line numbering or global regex behavior", async () => {
+  setup();
+  bridge.bufferText = "foo\nbar foo\nfoo\n";
+  const run = await runScript(
+    {
+      id: "buffer-search",
+      name: "buffer-search",
+      code: `const result = xterm.searchBuffer(/foo/g); xterm.log(result.count, result.matches.map((item) => item.line).join(","));`,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.equal(run.logs[0].text, "3 1,2,3");
+});
+
+test("scripts for one session execute serially in request order", async () => {
+  setup();
+  const firstPromise = runScript(
+    {
+      id: "queue-first",
+      name: "queue-first",
+      code: `await xterm.send("first:start"); await xterm.sleep(40); await xterm.send("first:end");`,
+    },
+    testContext(),
+  );
+  const secondPromise = runScript(
+    {
+      id: "queue-second",
+      name: "queue-second",
+      code: `await xterm.send("second");`,
+    },
+    testContext(),
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(bridge.sent, ["first:start"]);
+  assert.equal(
+    scriptRuns.value.find((run) => run.scriptId === "queue-second")?.status,
+    SCRIPT_RUN_STATUS.QUEUED,
+    "the second script must remain queued while the first script is active",
+  );
+
+  const [first, second] = await Promise.all([firstPromise, secondPromise]);
+  const sent = [...bridge.sent];
+  teardown();
+
+  assert.equal(first.status, SCRIPT_RUN_STATUS.DONE);
+  assert.equal(second.status, SCRIPT_RUN_STATUS.DONE);
+  assert.deepEqual(sent, ["first:start", "first:end", "second"]);
+});
+
+test("a queued script can be cancelled without affecting the running script", async () => {
+  setup();
+  const firstPromise = runScript(
+    {
+      id: "cancel-queue-first",
+      name: "cancel-queue-first",
+      code: `await xterm.sleep(40); await xterm.send("first");`,
+    },
+    testContext(),
+  );
+  const queuedPromise = runScript(
+    {
+      id: "cancel-queue-second",
+      name: "cancel-queue-second",
+      code: `await xterm.send("second");`,
+    },
+    testContext(),
+  );
+  const queuedRun = scriptRuns.value.find((run) => run.scriptId === "cancel-queue-second");
+
+  assert.equal(queuedRun.status, SCRIPT_RUN_STATUS.QUEUED);
+  assert.equal(stopScript(queuedRun.runId), true);
+  const cancelled = await queuedPromise;
+  const first = await firstPromise;
+  const sent = [...bridge.sent];
+  teardown();
+
+  assert.equal(cancelled.status, SCRIPT_RUN_STATUS.STOPPED);
+  assert.equal(first.status, SCRIPT_RUN_STATUS.DONE);
+  assert.deepEqual(sent, ["first"]);
+});
+
+test("a full per-session queue rejects additional runs and remains cancellable", async () => {
+  setup();
+  const runPromises = [
+    runScript(
+      { id: "queue-cap-running", name: "queue-cap-running", code: `await xterm.sleep(10000);` },
+      testContext(),
+    ),
+  ];
+  for (let index = 0; index < 21; index += 1) {
+    runPromises.push(
+      runScript(
+        { id: `queue-cap-${index}`, name: `queue-cap-${index}`, code: `await xterm.sleep(10);` },
+        testContext(),
+      ),
+    );
+  }
+
+  const rejectedRun = scriptRuns.value.find((run) => run.scriptId === "queue-cap-20");
+  assert.equal(rejectedRun.status, SCRIPT_RUN_STATUS.ERROR);
+  assert.equal(rejectedRun.error, i18n.global.t("scripts.errors.queueFull"));
+
+  for (const run of scriptRuns.value) {
+    if (run.status === SCRIPT_RUN_STATUS.RUNNING || run.status === SCRIPT_RUN_STATUS.QUEUED) {
+      stopScript(run.runId);
+    }
+  }
+  const settled = await Promise.all(runPromises);
+  teardown();
+
+  assert.equal(settled[0].status, SCRIPT_RUN_STATUS.STOPPED);
+  assert.ok(settled.slice(1, 21).every((run) => run.status === SCRIPT_RUN_STATUS.STOPPED));
+  assert.equal(settled[21].status, SCRIPT_RUN_STATUS.ERROR);
 });

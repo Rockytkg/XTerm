@@ -41,6 +41,7 @@ export default {
     },
     scriptRunning: "脚本运行中：{name}",
     scriptsRunning: "{count} 个脚本运行中",
+    scriptsQueued: "{count} 个脚本排队中",
   },
   contextMenu: {
     copy: "复制",
@@ -317,6 +318,7 @@ export default {
     },
     errors: {
       waitTimeout: "等待输出超时（{timeout}ms）：{pattern}",
+      queueFull: "该终端的脚本等待队列已满，请稍后重试",
       blockedApi:
         "脚本沙盒已禁用“{api}”：网络、本地存储与系统资源只能通过会请求用户授权的 xterm.* 专用函数访问",
       targetUnavailable: "目标会话不可用（可能已关闭或断连）",
@@ -350,7 +352,9 @@ export default {
       manage: "管理脚本",
       runHint: "点击运行脚本",
       stopHint: "点击中断脚本运行",
+      cancelQueueHint: "点击取消排队",
       running: "运行中 · 点击中断",
+      queued: "排队中 · 点击取消",
     },
   },
   overview: {
@@ -784,6 +788,7 @@ export default {
     scriptNoTarget: "没有可用的目标终端会话",
     scriptFailed: "脚本“{name}”执行失败",
     scriptFinished: "脚本“{name}”执行完成",
+    scriptQueued: "脚本“{name}”正在排队",
     scriptRunning: "正在执行脚本“{name}”",
     scriptStopping: "正在中断脚本“{name}”",
     scriptStopped: "脚本“{name}”已停止",

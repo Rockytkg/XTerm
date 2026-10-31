@@ -1,10 +1,11 @@
 import { createLogger } from "../../utils/logger.js";
 import { executeScript } from "./scriptExecutor.js";
+import { deserializeScriptError, serializeScriptError } from "./scriptErrors.js";
 
 const hostLogger = createLogger("frontend.scripting.host");
 
-// 直连执行宿主：脚本在主线程内编译执行。用于 node 单测（无 Worker）与
-// Worker 创建失败时的回退；与 Worker 路径共享同一执行内核（executeScript）。
+// 直连执行宿主只用于无 Worker 的 Node 测试环境；浏览器中不回退到主线程，
+// 避免 Worker 启动失败时用户脚本阻塞界面。两条可用路径共享同一执行内核。
 function createDirectHost({ code, api, run, log, hostRuntime, formatBlockedMessage }) {
   const exec = executeScript({
     code,
@@ -66,12 +67,7 @@ function createWorkerHost({ code, api, log, formatBlockedMessage }) {
         .then(() => fn(...(Array.isArray(message.args) ? message.args : [])))
         .then(
           (value) => respondResult(message.id, { ok: true, value }),
-          (error) =>
-            respondResult(message.id, {
-              ok: false,
-              name: error?.name || "Error",
-              message: String(error?.message || error || "script api call failed"),
-            }),
+          (error) => respondResult(message.id, { ok: false, ...serializeScriptError(error) }),
         );
       return;
     }
@@ -85,9 +81,7 @@ function createWorkerHost({ code, api, log, formatBlockedMessage }) {
       resolveFinished();
     } else if (message.type === "error") {
       settled = true;
-      const error = new Error(message.message || "script failed");
-      error.name = message.name || "Error";
-      rejectFinished(error);
+      rejectFinished(deserializeScriptError(message));
     }
   };
 
@@ -97,14 +91,19 @@ function createWorkerHost({ code, api, log, formatBlockedMessage }) {
     rejectFinished(new Error(event.message || "script worker crashed"));
   };
 
-  worker.postMessage({
-    type: "start",
-    code,
-    // 方法清单与静态会话数据随启动消息下发；Worker 侧据此生成 RPC 版 xterm 对象。
-    methods: Object.keys(api).filter((key) => key !== "session"),
-    session: { ...api.session },
-    blockedTemplate: formatBlockedMessage("{api}"),
-  });
+  try {
+    worker.postMessage({
+      type: "start",
+      code,
+      // 方法清单与静态会话数据随启动消息下发；Worker 侧据此生成 RPC 版 xterm 对象。
+      methods: Object.keys(api).filter((key) => key !== "session"),
+      session: { ...api.session },
+      blockedTemplate: formatBlockedMessage("{api}"),
+    });
+  } catch (error) {
+    worker.terminate();
+    throw error;
+  }
 
   return {
     finished,
@@ -117,7 +116,8 @@ export function createScriptExecutorHost(options) {
     try {
       return createWorkerHost(options);
     } catch (error) {
-      hostLogger.warn("worker.unavailable.fallback", error);
+      hostLogger.error("worker.unavailable", error);
+      throw error;
     }
   }
   return createDirectHost(options);

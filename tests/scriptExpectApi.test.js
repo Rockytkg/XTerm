@@ -431,3 +431,160 @@ test("expect ring-buffer truncation retains an emoji starting at the cut point",
     content: true,
   });
 });
+
+test("expectAny retries timeouts and sends the configured retry input", async () => {
+  setup();
+  const send = bridge.send.bind(bridge);
+  bridge.send = (data) => {
+    const result = send(data);
+    if (data === "\r") {
+      const attempt = bridge.sent.filter((value) => value === "\r").length;
+      if (attempt === 3) setTimeout(() => publishTerminalOutput(TARGET, "SW1#"), 0);
+    }
+    return result;
+  };
+  const run = await runScript(
+    {
+      id: "e15",
+      name: "expect-retry",
+      code: `
+        const hit = await xterm.expectAny([/#/], {
+          timeout: 10,
+          retryDelays: [1, 2, 3],
+          message: "retry failed",
+        });
+        xterm.log(hit.text, hit.index);
+      `,
+    },
+    testContext(),
+  );
+  const sent = [...bridge.sent];
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE, run.error);
+  assert.equal(sent.filter((value) => value === "\r").length, 3);
+  assert.equal(run.logs[0].text, "# 0");
+});
+
+test("expect retry exhaustion uses the custom error message", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "e16",
+      name: "expect-retry-exhausted",
+      code: `
+        await xterm.expect(/never/, {
+          timeout: 5,
+          retryDelays: [1, 2],
+          message: "no prompt after retries",
+        });
+      `,
+    },
+    testContext(),
+  );
+  const sent = [...bridge.sent];
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
+  assert.equal(run.error, "no prompt after retries");
+  assert.equal(sent.filter((value) => value === "\r").length, 2);
+});
+
+test("sendAndExpect discards stale output before sending the command", async () => {
+  setup();
+  const send = bridge.send.bind(bridge);
+  bridge.send = (data) => {
+    const result = send(data);
+    if (data === "show version\r") {
+      setTimeout(() => publishTerminalOutput(TARGET, "show version\r\nfresh#"), 0);
+    }
+    return result;
+  };
+  const runPromise = runScript(
+    {
+      id: "e17",
+      name: "send-and-expect",
+      code: `
+        await xterm.sleep(20);
+        const hit = await xterm.sendAndExpect("show version", /#/, 1000);
+        xterm.log(hit.before);
+      `,
+    },
+    testContext(),
+  );
+  await settle(5);
+  publishTerminalOutput(TARGET, "stale#");
+  const run = await runPromise;
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE, run.error);
+  assert.equal(run.logs[0].text, "show version\r\nfresh");
+});
+
+test("runCommand handles pagination and returns the combined output", async () => {
+  setup();
+  const send = bridge.send.bind(bridge);
+  let page = 0;
+  bridge.send = (data) => {
+    const result = send(data);
+    if (data === "dir\r") {
+      setTimeout(() => publishTerminalOutput(TARGET, "dir\r\nfirst\r\n-- More --"), 0);
+    } else if (data === " ") {
+      page++;
+      setTimeout(() => publishTerminalOutput(TARGET, `\r\npage-${page}\r\nSW1#`), 0);
+    }
+    return result;
+  };
+  const run = await runScript(
+    {
+      id: "e18",
+      name: "run-command-pages",
+      code: `
+        const result = await xterm.runCommand("dir", {
+          prompt: /#/,
+          more: /More/,
+          timeout: 100,
+          maxPages: 2,
+        });
+        xterm.log(JSON.stringify(result));
+      `,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE, run.error);
+  const result = JSON.parse(run.logs[0].text);
+  assert.equal(result.pages, 1);
+  assert.equal(result.text, "#");
+  assert.match(result.output, /first/);
+  assert.match(result.output, /page-1/);
+});
+
+test("runCommand stops at maxPages instead of paging forever", async () => {
+  setup();
+  const send = bridge.send.bind(bridge);
+  bridge.send = (data) => {
+    const result = send(data);
+    if (data === "dir\r") {
+      setTimeout(() => publishTerminalOutput(TARGET, "dir\r\n-- More --"), 0);
+    }
+    return result;
+  };
+  const run = await runScript(
+    {
+      id: "e19",
+      name: "run-command-page-limit",
+      code: `
+        await xterm.runCommand("dir", {
+          prompt: /#/,
+          more: /More/,
+          timeout: 100,
+          maxPages: 0,
+        });
+      `,
+    },
+    testContext(),
+  );
+  const sent = [...bridge.sent];
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
+  assert.equal(run.error, "dir exceeded maxPages (0)");
+  assert.equal(sent.includes(" "), false);
+});

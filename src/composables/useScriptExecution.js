@@ -1,13 +1,16 @@
 import { watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { SCRIPT_RUN_STATUS, runScript, stopScript } from "../services/scripting/scriptRunner";
+import {
+  SCRIPT_RUN_STATUS,
+  runScript,
+  scriptRuns,
+  stopScript,
+} from "../services/scripting/scriptRunner";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useToasts } from "./useToasts";
 
-// 同一会话上的同一脚本共用一条 toast：执行中的 loading 提示原地更新为
-// 最终结果（完成/失败/已停止），避免堆叠多条提示。
-function scriptRunToastId(scriptId, sessionId) {
-  return `script-run-${scriptId || "anon"}-${sessionId || "none"}`;
+function scriptRunToastId(runId) {
+  return `script-run-${runId}`;
 }
 
 // 等待响应式 run.status 离开 RUNNING：watch 事件驱动取代 10ms 轮询，
@@ -16,7 +19,9 @@ function scriptRunToastId(scriptId, sessionId) {
 const SCRIPT_RUN_STOP_TIMEOUT_MS = 300;
 
 function waitForRunSettled(run) {
-  if (run.status !== SCRIPT_RUN_STATUS.RUNNING) return Promise.resolve();
+  if (run.status !== SCRIPT_RUN_STATUS.RUNNING && run.status !== SCRIPT_RUN_STATUS.QUEUED) {
+    return Promise.resolve();
+  }
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       stopWatch();
@@ -25,7 +30,7 @@ function waitForRunSettled(run) {
     const stopWatch = watch(
       () => run.status,
       (status) => {
-        if (status === SCRIPT_RUN_STATUS.RUNNING) return;
+        if (status === SCRIPT_RUN_STATUS.RUNNING || status === SCRIPT_RUN_STATUS.QUEUED) return;
         clearTimeout(timer);
         stopWatch();
         resolve();
@@ -69,17 +74,32 @@ export function useScriptExecution() {
       showToast({ type: "error", title: t("notifications.scriptNoTarget") });
       return null;
     }
-    const toastId = scriptRunToastId(script.id, frontendSessionId);
-    showToast({
-      id: toastId,
-      type: "loading",
-      title: t("notifications.scriptRunning", { name: script.name }),
-    });
-    const run = await runScript(script, {
+    const runPromise = runScript(script, {
       targetSessionId: frontendSessionId,
       targetLabel: sessionLabel(frontendSessionId),
       sessionInfo: sessionInfo(frontendSessionId),
     });
+    const runRecord = scriptRuns.value[0];
+    const toastId = scriptRunToastId(runRecord.runId);
+    const runningTitle = (status) =>
+      t(
+        status === SCRIPT_RUN_STATUS.QUEUED
+          ? "notifications.scriptQueued"
+          : "notifications.scriptRunning",
+        { name: script.name },
+      );
+    showToast({ id: toastId, type: "loading", title: runningTitle(runRecord.status) });
+    const stopStatusWatch = watch(
+      () => runRecord.status,
+      (status) => {
+        if (status === SCRIPT_RUN_STATUS.QUEUED || status === SCRIPT_RUN_STATUS.RUNNING) {
+          updateToast(toastId, { type: "loading", title: runningTitle(status) });
+        }
+      },
+      { flush: "sync" },
+    );
+    const run = await runPromise;
+    stopStatusWatch();
 
     if (run.status === SCRIPT_RUN_STATUS.ERROR) {
       updateToast(toastId, {
@@ -101,10 +121,9 @@ export function useScriptExecution() {
     return run;
   }
 
-  // 请求中断运行中的脚本：先把该脚本的 toast 切到“正在中断”的 loading 状态，
-  // 中断成功后由 runScriptOnSession 的结束分支把它更新为“已停止”。
+  // 请求中断运行中的脚本，或取消还未开始的排队脚本。
   async function stopScriptRun(run) {
-    const toastId = scriptRunToastId(run.scriptId, run.targetSessionId);
+    const toastId = scriptRunToastId(run.runId);
     showToast({
       id: toastId,
       type: "loading",
@@ -118,7 +137,7 @@ export function useScriptExecution() {
       return false;
     }
     await waitForRunSettled(run);
-    if (run.status === SCRIPT_RUN_STATUS.RUNNING) {
+    if (run.status === SCRIPT_RUN_STATUS.RUNNING || run.status === SCRIPT_RUN_STATUS.QUEUED) {
       updateToast(toastId, {
         type: "error",
         title: t("notifications.scriptStopFailed", { name: run.scriptName }),

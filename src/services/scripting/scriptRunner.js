@@ -4,16 +4,18 @@ import { sliceGraphemePrefix } from "../../utils/grapheme.js";
 import { createLogger } from "../../utils/logger.js";
 import { createRuntimeId } from "../../utils/runtimeIds.js";
 import { getScriptBridge } from "./bridges.js";
-import { createScriptApi, ScriptStoppedError, stripAnsi } from "./scriptApi.js";
+import { createScriptApi, stripAnsi } from "./scriptApi.js";
+import { ScriptStoppedError } from "./scriptErrors.js";
 import { createScriptRuntime } from "./scriptRuntime.js";
 import { createScriptExecutorHost } from "./scriptExecutorHost.js";
 
-// 兼容既有引用：stripAnsi / ScriptStoppedError 的实现在 scriptApi.js。
+// 兼容既有引用：stripAnsi 仍由运行器导出；错误类型从共享错误模块导入。
 export { ScriptStoppedError, stripAnsi };
 
 const runnerLogger = createLogger("frontend.scripting.runner");
 
 export const SCRIPT_RUN_STATUS = Object.freeze({
+  QUEUED: "queued",
   RUNNING: "running",
   DONE: "done",
   ERROR: "error",
@@ -22,12 +24,14 @@ export const SCRIPT_RUN_STATUS = Object.freeze({
 
 const MAX_RUN_HISTORY = 50;
 const MAX_RUN_LOGS = 1000;
+const MAX_QUEUED_RUNS_PER_SESSION = 20;
 // 单条日志参数的字符上限：防止脚本用巨型字符串撑爆运行记录与日志渲染。
 const MAX_LOG_ARG_CHARS = 8 * 1024;
 
 // 所有运行记录（含历史），视图据此渲染运行状态与日志。
 export const scriptRuns = ref([]);
 const runControls = new Map();
+const sessionQueues = new Map();
 
 function stringifyLogArg(value) {
   let text;
@@ -55,50 +59,155 @@ function errorMessage(error) {
   return String(error || i18n.global.t("scripts.errors.unknownError"));
 }
 
+function isActiveRun(run) {
+  return run.status === SCRIPT_RUN_STATUS.QUEUED || run.status === SCRIPT_RUN_STATUS.RUNNING;
+}
+
+function trimRunHistory() {
+  const activeRuns = scriptRuns.value.filter(isActiveRun);
+  const history = scriptRuns.value.filter((run) => !isActiveRun(run));
+  const historyLimit = Math.max(0, MAX_RUN_HISTORY - activeRuns.length);
+  scriptRuns.value = [...activeRuns, ...history.slice(0, historyLimit)];
+}
+
+function createRunJob(script, context, sessionId) {
+  const run = reactive({
+    runId: createRuntimeId(),
+    scriptId: script?.id || "",
+    scriptName: script?.name || "",
+    targetSessionId: sessionId,
+    targetLabel: context?.targetLabel || "",
+    status: SCRIPT_RUN_STATUS.QUEUED,
+    queuedAt: Date.now(),
+    startedAt: 0,
+    endedAt: 0,
+    error: "",
+    logs: [],
+    aborted: false,
+  });
+  let resolve;
+  const finished = new Promise((complete) => {
+    resolve = complete;
+  });
+  return {
+    run,
+    script: { id: run.scriptId, name: run.scriptName, code: String(script?.code || "") },
+    context: {
+      ...context,
+      targetSessionId: sessionId,
+      targetLabel: run.targetLabel,
+      sessionInfo: context?.sessionInfo ? { ...context.sessionInfo } : {},
+    },
+    finished,
+    resolve,
+    lifecycle: null,
+    queue: null,
+  };
+}
+
+function settleRun(job, status, error = "") {
+  if (!isActiveRun(job.run)) return;
+  job.run.status = status;
+  job.run.error = error;
+  job.run.endedAt = Date.now();
+  runControls.delete(job.run.runId);
+  trimRunHistory();
+  job.resolve(job.run);
+}
+
+function stopQueuedRun(job) {
+  if (job.run.status !== SCRIPT_RUN_STATUS.QUEUED || !job.queue) return false;
+  const index = job.queue.pending.indexOf(job);
+  if (index < 0) return false;
+  job.queue.pending.splice(index, 1);
+  settleRun(job, SCRIPT_RUN_STATUS.STOPPED);
+  return true;
+}
+
+function drainSessionQueue(queue) {
+  if (queue.draining) return;
+  queue.draining = true;
+  void (async () => {
+    while (queue.pending.length) {
+      const job = queue.pending.shift();
+      if (job.run.status !== SCRIPT_RUN_STATUS.QUEUED) continue;
+      job.run.status = SCRIPT_RUN_STATUS.RUNNING;
+      job.run.startedAt = Date.now();
+      try {
+        await executeScript(job);
+      } catch (error) {
+        runnerLogger.error("run.unhandled.failure", error);
+        settleRun(job, SCRIPT_RUN_STATUS.ERROR, errorMessage(error));
+      }
+    }
+  })()
+    .catch((error) => runnerLogger.error("queue.failed", error))
+    .finally(() => {
+      queue.draining = false;
+      if (queue.pending.length) {
+        drainSessionQueue(queue);
+      } else if (sessionQueues.get(queue.sessionId) === queue) {
+        sessionQueues.delete(queue.sessionId);
+      }
+    });
+}
+
 /**
  * 在指定终端会话上执行脚本。
  * @param {object} script { id, name, code }
  * @param {object} context { targetSessionId: 前端会话（tab）id, targetLabel: 展示用会话名 }
  * @returns {Promise<object>} 运行记录（status 为 done/error/stopped）
  */
-export async function runScript(script, context) {
-  // reactive：运行中 status/logs 的变更需要实时反映到视图。
-  const run = reactive({
-    runId: createRuntimeId(),
-    scriptId: script?.id || "",
-    scriptName: script?.name || "",
-    targetSessionId: context?.targetSessionId || "",
-    targetLabel: context?.targetLabel || "",
-    status: SCRIPT_RUN_STATUS.RUNNING,
-    startedAt: Date.now(),
-    endedAt: 0,
-    error: "",
-    logs: [],
-    aborted: false,
-  });
-  scriptRuns.value = [run, ...scriptRuns.value].slice(0, MAX_RUN_HISTORY);
+export function runScript(script, context) {
+  const sessionId = context?.targetSessionId || "";
+  const job = createRunJob(script, context, sessionId);
+  scriptRuns.value = [job.run, ...scriptRuns.value];
+  trimRunHistory();
 
+  if (!sessionId) {
+    settleRun(job, SCRIPT_RUN_STATUS.ERROR, i18n.global.t("scripts.errors.targetUnavailable"));
+    return job.finished;
+  }
+
+  let queue = sessionQueues.get(sessionId);
+  if (!queue) {
+    queue = { sessionId, pending: [], draining: false };
+    sessionQueues.set(sessionId, queue);
+  }
+  if (queue.pending.length >= MAX_QUEUED_RUNS_PER_SESSION) {
+    settleRun(job, SCRIPT_RUN_STATUS.ERROR, i18n.global.t("scripts.errors.queueFull"));
+    return job.finished;
+  }
+
+  job.queue = queue;
+  runControls.set(job.run.runId, {
+    stop() {
+      if (stopQueuedRun(job)) return true;
+      if (job.run.status !== SCRIPT_RUN_STATUS.RUNNING) return false;
+      job.run.aborted = true;
+      job.lifecycle?.failPending?.();
+      job.lifecycle?.failRuntime?.(new ScriptStoppedError());
+      return true;
+    },
+  });
+  queue.pending.push(job);
+  drainSessionQueue(queue);
+  return job.finished;
+}
+
+async function executeScript(job) {
+  const { run, script, context } = job;
   const lifecycle = {
     cleanups: [],
     failPending: null,
     failRuntime: null,
     finished: false,
   };
-  runControls.set(run.runId, {
-    stop() {
-      run.aborted = true;
-      lifecycle.failPending?.();
-      lifecycle.failRuntime?.(new ScriptStoppedError());
-    },
-  });
+  job.lifecycle = lifecycle;
 
   const finish = async (status, error = "") => {
     if (lifecycle.finished) return;
     lifecycle.finished = true;
-    run.status = status;
-    run.error = error;
-    run.endedAt = Date.now();
-    runControls.delete(run.runId);
     for (const cleanup of lifecycle.cleanups.splice(0).reverse()) {
       try {
         await cleanup();
@@ -106,6 +215,7 @@ export async function runScript(script, context) {
         runnerLogger.warn("run.cleanup.failed", cleanupError);
       }
     }
+    settleRun(job, status, error);
   };
 
   if (!run.targetSessionId || !getScriptBridge(run.targetSessionId)) {
@@ -115,8 +225,7 @@ export async function runScript(script, context) {
 
   try {
     // 主线程运行时：托管 API 侧的后台调用（未被 await 的 xterm.* 也纳入完成判定）；
-    // 脚本主体由执行宿主运行——默认在独立 Worker 线程（死循环可 terminate 秒杀，
-    // 内存随 Worker 整体回收），无 Worker 环境（node 单测）回退到直连执行。
+    // 脚本主体由 Worker 运行，停止时可 terminate；仅 Node 测试环境使用直连执行。
     const log = (...args) => appendRunLog(run, ...args);
     const runtime = createScriptRuntime(run, log);
     lifecycle.cleanups.push(runtime.dispose);
@@ -163,12 +272,6 @@ export async function runScript(script, context) {
 }
 
 export function stopScript(runId) {
-  // 停止句柄以 runControls 为准：运行记录被 MAX_RUN_HISTORY 截断挤出列表后，
-  // 仍在运行的脚本必须仍可停止。
   const control = runControls.get(runId);
-  if (!control) return false;
-  const run = scriptRuns.value.find((item) => item.runId === runId);
-  if (run && run.status !== SCRIPT_RUN_STATUS.RUNNING) return false;
-  control.stop();
-  return true;
+  return control?.stop() === true;
 }
