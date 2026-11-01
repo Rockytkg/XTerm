@@ -1,8 +1,7 @@
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 let formatterPromise = null;
 
-// 沙盒屏蔽清单：这些全局名会作为 AsyncFunction 的同名形参注入"访问即抛错"的
-// 占位值，把网络、宿主桥（Tauri IPC）、DOM、本地存储、代码执行等能力从脚本作用域
+// 沙盒屏蔽清单：这些全局名会注入"访问即抛错"的占位值，把网络、宿主桥
+// （Tauri IPC）、DOM、本地存储、代码执行等能力从脚本作用域
 // 中摘除；脚本只能用 xterm.* 专用函数申请这些能力（会弹窗请求用户授权）。
 // 注意这是同 JS realm 内的尽力隔离：决心绕过的脚本仍可能经构造器原型链
 // （如 ({}).constructor.constructor）拿到真全局；真正的兜底是 CSP
@@ -88,18 +87,44 @@ function createBlockedValue(name, formatMessage) {
   });
 }
 
-// 按 SANDBOX_BLOCKED_GLOBALS 的顺序生成对应的形参值（每次运行新建，避免跨运行共享状态）。
+// 按 SANDBOX_BLOCKED_GLOBALS 的顺序生成对应的屏蔽值（每次运行新建，避免跨运行共享状态）。
 export function createSandboxBindings(formatMessage = defaultBlockedMessage) {
   return SANDBOX_BLOCKED_GLOBALS.map((name) => createBlockedValue(name, formatMessage));
 }
 
+function createScope(scopeNames, values) {
+  const scope = Object.create(null);
+  for (let index = 0; index < scopeNames.length; index += 1) {
+    scope[scopeNames[index]] = values[index];
+  }
+  // `with` consults `has` for every free identifier. Returning true only for
+  // names injected into this scope keeps unrelated globals on the normal
+  // sandboxed global path.
+  return new Proxy(scope, {
+    has(target, property) {
+      return typeof property === "string" && Object.prototype.hasOwnProperty.call(target, property);
+    },
+  });
+}
+
 export function compileScript(code = "", scopeNames = []) {
-  return new AsyncFunction(
-    "xterm",
-    ...scopeNames,
-    ...SANDBOX_BLOCKED_GLOBALS,
-    `"use strict";\n${String(code)}`,
+  const source = String(code);
+  // The generated outer function is intentionally non-strict so it can create
+  // a lexical `with` environment.  User code itself remains strict inside the
+  // async function, preserving predictable `this`, octal and assignment rules.
+  // Unlike parameter injection, this permits normal top-level declarations such
+  // as `const console = ...` without colliding with runtime bindings.
+  const createScript = new Function(
+    "__scope",
+    `with (__scope) { return async function __xterm_script__(${SANDBOX_BLOCKED_GLOBALS.join(",")}) { "use strict";\n${source}\n}; }`,
   );
+
+  return (xterm, ...values) => {
+    const runtimeValueCount = scopeNames.length;
+    const runtimeValues = [xterm, ...values.slice(0, runtimeValueCount)];
+    const blockedValues = values.slice(runtimeValueCount);
+    return createScript(createScope(["xterm", ...scopeNames], runtimeValues))(...blockedValues);
+  };
 }
 
 /** Compile a script with the same async function shape used by the runner. */

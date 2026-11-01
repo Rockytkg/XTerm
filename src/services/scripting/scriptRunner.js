@@ -27,6 +27,10 @@ const MAX_RUN_LOGS = 1000;
 const MAX_QUEUED_RUNS_PER_SESSION = 20;
 // 单条日志参数的字符上限：防止脚本用巨型字符串撑爆运行记录与日志渲染。
 const MAX_LOG_ARG_CHARS = 8 * 1024;
+// 日志是脚本最容易意外形成的高频路径。令牌桶允许短突发，同时把持续刷屏
+// 限制在可渲染的速率，避免日志更新反过来拖慢终端脚本和 Vue 响应式系统。
+const LOG_TOKEN_RATE = 120;
+const LOG_TOKEN_BURST = 240;
 
 // 所有运行记录（含历史），视图据此渲染运行状态与日志。
 export const scriptRuns = ref([]);
@@ -49,9 +53,52 @@ function stringifyLogArg(value) {
     : text;
 }
 
+function createLogTokenBucket() {
+  return {
+    tokens: LOG_TOKEN_BURST,
+    lastRefill: performance.now(),
+    dropped: 0,
+  };
+}
+
+function takeLogToken(bucket) {
+  const now = performance.now();
+  const elapsed = Math.max(0, now - bucket.lastRefill);
+  bucket.lastRefill = now;
+  bucket.tokens = Math.min(LOG_TOKEN_BURST, bucket.tokens + (elapsed * LOG_TOKEN_RATE) / 1000);
+  if (bucket.tokens < 1) {
+    bucket.dropped += 1;
+    return false;
+  }
+  bucket.tokens -= 1;
+  return true;
+}
+
+function logRateLimitMessage(count) {
+  return i18n.global.t("scripts.errors.logRateLimit", { count });
+}
+
 function appendRunLog(run, ...args) {
   if (run.logs.length >= MAX_RUN_LOGS) return;
+  if (!takeLogToken(run.logBucket)) return;
+  if (run.logBucket.dropped) {
+    run.logs.push({
+      time: Date.now(),
+      text: logRateLimitMessage(run.logBucket.dropped),
+    });
+    run.logBucket.dropped = 0;
+    if (run.logs.length >= MAX_RUN_LOGS) return;
+  }
   run.logs.push({ time: Date.now(), text: args.map(stringifyLogArg).join(" ") });
+}
+
+function flushDroppedLogSummary(run) {
+  if (!run.logBucket?.dropped || run.logs.length >= MAX_RUN_LOGS) return;
+  run.logs.push({
+    time: Date.now(),
+    text: logRateLimitMessage(run.logBucket.dropped),
+  });
+  run.logBucket.dropped = 0;
 }
 
 function errorMessage(error) {
@@ -83,6 +130,7 @@ function createRunJob(script, context, sessionId) {
     endedAt: 0,
     error: "",
     logs: [],
+    logBucket: createLogTokenBucket(),
     aborted: false,
   });
   let resolve;
@@ -208,6 +256,7 @@ async function executeScript(job) {
   const finish = async (status, error = "") => {
     if (lifecycle.finished) return;
     lifecycle.finished = true;
+    flushDroppedLogSummary(run);
     for (const cleanup of lifecycle.cleanups.splice(0).reverse()) {
       try {
         await cleanup();

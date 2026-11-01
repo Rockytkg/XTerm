@@ -338,6 +338,8 @@ export default {
       sessionControlUnavailable:
         "Session control is not available (it may be closed or disconnected)",
       sessionUnavailable: "The target session is not connected or has been closed",
+      capabilityUnavailable: "The current session does not support {capability}",
+      logRateLimit: "Log output was throttled; {count} entries were dropped",
       redetectBaudRateSerialOnly: "Baud rate redetect is only available for serial sessions",
       unknownError: "Unknown script error",
     },

@@ -3,7 +3,12 @@ import { sliceGraphemeSuffix } from "../../utils/grapheme.js";
 import { cancelScriptPrompts, requestScriptPrompt } from "./scriptPromptController.js";
 import { getRecordingBridge, getScriptBridge, getSessionControlBridge } from "./bridges.js";
 import { readDataFile, writeDataFile } from "./scriptFileLoader.js";
-import { ScriptCommandError, ScriptStoppedError, ScriptWaitTimeoutError } from "./scriptErrors.js";
+import {
+  ScriptCapabilityError,
+  ScriptCommandError,
+  ScriptStoppedError,
+  ScriptWaitTimeoutError,
+} from "./scriptErrors.js";
 
 const MAX_OUTPUT_BUFFER_CHARS = 128 * 1024;
 // searchBuffer 最多带回的匹配行数（count 仍为总数），避免巨型缓冲区撑爆运行记录。
@@ -45,12 +50,102 @@ function matchPattern(buffer, pattern, apiName = "waitFor") {
   throw new TypeError(`${apiName} pattern must be a string or RegExp`);
 }
 
-// 多模式竞争：命中位置最早者胜出；同位置时排在前面的模式优先。
-function matchEarliest(buffer, patterns, apiName) {
-  let best = null;
+// 多个字符串模式使用 Aho-Corasick 自动机一次扫描输出缓冲区；混合正则时，
+// 自动机负责字符串部分，正则仍按自身语义执行。相比逐模式 indexOf，模式数
+// 增长时扫描次数从 O(patterns * buffer) 降为 O(buffer + matches)。
+function buildLiteralMatcher(patterns) {
+  if (patterns.some((pattern) => pattern === "")) return null;
+  const literalPatterns = [];
+  const patternIndexes = [];
   patterns.forEach((pattern, patternIndex) => {
+    if (typeof pattern === "string" && pattern.length > 0) {
+      literalPatterns.push(pattern);
+      patternIndexes.push(patternIndex);
+    }
+  });
+  if (!literalPatterns.length) return null;
+
+  const nodes = [{ next: new Map(), fail: 0, outputs: [] }];
+  literalPatterns.forEach((pattern, literalIndex) => {
+    let nodeIndex = 0;
+    for (let offset = 0; offset < pattern.length; offset += 1) {
+      const character = pattern[offset];
+      let next = nodes[nodeIndex].next.get(character);
+      if (next === undefined) {
+        next = nodes.length;
+        nodes[nodeIndex].next.set(character, next);
+        nodes.push({ next: new Map(), fail: 0, outputs: [] });
+      }
+      nodeIndex = next;
+    }
+    nodes[nodeIndex].outputs.push({
+      patternIndex: patternIndexes[literalIndex],
+      text: pattern,
+    });
+  });
+
+  const queue = [];
+  let queueHead = 0;
+  for (const child of nodes[0].next.values()) queue.push(child);
+  while (queueHead < queue.length) {
+    const nodeIndex = queue[queueHead];
+    queueHead += 1;
+    const node = nodes[nodeIndex];
+    for (const [character, childIndex] of node.next) {
+      queue.push(childIndex);
+      let fallback = node.fail;
+      while (fallback && !nodes[fallback].next.has(character)) {
+        fallback = nodes[fallback].fail;
+      }
+      const inherited = nodes[nodes[fallback].next.get(character) ?? 0].outputs;
+      nodes[childIndex].fail = nodes[fallback].next.get(character) ?? 0;
+      if (inherited.length) nodes[childIndex].outputs.push(...inherited);
+    }
+  }
+
+  return { nodes };
+}
+
+function matchLiteralPatterns(buffer, matcher) {
+  let nodeIndex = 0;
+  let best = null;
+  for (let index = 0; index < buffer.length; index += 1) {
+    const character = buffer[index];
+    while (nodeIndex && !matcher.nodes[nodeIndex].next.has(character)) {
+      nodeIndex = matcher.nodes[nodeIndex].fail;
+    }
+    nodeIndex = matcher.nodes[nodeIndex].next.get(character) ?? 0;
+    for (const output of matcher.nodes[nodeIndex].outputs) {
+      const start = index - output.text.length + 1;
+      if (
+        !best ||
+        start < best.index ||
+        (start === best.index && output.patternIndex < best.patternIndex)
+      ) {
+        best = {
+          index: start,
+          text: output.text,
+          groups: [],
+          patternIndex: output.patternIndex,
+        };
+      }
+    }
+  }
+  return best;
+}
+
+// 多模式竞争：命中位置最早者胜出；同位置时排在前面的模式优先。
+function matchEarliest(buffer, patterns, apiName, literalMatcher = null) {
+  let best = literalMatcher ? matchLiteralPatterns(buffer, literalMatcher) : null;
+  patterns.forEach((pattern, patternIndex) => {
+    if (typeof pattern === "string" && literalMatcher) return;
     const match = matchPattern(buffer, pattern, apiName);
-    if (match && (!best || match.index < best.index)) {
+    if (
+      match &&
+      (!best ||
+        match.index < best.index ||
+        (match.index === best.index && patternIndex < best.patternIndex))
+    ) {
       best = { ...match, patternIndex };
     }
   });
@@ -223,7 +318,7 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
 
   function checkWaiter(entry) {
     const match = entry.patterns
-      ? matchEarliest(outputBuffer, entry.patterns, entry.apiName)
+      ? matchEarliest(outputBuffer, entry.patterns, entry.apiName, entry.literalMatcher)
       : matchPattern(outputBuffer, entry.pattern, entry.apiName);
     if (!match) return;
     clearTimeout(entry.timer);
@@ -248,6 +343,7 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
         entry.patterns = entry.patterns.map((pattern) =>
           pattern instanceof RegExp ? normalizeRegExp(pattern) : pattern,
         );
+        entry.literalMatcher = buildLiteralMatcher(entry.patterns);
       }
       const timeout = Number(timeoutMs);
       // timeout<=0 表示永不超时；非有限输入（如 "abc"→NaN）回退默认超时，
@@ -482,10 +578,20 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
     return control;
   }
 
+  function requireCapability(capability) {
+    if (context.sessionInfo?.capabilities?.[capability] !== true) {
+      throw new ScriptCapabilityError(
+        capability,
+        i18n.global.t("scripts.errors.capabilityUnavailable", { capability }),
+      );
+    }
+  }
+
   // 串口波特率重检：等同工具栏"重新检测波特率"按钮（检测期间终端输入被屏蔽）；
   // 仅串口会话可用，返回 { serialPort, baudRate, confirmed }。
   async function redetectBaudRate() {
     throwIfStopped();
+    requireCapability("serialBaudDetection");
     const result = await requireSessionControlBridge().redetectBaudRate(context.targetSessionId);
     throwIfStopped();
     return result;
@@ -603,6 +709,15 @@ export function createScriptApi({ run, context, lifecycle, trackTask, log }) {
       port: context.sessionInfo?.port ?? "",
       username: String(context.sessionInfo?.username || ""),
       backspaceSends: String(context.sessionInfo?.backspaceSends || ""),
+      capabilities: Object.freeze({ ...(context.sessionInfo?.capabilities || {}) }),
     }),
+    requireCapability: (capability) => {
+      return trackTask(
+        Promise.resolve().then(() => {
+          requireCapability(String(capability || ""));
+          return true;
+        }),
+      );
+    },
   };
 }

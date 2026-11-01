@@ -1,14 +1,23 @@
 // await/then/catch 会消费子类 Promise 的 then；原生 Promise 的 await 则不会经过可覆写方法。
 // 利用这一差异，运行时只对脚本未消费的拒绝执行 fail，已捕获的 API 超时可以正常继续。
 class ScriptTaskPromise extends Promise {
-  constructor(executor) {
+  constructor(executor, tracker = null) {
     super(executor);
     this.consumerHandled = false;
+    this.tracker = tracker;
+  }
+
+  // Promise.prototype.then/catch/finally create a child promise through the
+  // species constructor. Return a native child here and explicitly register
+  // it with the runtime so every chain remains part of the idle barrier.
+  static get [Symbol.species]() {
+    return Promise;
   }
 
   then(onFulfilled, onRejected) {
     if (typeof onRejected === "function") this.consumerHandled = true;
-    return super.then(onFulfilled, onRejected);
+    const child = super.then(onFulfilled, onRejected);
+    return this.tracker ? this.tracker(child) : child;
   }
 }
 
@@ -22,6 +31,7 @@ export function createScriptRuntime(run, log) {
   let rejectFailure = null;
   let idlePromise = Promise.resolve();
   let resolveIdle = null;
+  let idleCheckScheduled = false;
   let settled = false;
 
   const failure = new Promise((_, reject) => {
@@ -46,16 +56,33 @@ export function createScriptRuntime(run, log) {
   }
 
   function notifyIdle() {
-    if (activeWorkCount() || !resolveIdle) return;
-    const resolve = resolveIdle;
-    resolveIdle = null;
-    resolve();
+    if (activeWorkCount() || !resolveIdle || idleCheckScheduled) return;
+    // Promise continuations run as microtasks.  Defer the idle decision until
+    // the current callback and all continuations it released have had a chance
+    // to enqueue more tracked work.
+    idleCheckScheduled = true;
+    globalThis.queueMicrotask(() => {
+      idleCheckScheduled = false;
+      if (activeWorkCount() || !resolveIdle) return;
+      const resolve = resolveIdle;
+      resolveIdle = null;
+      resolve();
+    });
   }
 
   function trackTask(task) {
     const promise = new ScriptTaskPromise((resolve, reject) => {
-      Promise.resolve(task).then(resolve, reject);
-    });
+      // Bypass the overridden `then` when assimilating an already tracked
+      // promise. Runtime-owned handlers must not count as user consumers or
+      // create a second tracked child for the same task.
+      const source =
+        task instanceof ScriptTaskPromise
+          ? new globalThis.Promise((settle, fail) =>
+              globalThis.Promise.prototype.then.call(task, settle, fail),
+            )
+          : globalThis.Promise.resolve(task);
+      source.then(resolve, reject);
+    }, trackTask);
     markBusy();
     backgroundTasks.add(promise);
     // 绕过 consumerHandled 标记：这两个处理器只属于运行时自身，不代表脚本处理了错误。
@@ -140,6 +167,41 @@ export function createScriptRuntime(run, log) {
     );
   }
 
+  function createRuntimePromise(executor) {
+    if (!new.target) {
+      throw new TypeError("Promise constructor cannot be invoked without 'new'");
+    }
+    if (typeof executor !== "function") {
+      throw new TypeError("Promise resolver is not a function");
+    }
+    return trackTask(new globalThis.Promise(executor));
+  }
+
+  function createPromiseStatic(method) {
+    return (...args) => trackTask(globalThis.Promise[method](...args));
+  }
+
+  const runtimePromise = Object.assign(createRuntimePromise, {
+    prototype: globalThis.Promise.prototype,
+    all: createPromiseStatic("all"),
+    allSettled: createPromiseStatic("allSettled"),
+    any: createPromiseStatic("any"),
+    race: createPromiseStatic("race"),
+    reject: createPromiseStatic("reject"),
+    resolve: createPromiseStatic("resolve"),
+  });
+  if (typeof globalThis.Promise.withResolvers === "function") {
+    runtimePromise.withResolvers = () => {
+      let resolve;
+      let reject;
+      const promise = createRuntimePromise((resolveValue, rejectValue) => {
+        resolve = resolveValue;
+        reject = rejectValue;
+      });
+      return { promise, resolve, reject };
+    };
+  }
+
   function waitForBackgroundWork() {
     return idlePromise;
   }
@@ -178,6 +240,7 @@ export function createScriptRuntime(run, log) {
       setInterval: runtimeSetInterval,
       clearInterval: runtimeClearInterval,
       queueMicrotask: runtimeQueueMicrotask,
+      Promise: runtimePromise,
     },
     trackTask,
     waitForBackgroundWork,

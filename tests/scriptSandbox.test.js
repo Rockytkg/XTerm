@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SCRIPT_RUN_STATUS, runScript } from "../src/services/scripting/scriptRunner.js";
+import {
+  SCRIPT_RUN_STATUS,
+  runScript,
+  scriptRuns,
+  stopScript,
+} from "../src/services/scripting/scriptRunner.js";
 import { publishTerminalOutput, registerScriptBridge } from "../src/services/scripting/bridges.js";
 
 const TARGET = "sandbox-session";
@@ -119,6 +124,21 @@ test("calling a blocked global also throws (not just property access)", async ()
   assert.ok(run.error.includes("fetch"));
 });
 
+test("blocked globals cannot be replaced by local declarations", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "blocked-shadow",
+      name: "blocked-shadow",
+      code: `const fetch = () => "escaped";`,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
+  assert.match(run.error, /fetch|already been declared|Identifier/);
+});
+
 test("direct eval still resolves globals through the sandbox scope", async () => {
   setup();
   const run = await runScript(
@@ -190,6 +210,71 @@ test("console/timers provided by the runtime are not shadowed by the sandbox", a
   assert.equal(run.logs[1].text, "timers-ok");
 });
 
+test("natural async functions finish after their promise and timer continuations", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "natural-async",
+      name: "natural-async",
+      code: `
+        async function collect() {
+          const values = await new Promise((resolve) => {
+            setTimeout(() => resolve([1, 2, 3]), 5);
+          });
+          xterm.log(values.map((value) => value * 2).join(","));
+        }
+        collect();
+      `,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.equal(run.logs[0].text, "2,4,6");
+});
+
+test("promise chains keep unresolved continuations alive until stopped", async () => {
+  setup();
+  const runPromise = runScript(
+    {
+      id: "promise-chain-pending",
+      name: "promise-chain-pending",
+      code: `Promise.resolve().then(() => ({ then() {} }));`,
+    },
+    testContext(),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const run = scriptRuns.value[0];
+  assert.equal(run.status, SCRIPT_RUN_STATUS.RUNNING);
+  assert.equal(stopScript(run.runId), true);
+  const stopped = await runPromise;
+  teardown();
+  assert.equal(stopped.status, SCRIPT_RUN_STATUS.STOPPED);
+});
+
+test("script declarations can shadow runtime names without parameter collisions", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "shadow-runtime",
+      name: "shadow-runtime",
+      code: `
+        const console = { log: (value) => xterm.log("local", value) };
+        console.log("console");
+        const setTimeout = (callback) => callback();
+        setTimeout(() => xterm.log("timer-shadow"));
+      `,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.deepEqual(
+    run.logs.map((entry) => entry.text),
+    ["local console", "timer-shadow"],
+  );
+});
+
 test("oversized log arguments are truncated instead of stored whole", async () => {
   setup();
   const run = await runScript(
@@ -220,6 +305,22 @@ test("log truncation keeps surrogate pairs well-formed", async () => {
   assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
   assert.equal(run.logs[0].text.isWellFormed(), true);
   assert.equal(run.logs[0].text, `${"x".repeat(8191)}…`);
+});
+
+test("high-frequency script logs are token-bucket limited with a summary", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "log-rate-limit",
+      name: "log-rate-limit",
+      code: `for (let index = 0; index < 400; index += 1) xterm.log(index);`,
+    },
+    testContext(),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.ok(run.logs.some((entry) => /丢弃|dropped/.test(entry.text)));
+  assert.ok(run.logs.length < 400);
 });
 
 test("terminal interaction still works under the sandbox", async () => {

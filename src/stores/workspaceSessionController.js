@@ -69,6 +69,7 @@ export function createWorkspaceSessionController({
   const serialSessionProfiles = new Map();
   const connectionUpdateQueues = new Map();
   const optimisticConnectionPatches = new Map();
+  const serialRedetectTasks = new Map();
   const sshFlow = createSshConnectionFlow({
     activeTerminalSize,
     connectionRuntime,
@@ -543,7 +544,10 @@ export function createWorkspaceSessionController({
     return sshFlow.cancelCredentialPrompt();
   }
 
-  function reconnectSerialAutoBaud(connectionId = connectionIdForSession(activeConnection.value)) {
+  function reconnectSerialAutoBaud(
+    connectionId = connectionIdForSession(activeConnection.value),
+    { requireAuto = true } = {},
+  ) {
     const connection = getConnection(connectionId);
     if (
       !connection ||
@@ -555,7 +559,7 @@ export function createWorkspaceSessionController({
       )
     )
       return false;
-    if (connection.baudRate !== "auto") return false;
+    if (requireAuto && connection.baudRate !== "auto") return false;
     const session = findSessionInstancesByConnectionId?.(connectionId)?.[0] || null;
     const sessionId = session?.id || "";
     const terminalSessionId = session?.sessionId || "";
@@ -566,50 +570,67 @@ export function createWorkspaceSessionController({
     activeTab.value = "shell";
     redetectSerialAutoBaud(sessionId).catch((error) => {
       logger.error("Failed to redetect serial auto baud session", error);
-      const details = formatConnectionError(error);
-      dispatchConnectionEvent(sessionId, {
-        type: CONNECTION_EVENT.SERIAL_REDETECT_FAILED,
-        payload: { errorMessage: details.detail || details.message || String(error) },
-      });
-      lastSerialBaudEvent.value = {
-        connectionId,
-        sessionId,
-        baudRate: 0,
-        confirmed: false,
-        serialPort: "",
-        error: details.detail || details.message || String(error),
-      };
+      recordSerialRedetectFailure(connectionId, sessionId, error);
     });
     return true;
   }
 
-  async function redetectSerialAutoBaud(sessionId) {
-    const connectionId = connectionIdForSession(sessionId);
-    const terminalSessionId = getSessionInstance(sessionId)?.sessionId || "";
-    if (!sessionId || !terminalSessionId) {
-      throw new Error("Serial session is not active.");
-    }
-    logger.info("serial_auto_baud.redetect.requested", {
-      connectionId,
-      sessionId,
-    });
+  function recordSerialRedetectFailure(connectionId, sessionId, error) {
+    const details = formatConnectionError(error);
+    const message = details.detail || details.message || String(error);
     dispatchConnectionEvent(sessionId, {
-      type: CONNECTION_EVENT.SERIAL_REDETECT_REQUESTED,
-    });
-    const response = await redetectBackendSerialBaud(terminalSessionId);
-    dispatchConnectionEvent(sessionId, {
-      type: CONNECTION_EVENT.SERIAL_REDETECT_SUCCEEDED,
-      payload: response,
+      type: CONNECTION_EVENT.SERIAL_REDETECT_FAILED,
+      payload: { errorMessage: message },
     });
     lastSerialBaudEvent.value = {
       connectionId,
       sessionId,
-      baudRate: response?.baudRate || 0,
-      confirmed: response?.confirmed === true,
-      serialPort: response?.serialPort || "",
-      error: "",
+      baudRate: 0,
+      confirmed: false,
+      serialPort: "",
+      error: message,
     };
-    return response;
+    return message;
+  }
+
+  async function redetectSerialAutoBaud(sessionId) {
+    const existing = serialRedetectTasks.get(sessionId);
+    if (existing) return existing;
+
+    const task = (async () => {
+      const connectionId = connectionIdForSession(sessionId);
+      const terminalSessionId = getSessionInstance(sessionId)?.sessionId || "";
+      if (!sessionId || !terminalSessionId) {
+        throw new Error("Serial session is not active.");
+      }
+      logger.info("serial_auto_baud.redetect.requested", {
+        connectionId,
+        sessionId,
+      });
+      dispatchConnectionEvent(sessionId, {
+        type: CONNECTION_EVENT.SERIAL_REDETECT_REQUESTED,
+      });
+      const response = await redetectBackendSerialBaud(terminalSessionId);
+      dispatchConnectionEvent(sessionId, {
+        type: CONNECTION_EVENT.SERIAL_REDETECT_SUCCEEDED,
+        payload: response,
+      });
+      lastSerialBaudEvent.value = {
+        connectionId,
+        sessionId,
+        baudRate: response?.baudRate || 0,
+        confirmed: response?.confirmed === true,
+        serialPort: response?.serialPort || "",
+        error: "",
+      };
+      return response;
+    })();
+    serialRedetectTasks.set(sessionId, task);
+    try {
+      return await task;
+    } finally {
+      if (serialRedetectTasks.get(sessionId) === task) serialRedetectTasks.delete(sessionId);
+    }
   }
 
   // ── 脚本会话控制桥（xterm.redetectBaudRate）──────────────────────────────
@@ -635,12 +656,23 @@ export function createWorkspaceSessionController({
 
   async function scriptRedetectBaudRate(frontendSessionId) {
     const session = requireScriptTargetSession(frontendSessionId);
+    const capabilities = sessionRegistry.getCapabilities(frontendSessionId);
+    if (!capabilitiesCan(capabilities, "serialBaudDetection")) {
+      throw new Error(
+        i18n.global.t("scripts.errors.capabilityUnavailable", {
+          capability: "serialBaudDetection",
+        }),
+      );
+    }
     if (!isSerialProtocol(getConnection(session.connectionId)?.protocol)) {
       throw new Error(i18n.global.t("scripts.errors.redetectBaudRateSerialOnly"));
     }
-    const result = await redetectSerialAutoBaud(frontendSessionId).catch((error) => {
-      throw localizeSessionControlError(error);
-    });
+    const result = await redetectSerialAutoBaud(frontendSessionId, { requireAuto: false }).catch(
+      (error) => {
+        recordSerialRedetectFailure(session.connectionId, frontendSessionId, error);
+        throw localizeSessionControlError(error);
+      },
+    );
     // 只透传可结构化克隆的字段给脚本沙箱。
     return {
       serialPort: result?.serialPort || "",

@@ -208,6 +208,29 @@ test("expectAny picks the earliest match and prefers the first pattern on ties",
   assert.equal(run.logs[0].text, "0 beta");
 });
 
+test("expectAny keeps earliest and tie ordering with many literal patterns", async () => {
+  setup();
+  const runPromise = runScript(
+    {
+      id: "e7b",
+      name: "expect-any-many-literals",
+      code: `
+        const hit = await xterm.expectAny([
+          "device-ready", "ready", "error", "device", "ready>", "timeout",
+        ], 2000);
+        xterm.log(hit.index, hit.text);
+      `,
+    },
+    testContext(),
+  );
+  await settle();
+  publishTerminalOutput(TARGET, "device-ready>");
+  const run = await runPromise;
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.equal(run.logs[0].text, "0 device-ready");
+});
+
 test("expectAny rejects an empty or invalid pattern list", async () => {
   setup();
   const run = await runScript(

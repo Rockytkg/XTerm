@@ -18,8 +18,10 @@ export const DEFAULT_SCRIPT_BODY = `// 终端 API（异步函数请使用 await�
 // const values = await xterm.form({ title: "参数", fields: [{ key: "hostname", label: "主机名", required: true }] }) — 显示多字段表单。
 // xterm.log("运行日志", { ok: true }) — 写入脚本运行日志。
 // const detected = await xterm.redetectBaudRate() — 串口会话重检波特率，返回 { serialPort, baudRate, confirmed }。
+// await xterm.requireCapability("serialBaudDetection") — 能力不可用时抛出稳定错误。
 // xterm.session.id — 当前目标会话 ID。
 // xterm.session.label — 当前目标会话显示名称。
 // xterm.session.protocol / host / port / username — 非敏感连接信息（不含密码、私钥）。
+// xterm.session.capabilities.serialBaudDetection — 当前会话是否支持波特率重检。
 // 支持标准 JavaScript、Promise、try/catch 和定时器；网络与文件等能力被沙盒限制，建议始终 await 异步 API。
 `;

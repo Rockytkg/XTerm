@@ -56,12 +56,14 @@ export function useScriptExecution() {
   // 透传给脚本的会话元数据：只取非敏感连接信息，密码/私钥等凭证不离开凭证存储。
   function sessionInfo(frontendSessionId) {
     const session = workspace.openSessions.find((item) => item.id === frontendSessionId);
+    const capabilities = workspace.sessionRuntime(frontendSessionId)?.capabilities;
     return {
       protocol: session?.protocol || "",
       host: session?.host || "",
       port: session?.port ?? "",
       username: session?.username || "",
       backspaceSends: session?.backspaceSends || "",
+      capabilities: capabilities ? { ...capabilities } : {},
     };
   }
 

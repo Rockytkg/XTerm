@@ -64,6 +64,20 @@ XTerm 内置 JavaScript 终端自动化脚本引擎，可以模拟人工在终�
 
 脚本以 async 函数体执行，可直接使用顶层 `await`。终端 API 统一通过 `xterm` 访问。
 
+脚本也可以按普通 JavaScript 的方式组织异步代码：声明 `async function`、使用箭头函数、
+`try/catch/finally`、解构、可选链、`Promise.all()` 和 `new Promise()` 都会按原生语义执行，
+不要求把所有逻辑写成顶层 `await`。脚本运行在独立 Worker 中；运行器会等待脚本创建的定时器、
+微任务和 Promise 清空后再标记完成，异步函数在脚本主体返回后继续产生的日志和终端操作也会生效。
+
+```js
+async function provision(hostname) {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await xterm.sendLine(`sysname ${hostname}`);
+}
+
+provision("SW1"); // 不必额外包一层立即执行函数
+```
+
 ### 发送输入
 
 ```js
@@ -334,7 +348,7 @@ await xterm.alert(`配置已保存到 ${path}`);
 ```js
 // 串口会话：重新检测波特率（等同工具栏"重新检测波特率"按钮，检测期间终端输入会被屏蔽）。
 // 返回 { serialPort, baudRate, confirmed }；不要求连接配置的波特率为"自动"。
-// 非串口会话调用会抛出错误。
+// 会话没有 serialBaudDetection 能力，或会话不是串口时会抛出错误。
 const detected = await xterm.redetectBaudRate();
 if (!detected.confirmed) {
   xterm.log("波特率未确认，已保留", detected.baudRate);
@@ -350,6 +364,10 @@ xterm.session.protocol; // 连接协议（ssh / telnet / serial 等）
 xterm.session.host; // 目标地址（串口连接为空串）
 xterm.session.port; // 端口（串口连接为串口名，如 "COM3"）
 xterm.session.username; // 登录用户名
+xterm.session.capabilities.serialBaudDetection; // 当前会话是否支持波特率重检
+
+// 也可以在执行前用稳定的能力错误做显式校验
+await xterm.requireCapability("serialBaudDetection");
 ```
 
 仅暴露非敏感连接信息，便于脚本按设备类型/协议分支；密码、私钥等凭证不会进入脚本作用域。典型用法——同一套巡检脚本按协议选择不同的提示符与分页退出方式：
@@ -368,7 +386,7 @@ try {
 }
 ```
 
-已被 `try/catch` 或 `.catch()` 消费的 API 错误不会误判为运行失败；未 `await` 且未处理的拒绝仍会终止脚本。等待超时、命令执行和脚本停止分别提供稳定错误码，Worker 与 Node 测试中的直连执行保持一致：
+已被 `try/catch` 或 `.catch()` 消费的 API 错误不会误判为运行失败；未 `await` 且未处理的拒绝仍会终止脚本。等待超时、命令执行、能力不可用和脚本停止分别提供稳定错误码：`SCRIPT_WAIT_TIMEOUT`、`SCRIPT_COMMAND_ERROR`、`SCRIPT_CAPABILITY_UNAVAILABLE`、`SCRIPT_STOPPED`。Worker 与 Node 测试中的直连执行保持一致。脚本日志采用短时突发令牌桶限流，持续高频刷日志时会丢弃超额条目并记录汇总，避免日志渲染拖慢终端执行：
 
 ```js
 try {

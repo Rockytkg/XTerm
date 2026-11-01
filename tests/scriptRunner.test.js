@@ -678,7 +678,9 @@ test("redetectBaudRate returns the session control bridge result", async () => {
       name: "redetect-baud",
       code: `const r = await xterm.redetectBaudRate(); xterm.log("redetect", r.serialPort, r.baudRate, r.confirmed);`,
     },
-    testContext(),
+    testContext({
+      sessionInfo: { protocol: "serial", capabilities: { serialBaudDetection: true } },
+    }),
   );
   unregisterControl();
   teardown();
@@ -698,12 +700,54 @@ test("redetectBaudRate bridge failure fails the script run", async () => {
       name: "redetect-baud-failure",
       code: `await xterm.redetectBaudRate();`,
     },
-    testContext(),
+    testContext({
+      sessionInfo: { protocol: "serial", capabilities: { serialBaudDetection: true } },
+    }),
   );
   unregisterControl();
   teardown();
   assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
   assert.equal(run.error, "no usable baud rate");
+});
+
+test("redetectBaudRate rejects sessions without the advertised capability", async () => {
+  setup();
+  const control = createFakeSessionControl();
+  const unregisterControl = registerSessionControlBridge(control);
+  const run = await runScript(
+    {
+      id: "s16c",
+      name: "redetect-baud-unsupported",
+      code: `await xterm.redetectBaudRate();`,
+    },
+    testContext({ sessionInfo: { protocol: "ssh", capabilities: {} } }),
+  );
+  unregisterControl();
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);
+  assert.match(run.error, /serialBaudDetection/);
+  assert.deepEqual(control.calls, []);
+});
+
+test("session capabilities are available to scripts without exposing credentials", async () => {
+  setup();
+  const run = await runScript(
+    {
+      id: "s16e",
+      name: "session-capabilities",
+      code: `xterm.log(xterm.session.capabilities.serialBaudDetection, xterm.session.username);`,
+    },
+    testContext({
+      sessionInfo: {
+        protocol: "serial",
+        username: "operator",
+        capabilities: { serialBaudDetection: true },
+      },
+    }),
+  );
+  teardown();
+  assert.equal(run.status, SCRIPT_RUN_STATUS.DONE);
+  assert.equal(run.logs[0].text, "true operator");
 });
 
 test("session control api fails fast when no session control bridge is registered", async () => {
@@ -714,7 +758,9 @@ test("session control api fails fast when no session control bridge is registere
       name: "session-control-unavailable",
       code: `await xterm.redetectBaudRate();`,
     },
-    testContext(),
+    testContext({
+      sessionInfo: { protocol: "serial", capabilities: { serialBaudDetection: true } },
+    }),
   );
   teardown();
   assert.equal(run.status, SCRIPT_RUN_STATUS.ERROR);

@@ -325,6 +325,8 @@ export default {
       recordingUnavailable: "会话录音不可用（可能已关闭或断连）",
       sessionControlUnavailable: "会话控制不可用（可能已关闭或断连）",
       sessionUnavailable: "目标会话未连接或已关闭",
+      capabilityUnavailable: "当前会话不支持 {capability} 能力",
+      logRateLimit: "日志输出过于频繁，已丢弃 {count} 条",
       redetectBaudRateSerialOnly: "仅串口会话支持重新检测波特率",
       unknownError: "未知脚本错误",
     },

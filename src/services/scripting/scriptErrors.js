@@ -2,6 +2,7 @@ export const SCRIPT_ERROR_CODES = Object.freeze({
   STOPPED: "SCRIPT_STOPPED",
   WAIT_TIMEOUT: "SCRIPT_WAIT_TIMEOUT",
   COMMAND: "SCRIPT_COMMAND_ERROR",
+  CAPABILITY: "SCRIPT_CAPABILITY_UNAVAILABLE",
 });
 
 export class ScriptStoppedError extends Error {
@@ -31,11 +32,21 @@ export class ScriptCommandError extends Error {
   }
 }
 
+export class ScriptCapabilityError extends Error {
+  constructor(capability, message = `script capability is unavailable: ${capability}`) {
+    super(message);
+    this.name = "ScriptCapabilityError";
+    this.code = SCRIPT_ERROR_CODES.CAPABILITY;
+    this.capability = capability;
+  }
+}
+
 export function serializeScriptError(error) {
   return {
     name: error?.name || "Error",
     message: String(error?.message || error || "script failed"),
     ...(error?.code ? { code: error.code } : {}),
+    ...(error?.capability ? { capability: String(error.capability) } : {}),
   };
 }
 
@@ -43,5 +54,6 @@ export function deserializeScriptError(payload) {
   const error = new Error(payload?.message || "script failed");
   error.name = payload?.name || "Error";
   if (payload?.code) error.code = payload.code;
+  if (payload?.capability) error.capability = String(payload.capability);
   return error;
 }
