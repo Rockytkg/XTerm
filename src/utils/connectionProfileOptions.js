@@ -3,6 +3,7 @@ const CONNECTION_OPTION_FIELDS = new Set([
   "encoding",
   "backspaceSends",
   "telnetEnterSends",
+  "sshAllowLegacyAlgorithms",
   "realtimeEncodingDetection",
   "terminalHighlightEnabled",
   "terminalMorePromptCleanup",

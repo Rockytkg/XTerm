@@ -207,6 +207,7 @@ impl ParsedUri {
             accept_host_key_once: None,
             terminal_type: None,
             runtime_metrics: None,
+            ssh_allow_legacy_algorithms: None,
             telnet_enter_sends: None,
             cols: None,
             rows: None,

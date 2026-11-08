@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { computed } from "vue";
 import { createWorkspaceConnectionCatalog } from "../src/stores/workspaceConnectionCatalog.js";
+import {
+  buildConnectionProfile,
+  createProtocolDraft,
+} from "../src/components/connection-dialog/connectionDialogModel.js";
 import { mergeConnectionProfileOptions } from "../src/utils/connectionProfileOptions.js";
 
 test("connection option patches preserve the full profile shape", () => {
@@ -46,4 +50,40 @@ test("catalog patches immediately update projected connection values", () => {
   assert.equal(terminalType.value, "xterm-256color");
   assert.equal(catalog.patchRecord("profile-1", { terminalType: "vt100" }), true);
   assert.equal(terminalType.value, "vt100");
+});
+
+test("SSH legacy algorithms are opt-in and round-trip through the connection dialog", () => {
+  const base = {
+    id: "profile-ssh",
+    protocol: "ssh",
+    savedCredentialId: "",
+    form: {
+      name: "legacy router",
+      host: "192.0.2.10",
+      port: 22,
+      user: "admin",
+      terminalType: "xterm-256color",
+      encoding: "auto",
+      backspaceSends: "BS",
+    },
+  };
+
+  assert.equal(createProtocolDraft("ssh").sshAllowLegacyAlgorithms, false);
+  const defaultProfile = buildConnectionProfile({
+    ...base,
+    form: { ...base.form, sshAllowLegacyAlgorithms: false },
+  });
+  assert.equal(defaultProfile.options.sshAllowLegacyAlgorithms, undefined);
+
+  const enabledProfile = buildConnectionProfile({
+    ...base,
+    form: { ...base.form, sshAllowLegacyAlgorithms: true },
+  });
+  assert.equal(enabledProfile.options.sshAllowLegacyAlgorithms, true);
+  assert.equal(createProtocolDraft("ssh", enabledProfile).sshAllowLegacyAlgorithms, true);
+
+  const cleared = mergeConnectionProfileOptions(enabledProfile, {
+    sshAllowLegacyAlgorithms: undefined,
+  });
+  assert.equal("sshAllowLegacyAlgorithms" in cleared.options, false);
 });

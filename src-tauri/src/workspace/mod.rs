@@ -34,6 +34,7 @@ pub struct ConnectionProfileOptions {
     pub(crate) encoding: Option<String>,
     pub(crate) backspace_sends: Option<String>,
     pub(crate) telnet_enter_sends: Option<String>,
+    pub(crate) ssh_allow_legacy_algorithms: Option<bool>,
     pub(crate) realtime_encoding_detection: Option<bool>,
     pub(crate) terminal_highlight_enabled: Option<bool>,
     pub(crate) terminal_more_prompt_cleanup: Option<bool>,
@@ -272,6 +273,8 @@ pub struct ConnectionListItem {
     pub backspace_sends: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub telnet_enter_sends: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_allow_legacy_algorithms: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_more_prompt_cleanup: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -924,6 +927,7 @@ fn flatten_stored_connection(id: String, c: StoredConnection) -> ConnectionListI
         encoding: c.options.encoding,
         backspace_sends: c.options.backspace_sends,
         telnet_enter_sends: c.options.telnet_enter_sends,
+        ssh_allow_legacy_algorithms: c.options.ssh_allow_legacy_algorithms,
         terminal_more_prompt_cleanup: c.options.terminal_more_prompt_cleanup,
         runtime_metrics: c.options.runtime_metrics,
         vnc_view_only,
@@ -947,6 +951,7 @@ fn connection_profile_from_stored(id: String, c: StoredConnection) -> Connection
         encoding: item.encoding,
         backspace_sends: item.backspace_sends,
         telnet_enter_sends: item.telnet_enter_sends,
+        ssh_allow_legacy_algorithms: item.ssh_allow_legacy_algorithms,
         realtime_encoding_detection: item.realtime_encoding_detection,
         terminal_highlight_enabled: item.terminal_highlight_enabled,
         terminal_more_prompt_cleanup: item.terminal_more_prompt_cleanup,
@@ -1015,6 +1020,7 @@ impl From<&ConnectionProfile> for StoredConnection {
             encoding: c.options.encoding.clone(),
             backspace_sends: c.options.backspace_sends.clone(),
             telnet_enter_sends: c.options.telnet_enter_sends.clone(),
+            ssh_allow_legacy_algorithms: c.options.ssh_allow_legacy_algorithms,
             realtime_encoding_detection: c.options.realtime_encoding_detection,
             terminal_highlight_enabled: c.options.terminal_highlight_enabled,
             terminal_more_prompt_cleanup: c.options.terminal_more_prompt_cleanup,
@@ -1175,7 +1181,10 @@ fn serialize_jump_hosts(jump_hosts: Option<&Vec<JumpHostHop>>) -> Option<String>
 
 #[cfg(test)]
 mod tests {
-    use super::{ConnectionListItem, StoredConnection, StoredConnectionRecord};
+    use super::{
+        connection_profile_from_stored, ConnectionListItem, StoredConnection,
+        StoredConnectionRecord,
+    };
     use crate::storage::{ConnectionDetails, ConnectionOptions, TelnetConnectionDetails};
 
     fn stored_connection() -> StoredConnection {
@@ -1190,6 +1199,7 @@ mod tests {
                 encoding: None,
                 backspace_sends: None,
                 telnet_enter_sends: None,
+                ssh_allow_legacy_algorithms: Some(true),
                 realtime_encoding_detection: Some(false),
                 terminal_highlight_enabled: Some(true),
                 terminal_more_prompt_cleanup: Some(true),
@@ -1211,5 +1221,13 @@ mod tests {
 
         assert_eq!(item.terminal_more_prompt_cleanup, Some(true));
         assert_eq!(item.realtime_encoding_detection, Some(false));
+    }
+
+    #[test]
+    fn legacy_ssh_algorithm_flag_round_trips_through_workspace_profile() {
+        let profile = connection_profile_from_stored("conn-1".to_string(), stored_connection());
+        assert_eq!(profile.options.ssh_allow_legacy_algorithms, Some(true));
+        let stored = StoredConnection::from(&profile);
+        assert_eq!(stored.options.ssh_allow_legacy_algorithms, Some(true));
     }
 }

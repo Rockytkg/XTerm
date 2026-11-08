@@ -98,6 +98,9 @@ export default {
       runtimeMetrics: "Runtime metrics",
       runtimeMetricsHint:
         "Collect remote CPU/memory/network stats. Disable if the session drops right after connecting to single-channel devices like switches.",
+      sshAllowLegacyAlgorithms: "Allow legacy SSH/SFTP algorithms",
+      sshAllowLegacyAlgorithmsHint:
+        "Use modern secure algorithms by default. Enable only for legacy devices to also allow CBC, 3DES, and SHA-1 algorithms for this connection and its SFTP sessions.",
       serialQuickAutoBaud: "Fast auto baud detection",
       serialQuickAutoBaudHint:
         "When baud is Auto, probe only 9600 and 115200. Disable to scan the common baud list.",

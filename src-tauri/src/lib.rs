@@ -16,6 +16,7 @@ mod proxy;
 mod runtime_task;
 mod scripting;
 mod session_recording;
+mod ssh_algorithms;
 mod state;
 mod storage;
 mod terminal;

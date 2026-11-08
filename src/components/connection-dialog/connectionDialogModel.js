@@ -3,6 +3,7 @@ import {
   CONNECTION_PROTOCOLS,
   isRdpProtocol,
   isSerialProtocol,
+  isSshProtocol,
   isTelnetProtocol,
   isVncProtocol,
   normalizeConnectionProtocol,
@@ -60,6 +61,7 @@ function commonDraftFromProfile(profile, protocol) {
     encoding: options.encoding || DEFAULT_TERMINAL_ENCODING,
     backspaceSends: normalizeBackspaceSends(options.backspaceSends),
     telnetEnterSends: normalizeTelnetEnterSends(options.telnetEnterSends),
+    sshAllowLegacyAlgorithms: options.sshAllowLegacyAlgorithms === true,
     terminalMorePromptCleanup: options.terminalMorePromptCleanup === true,
     runtimeMetrics: options.runtimeMetrics !== false,
   };
@@ -220,6 +222,8 @@ export function buildConnectionProfile({
     // 仅 telnet 会话消费；默认值（CR）不落库，profile 只保存显式 CR LF 覆盖。
     telnetEnterSends:
       form.telnetEnterSends === TELNET_ENTER_SENDS.CRLF ? TELNET_ENTER_SENDS.CRLF : undefined,
+    sshAllowLegacyAlgorithms:
+      isSshProtocol(protocol) && form.sshAllowLegacyAlgorithms === true ? true : undefined,
     terminalHighlightEnabled: form.terminalHighlightEnabled,
     terminalMorePromptCleanup: form.terminalMorePromptCleanup === true ? true : undefined,
     runtimeMetrics: form.runtimeMetrics === false ? false : undefined,

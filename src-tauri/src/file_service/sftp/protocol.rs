@@ -1,6 +1,4 @@
-use std::{
-    borrow::Cow, collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use russh::{server, Channel, ChannelId};
 use russh_sftp::{
@@ -80,20 +78,7 @@ pub(crate) async fn start_runtime(
             .map_err(|error| format!("failed to prepare SFTP server socket: {error}"))?,
         BoundSocket::Udp(_) => return Err("The SFTP listener protocol was invalid.".to_string()),
     };
-    let mut preferred = russh::Preferred::default();
-    let mut host_algorithms = preferred.key.to_vec();
-    let rsa_ssh = russh::keys::ssh_key::Algorithm::Rsa { hash: None };
-    if !host_algorithms.contains(&rsa_ssh) {
-        host_algorithms.push(rsa_ssh);
-    }
-    preferred.key = Cow::Owned(host_algorithms);
-    // Keep modern algorithms first, but interoperate with legacy switches
-    // that only implement the group1/SHA-1 exchange.
-    let mut kex = preferred.kex.to_vec();
-    if !kex.contains(&russh::kex::DH_G1_SHA1) {
-        kex.push(russh::kex::DH_G1_SHA1);
-    }
-    preferred.kex = Cow::Owned(kex);
+    let preferred = crate::ssh_algorithms::preferred(false);
     let mut server_config = server::Config {
         auth_rejection_time: Duration::from_secs(1),
         auth_rejection_time_initial: Some(Duration::from_millis(100)),

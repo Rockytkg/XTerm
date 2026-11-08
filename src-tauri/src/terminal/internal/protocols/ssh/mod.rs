@@ -44,6 +44,7 @@ struct ResolvedJumpHop {
     port: u16,
     username: String,
     auth: SshAuth,
+    allow_legacy_algorithms: bool,
 }
 
 struct SshHostKeyPending {
@@ -55,6 +56,7 @@ struct SshHostKeyPending {
     host: String,
     port: u16,
     fingerprint: String,
+    allow_legacy_algorithms: bool,
 }
 
 struct SshConnected {
@@ -93,44 +95,22 @@ struct SshConnectParams {
     trusted_fingerprint: Option<String>,
     trust_host_key: bool,
     accept_host_key_once: bool,
+    allow_legacy_algorithms: bool,
 }
 
 fn pending_ssh_connections() -> &'static Mutex<HashMap<String, SshHostKeyPending>> {
     PENDING_SSH_HOST_KEY_CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 在 russh 默认算法之后追加 legacy 算法，兼容仅支持 ECDH、SHA-1 系列 KEX、
-/// CBC/3DES、HMAC-SHA1 的旧交换机与服务器。列表顺序即协商优先级，
-/// 现代服务器的协商结果与 russh 默认配置完全一致，legacy 算法仅在双方没有
-/// 其他共同算法时兜底。
-/// 注：未加入 ssh-dss 主机密钥——russh 的 `dsa` feature 与 ssh-key 0.7.0-rc.10
-/// 组合编译失败（dsa 0.7.0 API 不兼容），且 1024 位 DSA 已被普遍淘汰。
-fn ssh_client_config() -> russh::client::Config {
-    let mut preferred = russh::Preferred::default();
-    preferred.kex.to_mut().extend([
-        russh::kex::ECDH_SHA2_NISTP256,
-        russh::kex::ECDH_SHA2_NISTP384,
-        russh::kex::ECDH_SHA2_NISTP521,
-        russh::kex::DH_G14_SHA1,
-        russh::kex::DH_G1_SHA1,
-        russh::kex::DH_GEX_SHA1,
-    ]);
-    preferred.cipher.to_mut().extend([
-        russh::cipher::AES_128_GCM,
-        russh::cipher::AES_128_CBC,
-        russh::cipher::AES_192_CBC,
-        russh::cipher::AES_256_CBC,
-        russh::cipher::TRIPLE_DES_CBC,
-    ]);
-    preferred
-        .mac
-        .to_mut()
-        .extend([russh::mac::HMAC_SHA1_ETM, russh::mac::HMAC_SHA1]);
+fn ssh_client_config(allow_legacy_algorithms: bool) -> russh::client::Config {
     russh::client::Config {
-        preferred,
-        // 旧设备 GEX 能提供的 DH 群上限常只有 2048 bit，下限取 russh 允许的最小值，
-        // 避免对端没有符合要求的群可用（russh 默认 min 为 3072）。
-        gex: russh::client::GexParams::new(2048, 8192, 8192).expect("valid gex params"),
+        preferred: crate::ssh_algorithms::preferred(allow_legacy_algorithms),
+        // 仅为旧设备放宽 GEX 下限；安全模式沿用 russh 的 3072 bit 最小群长。
+        gex: if allow_legacy_algorithms {
+            russh::client::GexParams::new(2048, 8192, 8192).expect("valid gex params")
+        } else {
+            russh::client::GexParams::default()
+        },
         inactivity_timeout: None,
         keepalive_interval: Some(Duration::from_secs(30)),
         keepalive_max: 3,
@@ -158,10 +138,16 @@ fn resolve_jump_hops(
 ) -> Result<Vec<ResolvedJumpHop>, ConnectionError> {
     let mut stack = Vec::new();
     let mut hops = Vec::new();
+    let allow_legacy_algorithms = request.ssh_allow_legacy_algorithms.unwrap_or(false);
 
     if let Some(items) = request.jump_hosts.as_ref() {
         for hop in items {
-            hops.extend(resolve_jump_hop_chain(state, hop, &mut stack)?);
+            hops.extend(resolve_jump_hop_chain(
+                state,
+                hop,
+                &mut stack,
+                allow_legacy_algorithms,
+            )?);
         }
     }
 
@@ -172,6 +158,7 @@ fn resolve_jump_hop_chain(
     state: &AppState,
     hop: &JumpHostHop,
     stack: &mut Vec<String>,
+    inherited_allow_legacy: bool,
 ) -> Result<Vec<ResolvedJumpHop>, ConnectionError> {
     if let Some(connection_id) = hop
         .connection_id
@@ -182,7 +169,9 @@ fn resolve_jump_hop_chain(
         return resolve_connection_jump_chain(state, connection_id, stack);
     }
 
-    Ok(resolve_manual_jump_hop(state, hop)?.into_iter().collect())
+    Ok(resolve_manual_jump_hop(state, hop, inherited_allow_legacy)?
+        .into_iter()
+        .collect())
 }
 
 fn resolve_connection_jump_chain(
@@ -247,10 +236,16 @@ fn resolve_profile_as_jump_chain(
     stack: &mut Vec<String>,
 ) -> Result<Vec<ResolvedJumpHop>, ConnectionError> {
     let mut hops = Vec::new();
+    let allow_legacy_algorithms = profile.options.ssh_allow_legacy_algorithms.unwrap_or(false);
 
     if let Some(items) = profile.jump_hosts() {
         for hop in items {
-            hops.extend(resolve_jump_hop_chain(state, hop, stack)?);
+            hops.extend(resolve_jump_hop_chain(
+                state,
+                hop,
+                stack,
+                allow_legacy_algorithms,
+            )?);
         }
     }
 
@@ -272,14 +267,15 @@ fn resolve_profile_as_jump_chain(
         auth_method: profile.auth_method().map(str::to_string),
         saved_credential_id: profile.saved_credential_id().map(str::to_string),
     };
-    let resolved = resolve_manual_jump_hop(state, &hop)?.ok_or_else(|| {
-        ConnectionError::with_args(
-            "jump_host_incomplete",
-            format!("jump host connection '{name}' is incomplete"),
-            serde_json::json!({ "name": name }),
-            false,
-        )
-    })?;
+    let resolved =
+        resolve_manual_jump_hop(state, &hop, allow_legacy_algorithms)?.ok_or_else(|| {
+            ConnectionError::with_args(
+                "jump_host_incomplete",
+                format!("jump host connection '{name}' is incomplete"),
+                serde_json::json!({ "name": name }),
+                false,
+            )
+        })?;
     hops.push(resolved);
 
     Ok(hops)
@@ -288,6 +284,7 @@ fn resolve_profile_as_jump_chain(
 fn resolve_manual_jump_hop(
     state: &AppState,
     hop: &JumpHostHop,
+    allow_legacy_algorithms: bool,
 ) -> Result<Option<ResolvedJumpHop>, ConnectionError> {
     let host = match filtered_jump_value(Some(hop.host.as_str())) {
         Some(host) => host,
@@ -301,6 +298,7 @@ fn resolve_manual_jump_hop(
         port,
         username,
         auth,
+        allow_legacy_algorithms,
     }))
 }
 
@@ -433,10 +431,11 @@ async fn connect_ssh_async(params: SshConnectParams) -> ConnectionResult<SshConn
         trusted_fingerprint,
         trust_host_key,
         accept_host_key_once,
+        allow_legacy_algorithms,
     } = params;
 
     let host_key_state = Arc::new(Mutex::new(None));
-    let config = Arc::new(ssh_client_config());
+    let config = Arc::new(ssh_client_config(allow_legacy_algorithms));
     let mut session = tokio::time::timeout(
         Duration::from_millis(CONNECT_TIMEOUT_MS),
         russh::client::connect(
@@ -489,6 +488,7 @@ async fn connect_ssh_async(params: SshConnectParams) -> ConnectionResult<SshConn
                     host: host.clone(),
                     port,
                     fingerprint: host_key.fingerprint.clone(),
+                    allow_legacy_algorithms,
                 },
                 host,
                 port,
@@ -499,7 +499,7 @@ async fn connect_ssh_async(params: SshConnectParams) -> ConnectionResult<SshConn
         log::info!(target: "ssh.connect", "accepting ssh host key for {host}:{port}");
     }
 
-    authenticate_russh_session(&mut session, &username, auth).await?;
+    authenticate_russh_session(&mut session, &username, auth, allow_legacy_algorithms).await?;
     let channel = open_authenticated_shell_channel(&mut session, &term, cols, rows).await?;
 
     Ok(SshConnectOutcome::Connected(SshConnected {
@@ -513,7 +513,8 @@ async fn connect_ssh_async(params: SshConnectParams) -> ConnectionResult<SshConn
 }
 
 async fn connect_first_jump_hop(hop: ResolvedJumpHop) -> ConnectionResult<SharedSshSession> {
-    let config = Arc::new(ssh_client_config());
+    let allow_legacy_algorithms = hop.allow_legacy_algorithms;
+    let config = Arc::new(ssh_client_config(allow_legacy_algorithms));
     let host_key_state = Arc::new(Mutex::new(None));
     let host = hop.host.clone();
     let port = hop.port;
@@ -542,7 +543,13 @@ async fn connect_first_jump_hop(hop: ResolvedJumpHop) -> ConnectionResult<Shared
             false,
         )
     })?;
-    authenticate_russh_session(&mut session, &hop.username, hop.auth).await?;
+    authenticate_russh_session(
+        &mut session,
+        &hop.username,
+        hop.auth,
+        allow_legacy_algorithms,
+    )
+    .await?;
     Ok(Arc::new(tokio::sync::Mutex::new(session)))
 }
 
@@ -550,6 +557,7 @@ async fn connect_next_jump_hop(
     upstream: SharedSshSession,
     hop: ResolvedJumpHop,
 ) -> ConnectionResult<SharedSshSession> {
+    let allow_legacy_algorithms = hop.allow_legacy_algorithms;
     let host = hop.host.clone();
     let port = hop.port;
     let stream = {
@@ -565,7 +573,7 @@ async fn connect_next_jump_hop(
             ))?;
         channel.into_stream()
     };
-    let config = Arc::new(ssh_client_config());
+    let config = Arc::new(ssh_client_config(allow_legacy_algorithms));
     let host_key_state = Arc::new(Mutex::new(None));
     let mut session = tokio::time::timeout(
         Duration::from_millis(CONNECT_TIMEOUT_MS),
@@ -588,7 +596,13 @@ async fn connect_next_jump_hop(
             false,
         )
     })?;
-    authenticate_russh_session(&mut session, &hop.username, hop.auth).await?;
+    authenticate_russh_session(
+        &mut session,
+        &hop.username,
+        hop.auth,
+        allow_legacy_algorithms,
+    )
+    .await?;
     Ok(Arc::new(tokio::sync::Mutex::new(session)))
 }
 
@@ -628,6 +642,7 @@ async fn connect_via_jump_chain(
         trusted_fingerprint,
         trust_host_key,
         accept_host_key_once,
+        allow_legacy_algorithms,
     } = params;
 
     let chain_label = jump_hops
@@ -638,7 +653,7 @@ async fn connect_via_jump_chain(
     let (session, chain_sessions) = connect_jump_chain(jump_hops).await?;
 
     let host_key_state = Arc::new(Mutex::new(None));
-    let config = Arc::new(ssh_client_config());
+    let config = Arc::new(ssh_client_config(allow_legacy_algorithms));
     let tunnel_channel =
         {
             let jump_session = session.lock().await;
@@ -696,6 +711,7 @@ async fn connect_via_jump_chain(
                 host: host.clone(),
                 port,
                 fingerprint: host_key.fingerprint.clone(),
+                allow_legacy_algorithms,
             },
             host,
             port,
@@ -704,7 +720,7 @@ async fn connect_via_jump_chain(
         });
     }
 
-    authenticate_russh_session(&mut session, &username, auth).await?;
+    authenticate_russh_session(&mut session, &username, auth, allow_legacy_algorithms).await?;
     let channel = open_authenticated_shell_channel(&mut session, &term, cols, rows).await?;
 
     Ok(SshConnectOutcome::Connected(SshConnected {
@@ -761,7 +777,13 @@ async fn connect_pending_ssh_async(
     cols: u32,
     rows: u32,
 ) -> ConnectionResult<SshConnected> {
-    authenticate_russh_session(&mut pending.session, username, auth).await?;
+    authenticate_russh_session(
+        &mut pending.session,
+        username,
+        auth,
+        pending.allow_legacy_algorithms,
+    )
+    .await?;
     let channel = open_authenticated_shell_channel(&mut pending.session, term, cols, rows).await?;
     Ok(SshConnected {
         session: pending.session,
@@ -815,6 +837,7 @@ pub(crate) async fn authenticate_russh_session(
     session: &mut russh::client::Handle<RusshClient>,
     username: &str,
     auth: SshAuth,
+    allow_legacy_algorithms: bool,
 ) -> ConnectionResult<()> {
     let result = match auth {
         SshAuth::Password(password) => session
@@ -842,18 +865,26 @@ pub(crate) async fn authenticate_russh_session(
                     )
                 },
             )?;
-            let hash_alg = session.best_supported_rsa_hash().await.map_err(|error| {
-                ConnectionError::with_args(
-                    "ssh_key_algorithm_failed",
-                    error.to_string(),
-                    serde_json::json!({ "detail": error.to_string() }),
-                    false,
-                )
-            })?;
+            let hash_alg = if key.algorithm().is_rsa() {
+                let server_hash = session.best_supported_rsa_hash().await.map_err(|error| {
+                    ConnectionError::with_args(
+                        "ssh_key_algorithm_failed",
+                        error.to_string(),
+                        serde_json::json!({ "detail": error.to_string() }),
+                        false,
+                    )
+                })?;
+                crate::ssh_algorithms::rsa_authentication_hash(server_hash, allow_legacy_algorithms)
+                    .map_err(|detail| {
+                        ConnectionError::new("ssh_key_algorithm_failed", detail, false)
+                    })?
+            } else {
+                None
+            };
             session
                 .authenticate_publickey(
                     username,
-                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg.flatten()),
+                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
                 )
                 .await
                 .map_err(|error| {
@@ -966,6 +997,7 @@ impl SshConnectionFactory {
             )
             .await?
         } else {
+            let allow_legacy_algorithms = request.ssh_allow_legacy_algorithms.unwrap_or(false);
             match cancelable_open(
                 &request,
                 connect_new_ssh_session(
@@ -982,6 +1014,7 @@ impl SshConnectionFactory {
                         trusted_fingerprint: trusted_fp_for_task,
                         trust_host_key,
                         accept_host_key_once,
+                        allow_legacy_algorithms,
                     },
                 ),
             )

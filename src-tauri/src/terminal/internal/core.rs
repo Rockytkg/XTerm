@@ -892,6 +892,7 @@ pub(crate) struct ResolvedConnection {
     pub(crate) accept_host_key_once: Option<bool>,
     pub(crate) terminal_type: Option<String>,
     pub(crate) runtime_metrics: Option<bool>,
+    pub(crate) ssh_allow_legacy_algorithms: Option<bool>,
     /// Telnet 回车键线上编码选项（"CR" = CR NUL）；仅 telnet 工厂消费。
     pub(crate) telnet_enter_sends: Option<String>,
     pub(crate) cols: Option<u32>,
@@ -995,6 +996,7 @@ impl ResolvedConnection {
                 .clone()
                 .or(request.terminal_type),
             runtime_metrics: profile.options.runtime_metrics,
+            ssh_allow_legacy_algorithms: profile.options.ssh_allow_legacy_algorithms,
             telnet_enter_sends: profile.options.telnet_enter_sends.clone(),
             cols: request.cols,
             rows: request.rows,

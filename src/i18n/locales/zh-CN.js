@@ -96,6 +96,9 @@ export default {
       morePromptCleanupHint: "兼容会在翻页后输出填充空格的老交换机；默认关闭。",
       runtimeMetrics: "运行时指标",
       runtimeMetricsHint: "采集远端 CPU/内存/网络数据。连接交换机等单通道设备后立即断开时请关闭。",
+      sshAllowLegacyAlgorithms: "允许旧版 SSH/SFTP 算法",
+      sshAllowLegacyAlgorithmsHint:
+        "默认仅使用现代安全算法。仅为兼容旧设备开启，将额外允许 CBC、3DES 和 SHA-1 系列算法；对该连接及其 SFTP 会话生效。",
       serialQuickAutoBaud: "快速自动波特率检测",
       serialQuickAutoBaudHint: "波特率为自动时仅检测 9600 和 115200；关闭后检测常用波特率列表。",
       serialPort: "串口",

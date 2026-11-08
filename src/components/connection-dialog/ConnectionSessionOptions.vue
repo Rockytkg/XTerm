@@ -146,6 +146,24 @@ const telnetEnterSendsOptions = TELNET_ENTER_SENDS_OPTIONS;
       </div>
 
       <div
+        v-if="isSsh"
+        class="conn-toggle-row"
+      >
+        <div>
+          <span class="conn-field-label">{{
+            t("connectionDialog.fields.sshAllowLegacyAlgorithms")
+          }}</span>
+          <span class="conn-field-hint">{{
+            t("connectionDialog.fields.sshAllowLegacyAlgorithmsHint")
+          }}</span>
+        </div>
+        <UiSwitch
+          :model-value="props.form.sshAllowLegacyAlgorithms"
+          @update:model-value="updateField('sshAllowLegacyAlgorithms', $event)"
+        />
+      </div>
+
+      <div
         v-if="isSerial"
         class="conn-toggle-row"
       >

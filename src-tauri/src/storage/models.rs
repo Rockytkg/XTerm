@@ -129,6 +129,7 @@ pub struct ConnectionOptions {
     pub backspace_sends: Option<String>,
     /// Telnet 回车键的线上编码：缺省 CR LF（NVT 标准）；"CR" 表示 CR NUL。
     pub telnet_enter_sends: Option<String>,
+    pub ssh_allow_legacy_algorithms: Option<bool>,
     pub realtime_encoding_detection: Option<bool>,
     pub terminal_highlight_enabled: Option<bool>,
     pub terminal_more_prompt_cleanup: Option<bool>,

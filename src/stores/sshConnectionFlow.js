@@ -91,6 +91,7 @@ function connectionPatchForCredential(connection, input, credentialId) {
     terminalHighlightEnabled: connection.terminalHighlightEnabled,
     terminalMorePromptCleanup: connection.terminalMorePromptCleanup,
     realtimeEncodingDetection: connection.realtimeEncodingDetection,
+    sshAllowLegacyAlgorithms: connection.sshAllowLegacyAlgorithms,
   };
   const patch = {
     id: connection.id,
