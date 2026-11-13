@@ -243,12 +243,12 @@ export default {
     cancel: "Cancel connection",
   },
   sshCredentialPrompt: {
-    missingTitle: "SSH credential required",
-    rejectedTitle: "SSH credential rejected",
+    missingTitle: "{protocol} credential required",
+    rejectedTitle: "{protocol} credential rejected",
     missingDescription:
-      "Enter the SSH credential for {target}. Unsaved credentials are used for this connection only.",
+      "Enter the {protocol} credential for {target}. Unsaved credentials are used for this connection only.",
     rejectedDescription:
-      "The current SSH credential was rejected by {target}. Update the credential or choose another handling option before reconnecting.",
+      "The current {protocol} credential was rejected by {target}. Update the credential or choose another handling option before reconnecting.",
     connectOnce: "Connect once",
     saveConnect: "Save and connect",
     updateConnect: "Update credential and connect",
@@ -261,8 +261,8 @@ export default {
       saveAndLink: "Save and associate credential",
     },
     validation: {
-      usernameRequired: "Enter the SSH username.",
-      passwordRequired: "Enter the SSH password.",
+      usernameRequired: "Enter the {protocol} username.",
+      passwordRequired: "Enter the {protocol} password.",
       privateKeyRequired: "Enter or choose an SSH private key.",
     },
   },

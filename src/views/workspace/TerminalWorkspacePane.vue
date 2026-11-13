@@ -63,6 +63,7 @@ const terminalSessions = computed(() =>
       class="absolute inset-0"
       :active-connection="session"
       :connection-state="session.connectionState"
+      :frontend-session-id="session.id"
       :vnc-bridge="session.vncBridge"
       @retry-connection="(options) => emit('retryConnection', session.id, options)"
     />

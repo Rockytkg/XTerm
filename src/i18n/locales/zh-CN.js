@@ -234,11 +234,11 @@ export default {
     cancel: "取消连接",
   },
   sshCredentialPrompt: {
-    missingTitle: "需要 SSH 凭证",
-    rejectedTitle: "SSH 凭证被拒绝",
-    missingDescription: "请输入用于连接 {target} 的 SSH 凭证。未保存的凭证仅用于本次连接。",
+    missingTitle: "需要 {protocol} 凭证",
+    rejectedTitle: "{protocol} 凭证被拒绝",
+    missingDescription: "请输入用于连接 {target} 的 {protocol} 凭证。未保存的凭证仅用于本次连接。",
     rejectedDescription:
-      "当前 SSH 凭证未通过 {target} 认证。请更新凭证，或选择其他处理方式后重新连接。",
+      "当前 {protocol} 凭证未通过 {target} 认证。请更新凭证，或选择其他处理方式后重新连接。",
     connectOnce: "仅本次连接",
     saveConnect: "保存并连接",
     updateConnect: "更新凭证并连接",
@@ -251,8 +251,8 @@ export default {
       saveAndLink: "保存并关联凭证",
     },
     validation: {
-      usernameRequired: "请输入 SSH 用户名。",
-      passwordRequired: "请输入 SSH 密码。",
+      usernameRequired: "请输入 {protocol} 用户名。",
+      passwordRequired: "请输入 {protocol} 密码。",
       privateKeyRequired: "请输入或选择 SSH 私钥。",
     },
   },

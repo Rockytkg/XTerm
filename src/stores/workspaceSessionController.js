@@ -544,6 +544,10 @@ export function createWorkspaceSessionController({
     return sshFlow.cancelCredentialPrompt();
   }
 
+  function requestCredentialPrompt(sessionId, error, context = {}) {
+    return sshFlow.requestCredentialPrompt(sessionId, error, context);
+  }
+
   function reconnectSerialAutoBaud(
     connectionId = connectionIdForSession(activeConnection.value),
     { requireAuto = true } = {},
@@ -724,6 +728,7 @@ export function createWorkspaceSessionController({
     reconnectSerialAutoBaud,
     reconnectSession,
     removeConnection,
+    requestCredentialPrompt,
     selectConnection,
     toggleActiveSessionHighlight,
     updateConnection,

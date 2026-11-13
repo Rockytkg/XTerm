@@ -1,16 +1,17 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { Crop, Move, Scaling } from "@lucide/vue";
 import { useToasts } from "./useToasts";
 
 const SCALE_MODES = ["fit", "none", "clip"];
+const SCALE_MODE_ICONS = { fit: Scaling, none: Move, clip: Crop };
 
 // VNC（VncDesktopPane）与 RDP（RdpDesktopPane）桌面面板共用的协议无关壳层逻辑：
-// 连接状态浮层（标题/描述/密码重试提交）、缩放模式本地覆盖循环、全屏切换、
+// 连接状态浮层（标题/描述/提交）、缩放模式本地覆盖循环、全屏切换、
 // 本地剪贴板发送。协议差异全部经参数注入：
 // - protocol（"vnc" / "rdp"）推导 i18n key 前缀（vncDesktop./rdpDesktop.、
-//   terminal.connectionConnectingVnc/Rdp、connectionDialog.*.scaleModes）、
-//   认证重试错误码（*_auth_required / *_auth_failed）与密码重试选项键（*Password）；
+//   terminal.connectionConnectingVnc/Rdp、connectionDialog.*.scaleModes）；
 // - connected / sessionError 为协议层响应式状态（rfbConnected+rfbError /
 //   bridgeConnected+bridgeError）；closedDescription 仅 RDP 提供（桥断开原因）；
 // - credentialsPrompt + onCredentialsSubmit 仅 VNC 提供（noVNC 凭证请求弹层），
@@ -40,13 +41,9 @@ export function useRemoteDesktopPane({
   const { showToast } = useToasts();
 
   const passwordInput = ref("");
-  const authRetryErrorCodes = new Set([`${protocol}_auth_required`, `${protocol}_auth_failed`]);
   const protocolTitle = `${protocol[0].toUpperCase()}${protocol.slice(1)}`;
 
   const connectionStatus = computed(() => props.connectionState?.status || "idle");
-  const authRetryRequested = computed(() =>
-    authRetryErrorCodes.has(props.connectionState?.error?.code || ""),
-  );
 
   const endpointLabel = computed(() => {
     const host = props.activeConnection?.host || props.activeConnection?.name || "-";
@@ -111,11 +108,7 @@ export function useRemoteDesktopPane({
     }
   });
 
-  const overlayNeedsPassword = computed(
-    () =>
-      overlayKind.value === "credentials" ||
-      (overlayKind.value === "failed" && authRetryRequested.value),
-  );
+  const overlayNeedsPassword = computed(() => overlayKind.value === "credentials");
 
   const overlaySubmitDisabled = computed(() => overlayNeedsPassword.value && !passwordInput.value);
 
@@ -129,11 +122,6 @@ export function useRemoteDesktopPane({
       onCredentialsSubmit?.();
       return;
     }
-    if (overlayKind.value === "failed" && authRetryRequested.value) {
-      retryConnection({ [`${protocol}Password`]: passwordInput.value });
-      passwordInput.value = "";
-      return;
-    }
     retryConnection();
   }
 
@@ -145,6 +133,8 @@ export function useRemoteDesktopPane({
   const scaleModeLabel = computed(() =>
     t(`connectionDialog.${protocol}.scaleModes.${effectiveScaleMode.value}`),
   );
+
+  const scaleModeIcon = computed(() => SCALE_MODE_ICONS[effectiveScaleMode.value] || Scaling);
 
   function cycleScaleMode() {
     const current = scaleModeLocal.value || getCurrentScaleMode();
@@ -192,6 +182,7 @@ export function useRemoteDesktopPane({
     handleOverlaySubmit,
     effectiveScaleMode,
     scaleModeLabel,
+    scaleModeIcon,
     cycleScaleMode,
     toggleFullscreen,
     sendLocalClipboard,

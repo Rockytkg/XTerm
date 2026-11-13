@@ -1,22 +1,25 @@
 import { createCredential, loadCredentials, updateCredential } from "../services/credentials";
 import { loadCredentialContext } from "../services/credentialContext";
 import { authenticateBackendConnection } from "../services/terminalSessions";
-import { updateConnectionProfile } from "../services/workspace";
+import {
+  getConnection as getConnectionProfile,
+  updateConnectionProfile,
+} from "../services/workspace";
 import { createLogger } from "../utils/logger";
 import {
   buildCredentialTypeChangeImpact,
   CREDENTIAL_TYPE_CHANGE_ACTION,
 } from "../utils/credentialTypeChange";
 import { CONNECTION_EVENT } from "./connectionStateMachine";
-import { isSshCredentialPromptError } from "./sshCredentialPromptController";
+import { isCredentialPromptError } from "./sshCredentialPromptController";
 import { resolveTerminalGeometry } from "./terminalGeometry";
 import { formatConnectionError } from "./workspaceUtils";
-import { isSerialProtocol, isSshProtocol } from "../utils/connectionProtocols";
 
 const logger = createLogger("frontend.workspace.ssh_flow");
 
 function credentialNameFor(connection, authMethod) {
-  const base = connection?.name || connection?.host || "SSH";
+  const protocol = String(connection?.protocol || "ssh").toUpperCase();
+  const base = connection?.name || connection?.host || protocol;
   return `${base} ${authMethod === "key" ? "key" : "password"}`;
 }
 
@@ -82,50 +85,23 @@ async function loadCredentialChangeContext(credentialId) {
   };
 }
 
-function connectionPatchForCredential(connection, input, credentialId) {
-  const protocol = connection.protocol;
-  const options = {
-    terminalType: connection.terminalType,
-    encoding: connection.encoding,
-    backspaceSends: connection.backspaceSends,
-    terminalHighlightEnabled: connection.terminalHighlightEnabled,
-    terminalMorePromptCleanup: connection.terminalMorePromptCleanup,
-    realtimeEncodingDetection: connection.realtimeEncodingDetection,
-    sshAllowLegacyAlgorithms: connection.sshAllowLegacyAlgorithms,
-  };
-  const patch = {
-    id: connection.id,
-    protocol,
-    port: connection.port,
-    name: connection.name,
-    host: connection.host,
+export function connectionPatchForCredential(profile, input, credentialId) {
+  return {
+    ...profile,
     user: input.username,
-    options,
-    details: { protocol, authMethod: input.authMethod, savedCredentialId: credentialId },
+    details: {
+      ...profile.details,
+      protocol: profile.protocol,
+      authMethod: input.authMethod,
+      savedCredentialId: credentialId,
+    },
   };
+}
 
-  if (isSerialProtocol(protocol)) {
-    patch.details = {
-      protocol,
-      authMethod: input.authMethod,
-      savedCredentialId: credentialId,
-      baudRate: connection.baudRate,
-      serialQuickAutoBaud: connection.serialQuickAutoBaud,
-      dataBits: connection.dataBits,
-      flowControl: connection.flowControl,
-      parity: connection.parity,
-      stopBits: connection.stopBits,
-    };
-  } else if (isSshProtocol(protocol)) {
-    patch.details = {
-      protocol,
-      authMethod: input.authMethod,
-      savedCredentialId: credentialId,
-      jumpHosts: connection.jumpHosts,
-    };
-  }
-
-  return patch;
+function credentialRetryOptions(connection, input) {
+  if (connection.protocol === "vnc") return { vncPassword: input.password };
+  if (connection.protocol === "rdp") return { rdpPassword: input.password };
+  return { sshCredential: sshCredentialOverride(input) };
 }
 
 export function createSshConnectionFlow({
@@ -175,9 +151,10 @@ export function createSshConnectionFlow({
   function handleOpenError(connectionId, error, context = {}) {
     const formatted = formatConnectionError(error);
     const frontendSessionId = frontendSessionIdFor(connectionId, context);
+    const connection = getConnection(connectionId);
     if (
       connectionRuntime.isCurrent(frontendSessionId, context.attemptToken) &&
-      isSshCredentialPromptError(formatted)
+      isCredentialPromptError(formatted, connection?.protocol)
     ) {
       pendingCredentials.delete(frontendSessionId);
       return (
@@ -192,7 +169,18 @@ export function createSshConnectionFlow({
     return false;
   }
 
-  async function saveCredentialSelectionAndReconnect(connectionId, profile, sessionId = "") {
+  function requestCredentialPrompt(sessionId, error, context = {}) {
+    const connectionId = getSessionInstance?.(sessionId)?.connectionId || "";
+    if (!connectionId) return false;
+    return (
+      sshCredentialPromptController?.setPromptForError(connectionId, formatConnectionError(error), {
+        ...context,
+        sessionId,
+      }) ?? false
+    );
+  }
+
+  async function saveCredentialSelection(connectionId, profile) {
     const details = profile?.details ?? {};
     const credentialId = details.savedCredentialId;
     const current = getConnection(connectionId);
@@ -206,7 +194,6 @@ export function createSshConnectionFlow({
       await updateConnectionProfile(connectionId, profile);
     }
     await refreshConnectionList();
-    reconnectSession(sessionId);
   }
 
   async function persistCredentialPrompt(prompt, input, persistence) {
@@ -219,32 +206,32 @@ export function createSshConnectionFlow({
       const credential = await createCredential(
         credentialPayload(input, credentialNameFor(current, input.authMethod)),
       );
-      await saveCredentialSelectionAndReconnect(
+      const profile = await getConnectionProfile(connectionId);
+      await saveCredentialSelection(
         connectionId,
-        connectionPatchForCredential(current, input, credential.id),
-        prompt.sessionId,
+        connectionPatchForCredential(profile, input, credential.id),
       );
-      return true;
-    }
-
-    if (persistence === "updateExisting" && prompt.currentCredentialId) {
+    } else if (persistence === "updateExisting" && prompt.currentCredentialId) {
       const fallbackName = credentialNameFor(current, input.authMethod);
       const name = await credentialNameById(prompt.currentCredentialId, fallbackName);
       const credential = await updateCredential({
         id: prompt.currentCredentialId,
         ...credentialPayload(input, name),
       });
-      await saveCredentialSelectionAndReconnect(
+      const profile = await getConnectionProfile(connectionId);
+      await saveCredentialSelection(
         connectionId,
-        connectionPatchForCredential(current, input, credential.id),
-        prompt.sessionId,
+        connectionPatchForCredential(profile, input, credential.id),
       );
-      return true;
     }
 
-    reconnectSession(prompt.sessionId, {
-      sshCredential: sshCredentialOverride(input),
-    });
+    if (prompt.onAnswer) {
+      await prompt.onAnswer(input);
+    } else if (persistence === "temporary") {
+      reconnectSession(prompt.sessionId, credentialRetryOptions(current, input));
+    } else {
+      reconnectSession(prompt.sessionId);
+    }
     return true;
   }
 
@@ -406,6 +393,7 @@ export function createSshConnectionFlow({
     handleOpenError,
     handleOpenResponse,
     prepareOpenOptions,
+    requestCredentialPrompt,
   };
 }
 function eventTargetForPrompt(prompt) {

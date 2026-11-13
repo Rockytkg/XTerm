@@ -1,8 +1,9 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ClipboardPaste, Keyboard, Maximize, Scaling } from "@lucide/vue";
+import { ClipboardPaste, Keyboard, Maximize } from "@lucide/vue";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import AppTooltip from "./AppTooltip.vue";
 import { useRemoteDesktopPane } from "../composables/useRemoteDesktopPane";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { createLogger } from "../utils/logger";
@@ -116,17 +117,15 @@ function syncBridgeSize(width, height) {
 
 // 浮层、缩放、全屏、剪贴板等协议无关壳层逻辑收敛于共享 composable。
 const {
-  passwordInput,
   connectionStatus,
   endpointLabel,
   overlayKind,
   overlayTitle,
   overlayDescription,
-  overlayNeedsPassword,
-  overlaySubmitDisabled,
   handleOverlaySubmit,
   effectiveScaleMode,
   scaleModeLabel,
+  scaleModeIcon,
   cycleScaleMode,
   toggleFullscreen,
   sendLocalClipboard,
@@ -141,7 +140,7 @@ const {
   scaleMode,
   getCurrentScaleMode: () => scaleMode.value,
   fullscreenTarget: desktopViewport,
-  canSendClipboard: () => bridgeConnected.value,
+  canSendClipboard: () => bridgeConnected.value && clipboardSyncEnabled.value,
   sendClipboardText: (text) => sendFrame(encodeClipboardText(text)),
 });
 
@@ -385,7 +384,6 @@ watch(
     if (status === "connecting") {
       bridgeError.value = "";
       disconnectReason.value = "";
-      passwordInput.value = "";
     }
   },
   { immediate: true },
@@ -427,55 +425,72 @@ onBeforeUnmount(() => {
         :title="endpointLabel"
       >{{ endpointLabel }}</span>
       <div class="rdp-toolbar-actions">
-        <button
-          type="button"
-          class="ui-icon-button"
-          :title="t('rdpDesktop.ctrlAltDel')"
-          :aria-label="t('rdpDesktop.ctrlAltDel')"
-          @click="sendCtrlAltDel"
+        <AppTooltip
+          :content="t('rdpDesktop.ctrlAltDel')"
+          side="bottom"
         >
-          <Keyboard
-            :size="15"
-            stroke-width="1.8"
-          />
-        </button>
-        <button
+          <button
+            type="button"
+            class="ui-icon-button"
+            :aria-label="t('rdpDesktop.ctrlAltDel')"
+            @click="sendCtrlAltDel"
+          >
+            <Keyboard
+              :size="15"
+              stroke-width="1.8"
+            />
+          </button>
+        </AppTooltip>
+        <AppTooltip
           v-if="clipboardSyncEnabled"
-          type="button"
-          class="ui-icon-button"
-          :title="t('rdpDesktop.sendClipboard')"
-          :aria-label="t('rdpDesktop.sendClipboard')"
-          @click="void sendLocalClipboard"
+          :content="t('rdpDesktop.sendClipboard')"
+          side="bottom"
         >
-          <ClipboardPaste
-            :size="15"
-            stroke-width="1.8"
-          />
-        </button>
-        <button
-          type="button"
-          class="ui-icon-button"
-          :title="t('rdpDesktop.scaleMode', { mode: scaleModeLabel })"
-          :aria-label="t('rdpDesktop.scaleMode', { mode: scaleModeLabel })"
-          @click="cycleScaleMode"
+          <button
+            type="button"
+            class="ui-icon-button"
+            :aria-label="t('rdpDesktop.sendClipboard')"
+            @click="sendLocalClipboard"
+          >
+            <ClipboardPaste
+              :size="15"
+              stroke-width="1.8"
+            />
+          </button>
+        </AppTooltip>
+        <AppTooltip
+          :content="t('rdpDesktop.scaleMode', { mode: scaleModeLabel })"
+          side="bottom"
         >
-          <Scaling
-            :size="15"
-            stroke-width="1.8"
-          />
-        </button>
-        <button
-          type="button"
-          class="ui-icon-button"
-          :title="t('rdpDesktop.fullscreen')"
-          :aria-label="t('rdpDesktop.fullscreen')"
-          @click="toggleFullscreen"
+          <button
+            type="button"
+            class="ui-icon-button"
+            :aria-label="t('rdpDesktop.scaleMode', { mode: scaleModeLabel })"
+            @click="cycleScaleMode"
+          >
+            <component
+              :is="scaleModeIcon"
+              :size="15"
+              stroke-width="1.8"
+            />
+          </button>
+        </AppTooltip>
+        <AppTooltip
+          :content="t('rdpDesktop.fullscreen')"
+          side="bottom"
         >
-          <Maximize
-            :size="15"
-            stroke-width="1.8"
-          />
-        </button>
+          <button
+            type="button"
+            class="ui-icon-button"
+            :aria-label="t('rdpDesktop.fullscreen')"
+            @click="toggleFullscreen"
+          >
+            <Maximize
+              :size="15"
+              stroke-width="1.8"
+            />
+          </button>
+        </AppTooltip>
       </div>
     </div>
 
@@ -527,20 +542,10 @@ onBeforeUnmount(() => {
           >
             {{ overlayDescription }}
           </p>
-          <input
-            v-if="overlayNeedsPassword"
-            v-model="passwordInput"
-            type="password"
-            class="ui-input ui-fill-inline"
-            :placeholder="t('connectionDialog.fields.password')"
-            autocomplete="off"
-            autofocus
-          >
           <button
             v-if="overlayKind !== 'connecting'"
             type="submit"
             class="ui-button-primary"
-            :disabled="overlaySubmitDisabled"
           >
             {{ t("actions.reconnect") }}
           </button>

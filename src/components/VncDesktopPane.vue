@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ClipboardPaste, Keyboard, Maximize, Scaling } from "@lucide/vue";
+import { ClipboardPaste, Keyboard, Maximize } from "@lucide/vue";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import AppTooltip from "./AppTooltip.vue";
 import { useRemoteDesktopPane } from "../composables/useRemoteDesktopPane";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { createLogger } from "../utils/logger";
 import { createWheelAccumulator } from "../utils/wheelAccumulator";
 
@@ -20,12 +22,14 @@ const props = defineProps({
     type: Object,
     default: () => ({ status: "idle", phase: null, error: null }),
   },
+  frontendSessionId: { type: String, default: "" },
   vncBridge: { type: Object, default: null },
 });
 
 const emit = defineEmits(["retryConnection"]);
 
 const { t } = useI18n();
+const workspace = useWorkspaceStore();
 const logger = createLogger("frontend.terminal.vnc");
 
 const desktopMount = ref(null);
@@ -40,6 +44,8 @@ const rfbError = ref("");
 
 let rfb = null;
 let rfbLoadPromise = null;
+let pendingRfbCredentials = null;
+let requestedCredentialTypes = ["password"];
 let disposed = false;
 
 const wheelAccumulator = createWheelAccumulator({
@@ -78,9 +84,10 @@ function handleDesktopWheel(event) {
 }
 
 const scaleMode = computed(() => props.activeConnection?.vncScaleMode || "fit");
+const clipboardSyncEnabled = computed(() => props.activeConnection?.vncClipboardSync !== false);
 
 // 浮层、缩放、全屏、剪贴板等协议无关壳层逻辑收敛于共享 composable；
-// passwordInput 由其持有，同时服务 passthrough 凭证弹层与认证失败后的密码重试。
+// passwordInput 仅服务 passthrough 模式的会话内凭证请求。
 const {
   passwordInput,
   connectionStatus,
@@ -92,6 +99,7 @@ const {
   overlaySubmitDisabled,
   handleOverlaySubmit,
   scaleModeLabel,
+  scaleModeIcon,
   cycleScaleMode,
   toggleFullscreen,
   sendLocalClipboard,
@@ -112,8 +120,9 @@ const {
     if (rfb) applyScaleMode(rfb, mode);
   },
   fullscreenTarget: desktopMount,
-  canSendClipboard: () => Boolean(rfb) && rfbConnected.value,
-  sendClipboardText: (text) => rfb.clipboardPasteFrom(text),
+  canSendClipboard: () =>
+    Boolean(rfb) && rfbConnected.value && !rfb.viewOnly && clipboardSyncEnabled.value,
+  sendClipboardText: (text) => rfb?.clipboardPasteFrom(text),
   onCredentialsSubmit: submitCredentials,
 });
 
@@ -178,9 +187,11 @@ async function mountRfb() {
   clearDesktopMount();
 
   let instance;
+  const credentials = pendingRfbCredentials || {};
+  pendingRfbCredentials = null;
   try {
     instance = new RFB(desktopMount.value, url, {
-      credentials: {},
+      credentials,
       shared: props.activeConnection?.vncShared !== false,
     });
   } catch (error) {
@@ -203,13 +214,24 @@ async function mountRfb() {
   });
   instance.addEventListener("credentialsrequired", (event) => {
     if (disposed || rfb !== instance) return;
+    requestedCredentialTypes = event.detail?.types || ["password"];
     credentialUsername.value = "";
     passwordInput.value = "";
-    credentialsPrompt.value = { types: event.detail?.types || ["password"] };
+    credentialsPrompt.value = { types: requestedCredentialTypes };
   });
   instance.addEventListener("securityfailure", (event) => {
     if (disposed || rfb !== instance) return;
-    rfbError.value = event.detail?.reason || t("connectionErrors.vnc_auth_failed");
+    const reason = event.detail?.reason || t("connectionErrors.vnc_auth_failed");
+    rfbError.value = "";
+    const prompted = workspace.requestCredentialPrompt(
+      props.frontendSessionId,
+      { code: "vnc_auth_failed", detail: reason, args: { detail: reason } },
+      {
+        usernameRequired: requestedCredentialTypes.includes("username"),
+        onAnswer: retryWithRfbCredentials,
+      },
+    );
+    if (!prompted) rfbError.value = reason;
   });
   instance.addEventListener("clipboard", (event) => {
     if (disposed || rfb !== instance) return;
@@ -231,6 +253,12 @@ async function mountRfb() {
       rfbError.value = t("vncDesktop.disconnectedUnexpectedly");
     }
   });
+}
+
+function retryWithRfbCredentials(input) {
+  pendingRfbCredentials = { username: input.username, password: input.password };
+  rfbError.value = "";
+  emit("retryConnection", { vncPassword: input.password });
 }
 
 function submitCredentials() {
@@ -291,10 +319,12 @@ onMounted(() => {
     capture: true,
     passive: false,
   });
+  void mountRfb();
 });
 
 onBeforeUnmount(() => {
   disposed = true;
+  pendingRfbCredentials = null;
   desktopMount.value?.removeEventListener("wheel", handleDesktopWheel, { capture: true });
   wheelAccumulator.reset();
   destroyRfb();
@@ -314,54 +344,72 @@ onBeforeUnmount(() => {
         desktopName || endpointLabel
       }}</span>
       <div class="vnc-toolbar-actions">
-        <button
-          type="button"
-          class="ui-icon-button"
-          :title="t('vncDesktop.ctrlAltDel')"
-          :aria-label="t('vncDesktop.ctrlAltDel')"
-          @click="sendCtrlAltDel"
+        <AppTooltip
+          :content="t('vncDesktop.ctrlAltDel')"
+          side="bottom"
         >
-          <Keyboard
-            :size="15"
-            stroke-width="1.8"
-          />
-        </button>
-        <button
-          type="button"
-          class="ui-icon-button"
-          :title="t('vncDesktop.sendClipboard')"
-          :aria-label="t('vncDesktop.sendClipboard')"
-          @click="void sendLocalClipboard"
+          <button
+            type="button"
+            class="ui-icon-button"
+            :aria-label="t('vncDesktop.ctrlAltDel')"
+            @click="sendCtrlAltDel"
+          >
+            <Keyboard
+              :size="15"
+              stroke-width="1.8"
+            />
+          </button>
+        </AppTooltip>
+        <AppTooltip
+          v-if="clipboardSyncEnabled"
+          :content="t('vncDesktop.sendClipboard')"
+          side="bottom"
         >
-          <ClipboardPaste
-            :size="15"
-            stroke-width="1.8"
-          />
-        </button>
-        <button
-          type="button"
-          class="ui-icon-button"
-          :title="t('vncDesktop.scaleMode', { mode: scaleModeLabel })"
-          :aria-label="t('vncDesktop.scaleMode', { mode: scaleModeLabel })"
-          @click="cycleScaleMode"
+          <button
+            type="button"
+            class="ui-icon-button"
+            :aria-label="t('vncDesktop.sendClipboard')"
+            @click="sendLocalClipboard"
+          >
+            <ClipboardPaste
+              :size="15"
+              stroke-width="1.8"
+            />
+          </button>
+        </AppTooltip>
+        <AppTooltip
+          :content="t('vncDesktop.scaleMode', { mode: scaleModeLabel })"
+          side="bottom"
         >
-          <Scaling
-            :size="15"
-            stroke-width="1.8"
-          />
-        </button>
-        <button
-          type="button"
-          class="ui-icon-button"
-          :title="t('vncDesktop.fullscreen')"
-          :aria-label="t('vncDesktop.fullscreen')"
-          @click="toggleFullscreen"
+          <button
+            type="button"
+            class="ui-icon-button"
+            :aria-label="t('vncDesktop.scaleMode', { mode: scaleModeLabel })"
+            @click="cycleScaleMode"
+          >
+            <component
+              :is="scaleModeIcon"
+              :size="15"
+              stroke-width="1.8"
+            />
+          </button>
+        </AppTooltip>
+        <AppTooltip
+          :content="t('vncDesktop.fullscreen')"
+          side="bottom"
         >
-          <Maximize
-            :size="15"
-            stroke-width="1.8"
-          />
-        </button>
+          <button
+            type="button"
+            class="ui-icon-button"
+            :aria-label="t('vncDesktop.fullscreen')"
+            @click="toggleFullscreen"
+          >
+            <Maximize
+              :size="15"
+              stroke-width="1.8"
+            />
+          </button>
+        </AppTooltip>
       </div>
     </div>
 
@@ -435,6 +483,12 @@ onBeforeUnmount(() => {
 .vnc-desktop-mount {
   position: absolute;
   inset: 0;
+
+  // noVNC 用内联 data-URL/none 接管光标；全屏下自定义光标可能不再绘制，
+  // 恢复系统箭头，退出全屏后仍由 noVNC 显示远端光标形状。
+  &:fullscreen :deep(canvas) {
+    cursor: default !important;
+  }
 }
 
 .vnc-toolbar {

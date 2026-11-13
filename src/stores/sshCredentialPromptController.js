@@ -1,18 +1,37 @@
 import { ref } from "vue";
-import { requiresHostKeyVerification } from "../utils/connectionProtocols";
 
-const SSH_CREDENTIAL_PROMPT_CODES = new Set([
+const CREDENTIAL_PROMPT_CODES = {
+  ssh: new Set([
+    "ssh_user_required",
+    "ssh_credential_required",
+    "ssh_auth_rejected",
+    "ssh_password_auth_failed",
+    "ssh_key_auth_failed",
+    "ssh_key_decode_failed",
+  ]),
+  vnc: new Set(["vnc_auth_required", "vnc_auth_failed"]),
+  rdp: new Set(["rdp_username_required", "rdp_auth_required", "rdp_auth_failed"]),
+};
+
+const MISSING_CREDENTIAL_CODES = new Set([
   "ssh_user_required",
   "ssh_credential_required",
-  "ssh_auth_rejected",
-  "ssh_password_auth_failed",
-  "ssh_key_auth_failed",
-  "ssh_key_decode_failed",
+  "vnc_auth_required",
+  "rdp_username_required",
+  "rdp_auth_required",
 ]);
 
-export function isSshCredentialPromptError(error) {
+const NEW_CREDENTIAL_ONLY_CODES = new Set([
+  "ssh_credential_required",
+  "vnc_auth_required",
+  "rdp_auth_required",
+]);
+
+const DEFAULT_PORTS = { ssh: "22", vnc: "5900", rdp: "3389" };
+
+export function isCredentialPromptError(error, protocol) {
   const code = String(error?.code || error?.errorCode || "").toLowerCase();
-  return SSH_CREDENTIAL_PROMPT_CODES.has(code);
+  return CREDENTIAL_PROMPT_CODES[protocol]?.has(code) ?? false;
 }
 
 export function createSshCredentialPromptController({ getConnection }) {
@@ -20,28 +39,30 @@ export function createSshCredentialPromptController({ getConnection }) {
 
   function buildPrompt(connectionId, error, context = {}) {
     const connection = getConnection?.(connectionId);
-    if (!connection || !requiresHostKeyVerification(connection.protocol)) return null;
+    const protocol = connection?.protocol || "";
+    if (!connection) return null;
     const code = String(error?.code || error?.errorCode || "").toLowerCase();
-    if (!SSH_CREDENTIAL_PROMPT_CODES.has(code)) return null;
+    if (!isCredentialPromptError({ code }, protocol)) return null;
     const saveAllowed = !connection.external && connection.source !== "transient";
     const currentCredentialId = connection.savedCredentialId || "";
     return {
       attemptToken: context.attemptToken ?? null,
       connectionId,
       sessionId: context.sessionId || "",
-      reason: ["ssh_credential_required", "ssh_user_required"].includes(code)
-        ? "missing"
-        : "rejected",
+      reason: MISSING_CREDENTIAL_CODES.has(code) ? "missing" : "rejected",
       saveAllowed,
       currentCredentialId,
       canUpdateCredential:
-        saveAllowed && !!currentCredentialId && code !== "ssh_credential_required",
+        saveAllowed && !!currentCredentialId && !NEW_CREDENTIAL_ONLY_CODES.has(code),
+      usernameRequired: context.usernameRequired ?? protocol !== "vnc",
+      onAnswer: typeof context.onAnswer === "function" ? context.onAnswer : null,
       error,
       connection: {
         id: connection.id,
+        protocol,
         name: connection.name || connection.host || connection.id,
         host: connection.host || "",
-        port: connection.port || "22",
+        port: connection.port || DEFAULT_PORTS[protocol] || "",
         user: connection.user || "",
         authMethod: connection.authMethod || "password",
       },

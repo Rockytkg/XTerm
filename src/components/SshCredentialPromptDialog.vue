@@ -42,12 +42,17 @@ const { pickerOpen: pickerBusy, pickPrivateKey: pickPrivateKeyFile } = usePrivat
   cooldownMs: 250,
 });
 
+const protocol = computed(() => props.prompt.connection?.protocol || "ssh");
+const protocolLabel = computed(() => protocol.value.toUpperCase());
+const supportsKeyAuth = computed(() => protocol.value === "ssh");
+const showUsername = computed(() => props.prompt.usernameRequired !== false);
 const target = computed(() => {
   const connection = props.prompt.connection || {};
   const user = form.username.trim() || connection.user || "user";
   const host = connection.host || "host";
-  const port = connection.port || "22";
-  return `${user}@${host}:${port}`;
+  const port = connection.port || "";
+  const endpoint = port ? `${host}:${port}` : host;
+  return protocol.value === "vnc" && !showUsername.value ? endpoint : `${user}@${endpoint}`;
 });
 const saveAllowed = computed(() => props.prompt.saveAllowed !== false);
 const persistenceOptions = computed(() => {
@@ -95,7 +100,7 @@ watch(
   () => props.prompt,
   (prompt) => {
     const connection = prompt?.connection || {};
-    form.authMethod = connection.authMethod || "password";
+    form.authMethod = supportsKeyAuth.value ? connection.authMethod || "password" : "password";
     form.username = connection.user || "";
     form.password = "";
     form.privateKey = "";
@@ -126,12 +131,16 @@ function submit() {
 
 function submitWithPersistence(credentialPersistence) {
   const username = form.username.trim();
-  if (!username) {
-    error.value = t("sshCredentialPrompt.validation.usernameRequired");
+  if (showUsername.value && !username) {
+    error.value = t("sshCredentialPrompt.validation.usernameRequired", {
+      protocol: protocolLabel.value,
+    });
     return;
   }
   if (form.authMethod === "password" && !form.password) {
-    error.value = t("sshCredentialPrompt.validation.passwordRequired");
+    error.value = t("sshCredentialPrompt.validation.passwordRequired", {
+      protocol: protocolLabel.value,
+    });
     return;
   }
   if (form.authMethod === "key" && !form.privateKey.trim()) {
@@ -194,15 +203,21 @@ function typeChangeUsageNames(usages) {
             <DialogTitle class="host-key-dialog-title">
               {{
                 prompt.reason === "missing"
-                  ? t("sshCredentialPrompt.missingTitle")
-                  : t("sshCredentialPrompt.rejectedTitle")
+                  ? t("sshCredentialPrompt.missingTitle", { protocol: protocolLabel })
+                  : t("sshCredentialPrompt.rejectedTitle", { protocol: protocolLabel })
               }}
             </DialogTitle>
             <DialogDescription class="host-key-dialog-desc">
               {{
                 prompt.reason === "missing"
-                  ? t("sshCredentialPrompt.missingDescription", { target })
-                  : t("sshCredentialPrompt.rejectedDescription", { target })
+                  ? t("sshCredentialPrompt.missingDescription", {
+                    protocol: protocolLabel,
+                    target,
+                  })
+                  : t("sshCredentialPrompt.rejectedDescription", {
+                    protocol: protocolLabel,
+                    target,
+                  })
               }}
             </DialogDescription>
           </div>
@@ -215,10 +230,11 @@ function typeChangeUsageNames(usages) {
             @submit.prevent="submit"
           >
             <div
+              v-if="showUsername || form.authMethod === 'key'"
               class="ssh-credential-inline-row"
               :class="form.authMethod === 'key' ? 'ssh-credential-inline-row-two' : ''"
             >
-              <label>
+              <label v-if="showUsername">
                 <span class="conn-field-label">{{ t("credentials.fields.username") }}</span>
                 <input
                   v-model="form.username"
@@ -244,6 +260,7 @@ function typeChangeUsageNames(usages) {
             </div>
 
             <ToggleGroupRoot
+              v-if="supportsKeyAuth"
               v-model="authMethodModel"
               type="single"
               class="conn-seg-tabs ssh-credential-methods"
