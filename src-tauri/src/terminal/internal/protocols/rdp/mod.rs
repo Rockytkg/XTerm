@@ -290,17 +290,13 @@ fn build_connector_config(
 }
 
 /// Resolves the RDP password: an inline password (auth retry) wins over the
-/// saved credential. Returns `None` when no password is available; servers
-/// without NLA still connect (图形登录), NLA 服务器会以 rdp_auth_required 失败。
+/// saved credential; both are passed through verbatim (empty included) into
+/// the connector credentials.
 fn resolve_rdp_password(
     state: &AppState,
     request: &ResolvedConnection,
 ) -> ConnectionResult<Option<String>> {
-    if let Some(password) = request
-        .inline_password
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(password) = request.inline_password.as_deref() {
         return Ok(Some(password.to_string()));
     }
     let Some(credential_id) = request
@@ -346,9 +342,6 @@ fn resolve_rdp_password(
             )
         })?
         .to_string();
-    if password.is_empty() {
-        return Ok(None);
-    }
     Ok(Some(password))
 }
 

@@ -44,9 +44,11 @@ fn parse_uri(uri: &str) -> Option<ParsedUri> {
     // user[:password]
     let (user, password) = match userinfo {
         Some(raw) => match raw.find(':') {
+            // A colon with an empty password segment is an explicit empty
+            // password (ssh://user:@host), not a missing one.
             Some(colon) => (
                 non_empty(decode(&raw[..colon])),
-                non_empty(decode(&raw[colon + 1..])),
+                Some(decode(&raw[colon + 1..])),
             ),
             None => (non_empty(decode(raw)), None),
         },
@@ -298,6 +300,17 @@ mod tests {
         assert_eq!(parsed.password.as_deref(), Some("密码"));
         assert_eq!(parsed.host, "example.com");
         assert_eq!(parsed.port, 2222);
+    }
+
+    #[test]
+    fn parse_uri_preserves_an_explicit_empty_password() {
+        // ssh://user:@host carries an explicit empty password; only a missing
+        // userinfo segment (no colon) means "no password".
+        let parsed = parse_uri("ssh://root:@example.com").unwrap();
+        assert_eq!(parsed.user.as_deref(), Some("root"));
+        assert_eq!(parsed.password.as_deref(), Some(""));
+        let parsed = parse_uri("ssh://root@example.com").unwrap();
+        assert_eq!(parsed.password, None);
     }
 
     #[test]

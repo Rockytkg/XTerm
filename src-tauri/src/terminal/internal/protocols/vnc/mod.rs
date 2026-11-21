@@ -150,17 +150,13 @@ impl VncConnectionFactory {
 }
 
 /// Resolves the VNC password: an inline password (deep-link or auth retry)
-/// wins over the saved credential. Returns `None` when no password is
-/// available; servers offering security=None still connect in that case.
+/// wins over the saved credential. An empty password stays `Some("")`; the
+/// handshake maps it to security=None when the server offers it.
 fn resolve_vnc_password(
     state: &AppState,
     request: &ResolvedConnection,
 ) -> ConnectionResult<Option<String>> {
-    if let Some(password) = request
-        .inline_password
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(password) = request.inline_password.as_deref() {
         return Ok(Some(password.to_string()));
     }
     let Some(credential_id) = request
@@ -207,9 +203,6 @@ fn resolve_vnc_password(
             )
         })?
         .to_string();
-    if password.is_empty() {
-        return Ok(None);
-    }
     Ok(Some(password))
 }
 

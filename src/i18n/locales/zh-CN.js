@@ -252,7 +252,6 @@ export default {
     },
     validation: {
       usernameRequired: "请输入 {protocol} 用户名。",
-      passwordRequired: "请输入 {protocol} 密码。",
       privateKeyRequired: "请输入或选择 SSH 私钥。",
     },
   },

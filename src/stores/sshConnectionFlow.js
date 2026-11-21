@@ -29,7 +29,7 @@ function sshCredentialOverride(input) {
       authMethod: "key",
       username: input.username,
       privateKey: input.privateKey,
-      passphrase: input.passphrase || undefined,
+      passphrase: input.passphrase,
     };
   }
   return {

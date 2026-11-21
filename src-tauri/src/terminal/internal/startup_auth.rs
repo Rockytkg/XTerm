@@ -168,7 +168,7 @@ fn resolve_startup_password_auth_inner(
         .map(ToOwned::to_owned);
 
     // Inline password from a deep-link URI takes priority.
-    if let Some(password) = request.inline_password.as_deref().filter(|v| !v.is_empty()) {
+    if let Some(password) = request.inline_password.as_deref() {
         return Ok(Some(StartupPasswordAuth {
             username: user,
             password: password.to_string(),
@@ -197,9 +197,6 @@ fn resolve_startup_password_auth_inner(
         .password()
         .ok_or_else(|| "saved password credential is missing its password".to_string())?
         .to_string();
-    if password.is_empty() {
-        return Ok(None);
-    }
     Ok(Some(StartupPasswordAuth {
         username: user,
         password,

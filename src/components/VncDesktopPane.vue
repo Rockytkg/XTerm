@@ -96,7 +96,6 @@ const {
   overlayTitle,
   overlayDescription,
   overlayNeedsPassword,
-  overlaySubmitDisabled,
   handleOverlaySubmit,
   scaleModeLabel,
   scaleModeIcon,
@@ -460,7 +459,6 @@ onBeforeUnmount(() => {
             v-if="overlayKind !== 'connecting'"
             type="submit"
             class="ui-button-primary"
-            :disabled="overlaySubmitDisabled"
           >
             {{ overlayKind === "credentials" ? t("actions.connect") : t("actions.reconnect") }}
           </button>

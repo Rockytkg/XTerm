@@ -16,8 +16,9 @@ pub(super) fn resolve_ssh_auth(
     state: &AppState,
     request: &ResolvedConnection,
 ) -> Result<SshAuth, String> {
-    // Inline credentials (from deep-link URIs) take priority over saved ones.
-    if let Some(password) = request.inline_password.as_deref().filter(|v| !v.is_empty()) {
+    // Inline credentials (deep-link or credential-prompt retry) take priority
+    // over saved ones; an explicit empty password is passed through as-is.
+    if let Some(password) = request.inline_password.as_deref() {
         return Ok(SshAuth::Password(password.to_string()));
     }
     if let Some(key) = request

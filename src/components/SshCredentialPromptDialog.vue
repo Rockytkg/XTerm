@@ -137,12 +137,6 @@ function submitWithPersistence(credentialPersistence) {
     });
     return;
   }
-  if (form.authMethod === "password" && !form.password) {
-    error.value = t("sshCredentialPrompt.validation.passwordRequired", {
-      protocol: protocolLabel.value,
-    });
-    return;
-  }
   if (form.authMethod === "key" && !form.privateKey.trim()) {
     error.value = t("sshCredentialPrompt.validation.privateKeyRequired");
     return;

@@ -262,7 +262,6 @@ export default {
     },
     validation: {
       usernameRequired: "Enter the {protocol} username.",
-      passwordRequired: "Enter the {protocol} password.",
       privateKeyRequired: "Enter or choose an SSH private key.",
     },
   },

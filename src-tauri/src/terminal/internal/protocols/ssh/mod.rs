@@ -939,10 +939,8 @@ impl SshConnectionFactory {
                 ConnectionError::new("ssh_user_required", "SSH user is required", false)
             })?
             .to_string();
-        let has_inline_credential = request
-            .inline_password
-            .as_deref()
-            .is_some_and(|v| !v.is_empty())
+        // `Some("")` is an explicit empty-password retry, not a missing one.
+        let has_inline_credential = request.inline_password.is_some()
             || request
                 .inline_private_key
                 .as_deref()
@@ -1081,5 +1079,114 @@ impl SshConnectionFactory {
             ProtocolKind::Ssh,
             open_context.encoding_label,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use parking_lot::Mutex;
+    use tokio::net::TcpListener;
+
+    use super::{authenticate_russh_session, ssh_client_config};
+    use crate::terminal::internal::{ssh_auth::SshAuth, ssh_client::RusshClient};
+
+    /// Local russh server stand-in that accepts any password — including an
+    /// empty one — so the real `authenticate_russh_session` path runs against
+    /// a live SSH handshake instead of mocking the transport.
+    #[derive(Clone)]
+    struct EmptyPasswordServer;
+
+    impl russh::server::Server for EmptyPasswordServer {
+        type Handler = Self;
+
+        fn new_client(&mut self, _: Option<std::net::SocketAddr>) -> Self::Handler {
+            Self
+        }
+    }
+
+    impl russh::server::Handler for EmptyPasswordServer {
+        type Error = russh::Error;
+
+        async fn auth_password(
+            &mut self,
+            _user: &str,
+            _password: &str,
+        ) -> Result<russh::server::Auth, Self::Error> {
+            Ok(russh::server::Auth::Accept)
+        }
+    }
+
+    async fn start_empty_password_server() -> std::net::SocketAddr {
+        let mut config = russh::server::Config {
+            auth_rejection_time: Duration::from_millis(100),
+            inactivity_timeout: None,
+            ..Default::default()
+        };
+        config.keys.push(
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .expect("generate ed25519 host key"),
+        );
+        let config = Arc::new(config);
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("test server addr");
+        tokio::spawn(async move {
+            loop {
+                let Ok((socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let config = config.clone();
+                tokio::spawn(async move {
+                    let _ = russh::server::run_stream(config, socket, EmptyPasswordServer).await;
+                });
+            }
+        });
+        addr
+    }
+
+    async fn connect_test_client(addr: std::net::SocketAddr) -> russh::client::Handle<RusshClient> {
+        let host_key_state = Arc::new(Mutex::new(None));
+        russh::client::connect(
+            Arc::new(ssh_client_config(false)),
+            addr,
+            RusshClient::new(host_key_state),
+        )
+        .await
+        .expect("connect to test server")
+    }
+
+    #[tokio::test]
+    async fn empty_password_authenticates_against_permissive_server() {
+        let addr = start_empty_password_server().await;
+        let mut session = connect_test_client(addr).await;
+
+        // Servers/devices with PermitEmptyPasswords must receive the empty
+        // password as-is; filtering it client-side would always fail here.
+        authenticate_russh_session(
+            &mut session,
+            "root",
+            SshAuth::Password(String::new()),
+            false,
+        )
+        .await
+        .expect("empty password must reach the server");
+    }
+
+    #[tokio::test]
+    async fn non_empty_password_still_authenticates() {
+        let addr = start_empty_password_server().await;
+        let mut session = connect_test_client(addr).await;
+
+        authenticate_russh_session(
+            &mut session,
+            "root",
+            SshAuth::Password("secret".to_string()),
+            false,
+        )
+        .await
+        .expect("non-empty password auth");
     }
 }

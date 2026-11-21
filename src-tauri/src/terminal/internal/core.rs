@@ -1016,8 +1016,8 @@ impl ResolvedConnection {
                 .and_then(|details| details.resize_session),
         }
         .with_ssh_credential_override(request.ssh_credential)
-        .with_vnc_password_override(request.vnc_password)
-        .with_rdp_password_override(request.rdp_password))
+        .with_password_override(request.vnc_password)
+        .with_password_override(request.rdp_password))
     }
 
     pub(crate) fn with_open_request(mut self, request: ConnectionOpenRequest) -> Self {
@@ -1048,16 +1048,10 @@ impl ResolvedConnection {
         self
     }
 
-    fn with_vnc_password_override(mut self, password: Option<String>) -> Self {
-        if let Some(password) = password.filter(|value| !value.is_empty()) {
-            self.auth_method = Some("password".to_string());
-            self.inline_password = Some(password);
-        }
-        self
-    }
-
-    fn with_rdp_password_override(mut self, password: Option<String>) -> Self {
-        if let Some(password) = password.filter(|value| !value.is_empty()) {
+    /// VNC/RDP auth-retry password override; applied verbatim as
+    /// `inline_password` (an explicit empty password included).
+    fn with_password_override(mut self, password: Option<String>) -> Self {
+        if let Some(password) = password {
             self.auth_method = Some("password".to_string());
             self.inline_password = Some(password);
         }

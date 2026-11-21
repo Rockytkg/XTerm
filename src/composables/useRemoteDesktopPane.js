@@ -110,8 +110,6 @@ export function useRemoteDesktopPane({
 
   const overlayNeedsPassword = computed(() => overlayKind.value === "credentials");
 
-  const overlaySubmitDisabled = computed(() => overlayNeedsPassword.value && !passwordInput.value);
-
   function retryConnection(options = {}) {
     sessionError.value = "";
     emit("retryConnection", options);
@@ -178,7 +176,6 @@ export function useRemoteDesktopPane({
     overlayTitle,
     overlayDescription,
     overlayNeedsPassword,
-    overlaySubmitDisabled,
     handleOverlaySubmit,
     effectiveScaleMode,
     scaleModeLabel,

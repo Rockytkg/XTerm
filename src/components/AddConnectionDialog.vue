@@ -382,7 +382,7 @@ function clearFieldError(field) {
 
 function selectDefaultCredentialIfAvailable() {
   if (!isSSH.value || activeForm.value.savedCredentialId) return;
-  if (activeForm.value.password?.trim?.() || activeForm.value.privateKey?.trim?.()) return;
+  if (activeForm.value.password || activeForm.value.privateKey) return;
   const credential = filteredCredentials.value[0];
   if (credential) {
     onCredentialSelect(credential.id);
@@ -448,9 +448,6 @@ async function ensureInlineCredential() {
   }
 
   const form = activeForm.value;
-  if (requiresPasswordCredential(activeProtocol.value) && !form.password?.trim?.()) {
-    return undefined;
-  }
   const baseName = form.name.trim() || form.host.trim();
   const credential =
     isSSH.value && form.authMethod === "key"
